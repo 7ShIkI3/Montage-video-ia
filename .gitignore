@@ -6,3 +6,4 @@ frontend/dist/
 data/
 .env
 .pytest_cache/
+*.tsbuildinfo
