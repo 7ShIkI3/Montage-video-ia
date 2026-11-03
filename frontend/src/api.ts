@@ -266,7 +266,8 @@ export const api = {
     fd.append("file", file);
     return req<MusicSettings>(`/api/projects/${id}/music`, { method: "POST", body: fd });
   },
-  export: (id: string, quality: string) => req<Job>(`/api/projects/${id}/export`, json("POST", { quality })),
+  export: (id: string, quality: string, fps: number | null = null, smooth = false) =>
+    req<Job>(`/api/projects/${id}/export`, json("POST", { quality, fps, smooth })),
   publishKit: (id: string) => req<Job>(`/api/projects/${id}/publish-kit`, { method: "POST" }),
   xmlUrl: (id: string) => `/api/projects/${id}/export.xml`,
   srtUrl: (id: string) => `/api/projects/${id}/captions.srt`,

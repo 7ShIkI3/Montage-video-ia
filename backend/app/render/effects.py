@@ -42,8 +42,8 @@ VIDEO_EFFECTS: dict[str, dict] = {
 LOOKS = ["aucun", "cinema", "vif", "vintage", "noir_et_blanc", "froid", "chaud", "sepia"]
 
 
-def video_effect_filter(name: str, W: int, H: int, d: float) -> str | None:
-    frames = max(1, int(d * 30))
+def video_effect_filter(name: str, W: int, H: int, d: float, fps: int = 30) -> str | None:
+    frames = max(1, int(d * fps))
     f = {
         "noir_et_blanc": "hue=s=0",
         "sepia": "colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131",
@@ -63,11 +63,11 @@ def video_effect_filter(name: str, W: int, H: int, d: float) -> str | None:
         "miroir": "hflip",
         "glitch": ("rgbashift=rh=10:bh=-10:enable='lt(mod(t,1.1),0.12)',"
                    "noise=alls=40:allf=t:enable='lt(mod(t,1.1),0.12)'"),
-        "tremblement": f"crop={W - 28}:{H - 28}:x='14+11*sin(n*1.9)':y='14+11*cos(n*2.7)',scale={W}:{H}",
+        "tremblement": f"crop={W - 28}:{H - 28}:x='14+11*sin(t*57)':y='14+11*cos(t*81)',scale={W}:{H}",
         "zoom_lent": (f"zoompan=z='1+0.12*on/{frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-                      f":d=1:s={W}x{H}:fps=30"),
-        "pulsation": (f"zoompan=z='1.04+0.04*sin(2*PI*on/15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-                      f":d=1:s={W}x{H}:fps=30"),
+                      f":d=1:s={W}x{H}:fps={fps}"),
+        "pulsation": (f"zoompan=z='1.04+0.04*sin(2*PI*on/{fps / 2:.1f})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+                      f":d=1:s={W}x{H}:fps={fps}"),
     }.get(name)
     return f
 
@@ -88,7 +88,7 @@ TRANSITIONS: dict[str, str] = {
 }
 
 
-def transition_filters(name: str, td: float, W: int, H: int) -> list[str]:
+def transition_filters(name: str, td: float, W: int, H: int, fps: int = 30) -> list[str]:
     td = max(0.1, min(td, 1.5))
     if name == "fondu_noir":
         return [f"fade=t=in:st=0:d={td:.2f}"]
@@ -97,9 +97,9 @@ def transition_filters(name: str, td: float, W: int, H: int) -> list[str]:
     if name == "flash":
         return [f"fade=t=in:st=0:d={min(td, 0.18):.2f}:color=white"]
     if name == "zoom_avant":
-        fr = max(2, int(td * 30))
+        fr = max(2, int(td * fps))
         return [f"zoompan=z='if(lt(on,{fr}),1.3-0.3*on/{fr},1)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-                f":d=1:s={W}x{H}:fps=30"]
+                f":d=1:s={W}x{H}:fps={fps}"]
     if name == "flou":
         return [f"gblur=sigma=24:enable='lt(t,{td / 2:.2f})'",
                 f"gblur=sigma=9:enable='between(t,{td / 2:.2f},{td:.2f})'"]

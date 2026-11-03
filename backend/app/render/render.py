@@ -12,12 +12,22 @@ from ..models import Project, Timeline, Transcript
 from . import captions as cap
 from . import effects as fx
 
-FPS = 30
-SIZES = {
-    ("16:9", "1080p"): (1920, 1080), ("16:9", "720p"): (1280, 720),
-    ("9:16", "1080p"): (1080, 1920), ("9:16", "720p"): (720, 1280),
-    ("1:1", "1080p"): (1080, 1080), ("1:1", "720p"): (720, 720),
-}
+FPS = 30  # cadence par défaut
+FPS_CHOICES = (24, 25, 30, 50, 60, 100, 120)
+QUALITIES = {"720p": 720, "1080p": 1080, "1440p": 1440, "2160p": 2160}  # côté court de l'image
+SIZES = {}
+for _q, _s in QUALITIES.items():
+    _l = _s * 16 // 9
+    SIZES[("16:9", _q)] = (_l, _s)
+    SIZES[("9:16", _q)] = (_s, _l)
+    SIZES[("1:1", _q)] = (_s, _s)
+
+
+def source_fps(project: Project, timeline: Timeline) -> int:
+    """Cadence « comme la source » : la plus haute des rushes utilisés, ramenée au choix standard le plus proche."""
+    used = {c.media_id for c in timeline.clips}
+    best = max((m.fps for m in project.media if m.id in used and m.has_video and m.fps), default=FPS)
+    return min(FPS_CHOICES, key=lambda f: (abs(f - best), -f))
 
 
 def _even(x: float) -> int:
@@ -39,10 +49,12 @@ def _cover_tracked(W: int, H: int, zoom: float, kf: list[tuple[float, float]]) -
 
 def build_command(project: Project, timeline: Timeline, transcripts: dict[str, Transcript],
                   out_path: Path, work_dir: Path, quality: str = "1080p",
-                  music_path: str | None = None, use_proxy: bool = False) -> tuple[list[str], float]:
+                  music_path: str | None = None, use_proxy: bool = False,
+                  fps: int | None = None, smooth: bool = False) -> tuple[list[str], float]:
     if not timeline.clips:
         raise ValueError("La timeline est vide : rien à exporter.")
     W, H = SIZES[(timeline.format, quality)]
+    FPS = fps or source_fps(project, timeline)
     inputs: list[str] = []
     filters: list[str] = []
     n_in = 0
@@ -67,7 +79,13 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
             inputs += ["-ss", f"{c.src_in:.3f}", "-t", f"{sd:.3f}", "-i", src]
             vin = n_in
             n_in += 1
-            vchain.append(f"[{vin}:v:0]setpts=(PTS-STARTPTS)/{speed:.4f},fps={FPS}")
+            src_rate = (m.fps or FPS) * speed  # images source disponibles par seconde de timeline
+            if smooth and src_rate < FPS - 1:
+                # Interpolation de mouvement : crée les images manquantes (60-120 i/s, ralentis fluides).
+                vchain.append(f"[{vin}:v:0]setpts=(PTS-STARTPTS)/{speed:.4f},"
+                              f"minterpolate=fps={FPS}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1")
+            else:
+                vchain.append(f"[{vin}:v:0]setpts=(PTS-STARTPTS)/{speed:.4f},fps={FPS}")
             kf: list[tuple[float, float]] = []
             if timeline.reframe and m.width / max(1, m.height) > W / H + 0.01:
                 sig = storage.load_signals(project.id, m.id) or {}
@@ -80,10 +98,10 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
             vchain.append(f"[{vin}:v]null")
         vchain.append("setsar=1")
         for e in c.effects:
-            f = fx.video_effect_filter(e, W, H, d)
+            f = fx.video_effect_filter(e, W, H, d, FPS)
             if f:
                 vchain.append(f)
-        vchain += fx.transition_filters(c.transition, c.transition_duration, W, H)
+        vchain += fx.transition_filters(c.transition, c.transition_duration, W, H, FPS)
         if out_color:
             vchain.append(f"fade=t=out:st={max(0.0, d - td_out):.3f}:d={td_out:.2f}:color={out_color}")
         vchain.append(f"setsar=1,format=yuv420p,trim=duration={d:.3f},setpts=PTS-STARTPTS[v{i}]")
@@ -152,7 +170,7 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
 
     # --- étalonnage global ---
     if timeline.look and timeline.look != "aucun":
-        f = fx.video_effect_filter(timeline.look, W, H, total)
+        f = fx.video_effect_filter(timeline.look, W, H, total, FPS)
         if f:
             filters.append(f"[{vlabel}]{f}[vlook]")
             vlabel = "vlook"
@@ -220,8 +238,10 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
 
 def render(project: Project, timeline: Timeline, transcripts: dict[str, Transcript], out_path: Path,
            work_dir: Path, quality: str = "1080p", music_path: str | None = None,
-           on_progress: Callable[[float], None] | None = None) -> Path:
-    args, total = build_command(project, timeline, transcripts, out_path, work_dir, quality, music_path)
+           on_progress: Callable[[float], None] | None = None, fps: int | None = None,
+           smooth: bool = False) -> Path:
+    args, total = build_command(project, timeline, transcripts, out_path, work_dir, quality, music_path,
+                                fps=fps, smooth=smooth)
     # Le filtre ass lit captions.ass en chemin relatif depuis work_dir (évite l'échappement des chemins).
     ffmpeg.run(args, total, on_progress, cwd=work_dir)
     srt = cap.to_srt(cap.build_lines(timeline, transcripts))

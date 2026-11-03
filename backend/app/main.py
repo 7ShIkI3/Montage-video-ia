@@ -17,6 +17,7 @@ from .media import ffmpeg
 from .models import EditSettings, Project, Timeline
 from .render import captions as cap
 from .render import effects as fx
+from .render import render as render_mod
 from .render import xml_export
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -301,6 +302,8 @@ def current_music(pid: str):
 
 class ExportReq(BaseModel):
     quality: str = "1080p"
+    fps: int | None = None  # None = comme la source
+    smooth: bool = False  # interpolation de mouvement quand la source a moins d'images
 
 
 @app.post("/api/projects/{pid}/export")
@@ -308,9 +311,11 @@ def export(pid: str, body: ExportReq):
     p = _project(pid)
     if not p.timeline.clips:
         raise HTTPException(400, "La timeline est vide.")
-    if body.quality not in ("1080p", "720p"):
+    if body.quality not in render_mod.QUALITIES:
         raise HTTPException(400, "Qualité inconnue")
-    return manager.submit(pid, "export", lambda ctx: pipeline.export(pid, body.quality, ctx))
+    if body.fps is not None and body.fps not in render_mod.FPS_CHOICES:
+        raise HTTPException(400, f"Cadence non prise en charge (choix : {', '.join(map(str, render_mod.FPS_CHOICES))})")
+    return manager.submit(pid, "export", lambda ctx: pipeline.export(pid, body.quality, ctx, body.fps, body.smooth))
 
 
 @app.post("/api/projects/{pid}/publish-kit")

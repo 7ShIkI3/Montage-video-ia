@@ -119,3 +119,28 @@ def test_xml_and_srt_export(rush):
     assert kit["titles"] and kit["description"]
     r = c.get(f"/api/projects/{pid}/exports/{kit['thumbnail']}")
     assert r.status_code == 200 and r.content[:2] == b"\xff\xd8"
+
+
+def test_high_fps_and_resolution(rush, tmp_path):
+    """Export 1440p à 60 i/s et 4K à 120 i/s, avec interpolation de mouvement sur un ralenti."""
+    from app import pipeline
+    from app.models import Clip, Project, Timeline
+    from app.render.render import render, source_fps
+
+    p = Project(name="HFR")
+    m = pipeline.ingest(p, rush, "rush.mp4")
+    assert source_fps(p, Timeline(clips=[Clip(media_id=m.id, src_in=0, src_out=1)])) == 30
+    tl = Timeline(captions="aucun", look="vif",
+                  clips=[Clip(media_id=m.id, src_in=1, src_out=2, effects=["zoom_lent"]),
+                         Clip(media_id=m.id, src_in=3, src_out=3.6, speed=0.5, transition="zoom_avant")])
+    out = tmp_path / "60.mp4"
+    render(p, tl, {}, out, tmp_path, "1440p", fps=60, smooth=True)
+    assert "minterpolate" in (tmp_path / "filtergraph.txt").read_text()
+    info = ffmpeg.probe(out)
+    assert (info["width"], info["height"], round(info["fps"])) == (2560, 1440, 60)
+    assert abs(info["duration"] - tl.duration) < 0.3
+    tl.clips = tl.clips[:1]
+    out = tmp_path / "120.mp4"
+    render(p, tl, {}, out, tmp_path, "2160p", fps=120)
+    info = ffmpeg.probe(out)
+    assert (info["width"], info["height"], round(info["fps"])) == (3840, 2160, 120)

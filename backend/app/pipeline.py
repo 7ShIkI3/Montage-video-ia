@@ -176,19 +176,20 @@ def ai_command(project_id: str, instruction: str, ctx: JobContext) -> dict:
     return {"message": msg, "director": director.name}
 
 
-def export(project_id: str, quality: str, ctx: JobContext) -> str:
+def export(project_id: str, quality: str, ctx: JobContext, fps: int | None = None, smooth: bool = False) -> str:
     project = storage.load_project(project_id)
     tl = project.timeline
     out_dir = storage.exports_dir(project.id)
     idx = len(list(out_dir.glob("*.mp4"))) + 1
     safe = "".join(ch for ch in (tl.title or project.name) if ch.isalnum() or ch in " -_").strip()[:50] or "montage"
-    out = out_dir / f"{idx:02d} - {safe} ({tl.format.replace(':', 'x')}).mp4"
+    rate = fps or render_mod.source_fps(project, tl)
+    out = out_dir / f"{idx:02d} - {safe} ({tl.format.replace(':', 'x')} {quality} {rate}fps).mp4"
     work = storage.cache_dir(project.id) / f"render_{idx}"
     work.mkdir(parents=True, exist_ok=True)
     music = tl.music.track if tl.music.track and Path(tl.music.track).exists() else None
-    ctx.step("Rendu de la vidéo finale", 0.01)
+    ctx.step(f"Rendu {quality} à {rate} i/s" + (" avec interpolation" if smooth else ""), 0.01)
     render_mod.render(project, tl, transcripts_for(project), out.resolve(), work.resolve(), quality, music,
-                      ctx.sub(0.01, 0.99))
+                      ctx.sub(0.01, 0.99, f"Rendu {quality} à {rate} i/s"), fps=rate, smooth=smooth)
     project.exports.append(out.name)
     storage.save_project(project)
     ctx.step("Export terminé", 1.0)

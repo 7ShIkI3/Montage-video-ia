@@ -100,9 +100,17 @@ function ExportButton() {
   const { setJob, notify } = useStore.getState();
   const [open, setOpen] = useState(false);
   const [quality, setQuality] = useState("1080p");
+  const [fps, setFps] = useState<number | null>(null);
+  const [smooth, setSmooth] = useState(false);
   const [last, setLast] = useState<string | null>(null);
   if (!project) return null;
   const busy = job?.kind === "export" && job.status !== "termine" && job.status !== "erreur";
+  const used = new Set(project.timeline.clips.map((c) => c.media_id));
+  const vids = project.media.filter((m) => used.has(m.id) && m.has_video);
+  const srcFps = Math.round(Math.max(0, ...vids.map((m) => m.fps)) || 30);
+  const srcH = Math.max(0, ...vids.map((m) => Math.min(m.width, m.height)));
+  const wantFps = fps ?? srcFps;
+  const upscale = srcH > 0 && +quality.replace("p", "") > srcH + 8;
 
   // Les téléchargements lisent la timeline enregistrée : on sauvegarde d'abord les retouches.
   const saveFirst = async (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -119,7 +127,7 @@ function ExportButton() {
     try {
       const st = useStore.getState();
       if (st.dirty && st.timeline) { await api.saveTimeline(project.id, st.timeline); st.markSaved(); }
-      const j = await api.export(project.id, quality);
+      const j = await api.export(project.id, quality, fps, smooth);
       const done = await waitJob(j, setJob);
       setLast(done.result as string);
       await useStore.getState().refreshProject();
@@ -136,13 +144,31 @@ function ExportButton() {
       {open && (
         <div className="popover">
           <h4>Exporter la vidéo</h4>
-          <label>Qualité
-            <select value={quality} onChange={(e) => setQuality(e.target.value)}>
-              <option value="1080p">1080p (recommandé)</option>
-              <option value="720p">720p (plus rapide)</option>
-            </select>
-          </label>
-          <p className="muted small">Format {project.timeline.format}, sous-titres incrustés, volume normalisé (-14 LUFS). Un fichier .srt est aussi créé.</p>
+          <div className="field-row">
+            <label>Qualité
+              <select value={quality} onChange={(e) => setQuality(e.target.value)}>
+                <option value="720p">720p (rapide)</option>
+                <option value="1080p">1080p Full HD</option>
+                <option value="1440p">1440p 2K</option>
+                <option value="2160p">2160p 4K</option>
+              </select>
+            </label>
+            <label>Images / seconde
+              <select value={fps ?? ""} onChange={(e) => setFps(e.target.value ? +e.target.value : null)}>
+                <option value="">Comme la source ({srcFps} i/s)</option>
+                {[24, 25, 30, 50, 60, 100, 120].map((f) => <option key={f} value={f}>{f} i/s</option>)}
+              </select>
+            </label>
+          </div>
+          {wantFps > srcFps + 1 && (
+            <label className="inline">
+              <input type="checkbox" checked={smooth} onChange={(e) => setSmooth(e.target.checked)} />
+              Fluidité IA : créer les images manquantes ({srcFps} → {wantFps} i/s, rendu plus long)
+            </label>
+          )}
+          {upscale && <p className="warn small">Tes rushes font {srcH}p : l'export {quality} sera agrandi, pas plus net.</p>}
+          {wantFps > 60 && <p className="muted small">YouTube, TikTok et Instagram lisent jusqu'à 60 i/s ; 100-120 i/s sert aux écrans rapides et au ralenti en montage.</p>}
+          <p className="muted small">Format {project.timeline.format}, H.264 + AAC, sous-titres incrustés, volume normalisé (-14 LUFS). Un fichier .srt est aussi créé.</p>
           <button className="primary" disabled={busy} onClick={go}>{busy ? "Rendu en cours…" : "Lancer le rendu"}</button>
           {busy && job && <div className="progress"><div style={{ width: `${job.progress * 100}%` }} /><span>{Math.round(job.progress * 100)} %</span></div>}
           {last && <p><a href={api.exportUrl(project.id, last)} download>Télécharger « {last} »</a></p>}
