@@ -9,6 +9,7 @@ from . import config, storage
 from .ai import director as dir_mod
 from .ai.decorate import decorate
 from .ai import publish as publish_mod
+from .ai import comments as comments_mod
 from .ai.segments import build_segments
 from .analysis import audio as audio_an
 from .analysis import faces as faces_an
@@ -133,8 +134,17 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     director = dir_mod.get_director()
     ctx.step("Réalisation du montage par l'IA" + (" (Claude)" if director.name == "claude" else ""), 0.9)
     order = [m.id for m in project.media]
+    # Les commentaires survivent au re-montage et le guident (sauf ceux que l'IA n'a pas compris).
+    notes = [c for c in project.timeline.comments if c.status != "incompris"]
+    old_comments = project.timeline.comments
     try:
-        tl = director.direct(segments, settings, order, music)
+        if director.name == "claude" and notes:
+            lines = [comments_mod.context_line(project.timeline, c, segments, k + 1) for k, c in enumerate(notes)]
+            tl = director.direct(segments, settings, order, music, comment_lines=lines)
+            for c, r in zip(notes, director.last_replies):
+                c.status, c.reply = "applique", r
+        else:
+            tl = director.direct(segments, settings, order, music)
     except Exception as e:
         if director.name != "claude":
             raise
@@ -144,6 +154,10 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     if director.name != "claude" or not _has_effects(tl):
         ctx.step("Habillage : transitions, effets, bruitages, titres", 0.97)
         tl = decorate(tl, segments, settings, project.name)
+    tl.comments = old_comments
+    if notes and tl.director != "claude":
+        ctx.step("Application de tes commentaires", 0.98)
+        comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, notes)
     project.timeline = tl
     storage.save_project(project)
     ctx.step(f"Montage prêt : {len(tl.clips)} plans, {tl.duration:.0f} s", 1.0)
@@ -170,6 +184,7 @@ def ai_command(project_id: str, instruction: str, ctx: JobContext) -> dict:
         project.settings = s2
         if s2.music and not tl.music.track:
             tl.music.track = pick_music(project, s2.style)
+    tl.comments = project.timeline.comments
     project.timeline = tl
     storage.save_project(project)
     ctx.step(msg or "Consigne appliquée", 1.0)
@@ -207,3 +222,35 @@ def publish_kit(project_id: str, ctx: JobContext) -> dict:
     storage.save_project(project)
     ctx.step("Kit de publication prêt", 1.0)
     return kit
+
+
+def apply_comments(project_id: str, ctx: JobContext) -> dict:
+    """L'IA lit les commentaires ouverts et modifie le montage en conséquence."""
+    project = storage.load_project(project_id)
+    tl = project.timeline
+    open_c = [c for c in tl.comments if c.status == "ouvert"]
+    if not open_c:
+        raise ValueError("Aucun commentaire en attente.")
+    segments = storage.load_segments(project.id) or all_segments(project, project.settings)
+    director = dir_mod.get_director()
+    ctx.step(f"L'IA lit tes {len(open_c)} commentaire(s)" + (" (Claude)" if director.name == "claude" else ""), 0.2)
+    if director.name == "claude":
+        lines = [comments_mod.context_line(tl, c, segments, k + 1) for k, c in enumerate(open_c)]
+        try:
+            new_tl, replies = director.apply_comments(tl, lines, segments, project.settings, tl.music.track)
+            new_tl.comments = tl.comments
+            new_tl.reframe = tl.reframe
+            for k, c in enumerate(open_c):
+                c.status, c.reply = "applique", (replies[k] if k < len(replies) else "Pris en compte.")
+            tl = new_tl
+        except Exception as e:
+            log.warning("Commentaires via Claude impossibles, interprète local : %s", e)
+            comments_mod.apply_all(tl, segments, project.settings, {m.id: m.duration for m in project.media})
+    else:
+        comments_mod.apply_all(tl, segments, project.settings, {m.id: m.duration for m in project.media})
+    project.timeline = tl
+    storage.save_project(project)
+    ok = sum(c.status == "applique" for c in open_c)
+    msg = f"{ok} commentaire(s) appliqué(s)" + (f", {len(open_c) - ok} non compris" if ok < len(open_c) else "")
+    ctx.step(msg, 1.0)
+    return {"message": msg}

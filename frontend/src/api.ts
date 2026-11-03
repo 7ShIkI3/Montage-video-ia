@@ -64,6 +64,16 @@ export interface OverlayItem {
   reason: string;
 }
 
+export interface Comment {
+  id: string;
+  media_id: string | null;
+  src_t: number;
+  text: string;
+  status: "ouvert" | "applique" | "incompris";
+  reply: string;
+  created_at: number;
+}
+
 export interface Opt {
   id: string;
   label: string;
@@ -100,6 +110,7 @@ export interface Timeline {
   sfx: SfxItem[];
   overlays: OverlayItem[];
   reframe: boolean;
+  comments: Comment[];
 }
 
 export interface EditSettings {
@@ -268,6 +279,7 @@ export const api = {
   },
   export: (id: string, quality: string, fps: number | null = null, smooth = false) =>
     req<Job>(`/api/projects/${id}/export`, json("POST", { quality, fps, smooth })),
+  applyComments: (id: string) => req<Job>(`/api/projects/${id}/comments/apply`, { method: "POST" }),
   publishKit: (id: string) => req<Job>(`/api/projects/${id}/publish-kit`, { method: "POST" }),
   xmlUrl: (id: string) => `/api/projects/${id}/export.xml`,
   srtUrl: (id: string) => `/api/projects/${id}/captions.srt`,

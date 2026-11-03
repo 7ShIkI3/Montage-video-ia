@@ -100,6 +100,21 @@ class TextItem(BaseModel):
     position: Literal["haut", "centre", "bas"] = "centre"
 
 
+class Comment(BaseModel):
+    """Commentaire du monteur posé sur un moment précis, que l'IA lit et applique.
+
+    Il est ancré sur le rush (média + instant source) et non sur la timeline : il reste au bon
+    endroit quand l'IA refait le montage."""
+
+    id: str = Field(default_factory=lambda: new_id("n_"))
+    media_id: str | None = None  # None = commentaire général sur tout le montage
+    src_t: float = 0.0
+    text: str
+    status: Literal["ouvert", "applique", "incompris"] = "ouvert"
+    reply: str = ""
+    created_at: float = Field(default_factory=time.time)
+
+
 class SfxItem(BaseModel):
     """Bruitage placé sur la piste Effets sonores."""
 
@@ -157,6 +172,7 @@ class Timeline(BaseModel):
     texts: list[TextItem] = Field(default_factory=list)
     sfx: list[SfxItem] = Field(default_factory=list)
     overlays: list[OverlayItem] = Field(default_factory=list)
+    comments: list[Comment] = Field(default_factory=list)
     reframe: bool = True  # recadrage automatique sur le visage quand le format est plus étroit que la source
 
     @property

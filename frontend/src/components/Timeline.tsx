@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtTime } from "../api";
-import { clipDur, clipStarts, Sel, timelineDuration, useStore } from "../store";
+import { clipDur, clipStarts, commentTime, Sel, timelineDuration, useStore } from "../store";
 
 type Env = { hop: number; envelope: number[] };
 const envCache: Record<string, Env | "loading"> = {};
@@ -264,6 +264,19 @@ export function TimelineView() {
                 🔊 {labelOf(catalog?.sfx, s.kind)}
               </div>
             ))}
+          </div>
+          <div className="track track-comments" data-label="Commentaires" onMouseDown={seekFromEvent}>
+            {(tl.comments || []).map((cm) => {
+              const t = commentTime(tl, cm);
+              if (t == null) return null;
+              return (
+                <div key={cm.id} className={`cm-pin s-${cm.status} ${isSel("comment", cm.id) ? "sel" : ""}`}
+                  style={{ left: t * pps }} title={`${cm.text}${cm.reply ? "\nIA : " + cm.reply : ""}`}
+                  onMouseDown={(e) => { e.stopPropagation(); selectItem({ kind: "comment", id: cm.id }); setPlayhead(t); }}>
+                  💬
+                </div>
+              );
+            })}
           </div>
           <div className="track track-captions" onMouseDown={seekFromEvent}>
             {tl.captions !== "aucun" &&

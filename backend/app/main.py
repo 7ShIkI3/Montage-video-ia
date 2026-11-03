@@ -200,6 +200,14 @@ def command(pid: str, body: Command):
     return manager.submit(pid, "consigne", lambda ctx: pipeline.ai_command(pid, body.instruction.strip(), ctx))
 
 
+@app.post("/api/projects/{pid}/comments/apply")
+def apply_comments(pid: str):
+    p = _project(pid)
+    if not any(c.status == "ouvert" for c in p.timeline.comments):
+        raise HTTPException(400, "Aucun commentaire en attente.")
+    return manager.submit(pid, "commentaires", lambda ctx: pipeline.apply_comments(pid, ctx))
+
+
 @app.put("/api/projects/{pid}/timeline")
 def put_timeline(pid: str, timeline: Timeline):
     p = _project(pid)

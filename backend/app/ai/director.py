@@ -310,8 +310,10 @@ PLAN_SCHEMA = {
         "format": {"type": "string", "enum": ["16:9", "9:16", "1:1", "inchangé"]},
         "captions": {"type": "string", "enum": ["karaoke", "classique", "aucun", "inchangé"]},
         "music": {"type": "string", "enum": ["oui", "non", "inchangé"]},
+        "comment_replies": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["title", "summary", "clips", "look", "texts", "sfx", "broll", "format", "captions", "music"],
+    "required": ["title", "summary", "clips", "look", "texts", "sfx", "broll", "format", "captions", "music",
+                 "comment_replies"],
     "additionalProperties": False,
 }
 
@@ -349,7 +351,12 @@ Habillage (tu es aussi le monteur truquiste, sauf si la consigne demande la sobr
   prise de parole ; start en temps timeline ; plein cadre ou en incrustation.
 Effets vidéo possibles : {", ".join(fx.VIDEO_EFFECTS)}.
 Effets audio possibles : {", ".join(fx.AUDIO_EFFECTS)}.
-Bruitages possibles : {", ".join(fx.SFX)}."""
+Bruitages possibles : {", ".join(fx.SFX)}.
+
+Commentaires du monteur : quand on te donne des commentaires numérotés posés sur des moments précis,
+ils passent avant tes propres choix. Applique chacun sur le plan ou l'instant visé, et réponds dans
+comment_replies (une phrase courte par commentaire, dans le même ordre, qui dit ce que tu as fait ou
+pourquoi tu ne l'as pas fait). Sans commentaire, renvoie comment_replies vide."""
 
 
 def _segments_table(segments: list[Segment], limit: int = 700) -> str:
@@ -448,23 +455,51 @@ class ClaudeDirector:
         return tl
 
     def direct(self, segments: list[Segment], settings: EditSettings, media_order: list[str],
-               music_track: str | None = None) -> Timeline:
+               music_track: str | None = None, comment_lines: list[str] | None = None) -> Timeline:
         target = settings.target_duration or STYLES[settings.style].default_target
-        user = (
+        notes = ("Commentaires du monteur (à respecter) :\n" + "\n".join(comment_lines) + "\n\n") if comment_lines else ""
+        user = notes + (
             f"Style : {settings.style}. Format : {settings.format}. "
             f"Durée cible : {f'{int(target)} s' if target else 'libre (ce qui est nécessaire)'}.\n"
             f"Ordre des fichiers : {', '.join(media_order)}.\n"
             f"Consignes de l'utilisateur : {settings.instructions or 'aucune'}\n\n"
             f"Moments candidats :\n{_segments_table(segments)}"
         )
-        return self._to_timeline(self._call(user), segments, settings, music_track)
+        plan = self._call(user)
+        tl = self._to_timeline(plan, segments, settings, music_track)
+        self.last_replies = list(plan.get("comment_replies") or [])
+        return tl
+
+    @staticmethod
+    def _describe(timeline: Timeline) -> str:
+        lines = [
+            f"{i + 1}. {c.segment_id} [{c.src_in:.2f}-{c.src_out:.2f}] zoom {c.zoom:.2f} vitesse {c.speed} "
+            f"transition {c.transition} effets {','.join(c.effects) or '-'} audio {','.join(c.audio_effects) or '-'}"
+            for i, c in enumerate(timeline.clips)
+        ]
+        lines.append(f"look {timeline.look}")
+        lines += [f"texte {x.style} à {x.start:.1f} s ({x.duration:.1f} s, {x.position}) : {x.text}" for x in timeline.texts]
+        lines += [f"bruitage {x.kind} à {x.start:.1f} s" for x in timeline.sfx]
+        return "\n".join(lines)
+
+    def apply_comments(self, timeline: Timeline, comment_lines: list[str], segments: list[Segment],
+                       settings: EditSettings, music_track: str | None = None) -> tuple[Timeline, list[str]]:
+        user = (
+            f"Voici le montage actuel (style {settings.style}, format {timeline.format}, "
+            f"sous-titres {timeline.captions}, durée {timeline.duration:.1f} s) :\n{self._describe(timeline)}\n\n"
+            "Commentaires du monteur à appliquer :\n" + "\n".join(comment_lines) + "\n\n"
+            "Renvoie le montage complet modifié (garde tel quel ce que les commentaires ne touchent pas), "
+            "avec une réponse par commentaire dans comment_replies.\n\n"
+            f"Moments candidats disponibles :\n{_segments_table(segments)}"
+        )
+        plan = self._call(user)
+        tl = self._to_timeline(plan, segments, settings, music_track)
+        tl.music = timeline.music
+        return tl, list(plan.get("comment_replies") or [])
 
     def command(self, instruction: str, timeline: Timeline, segments: list[Segment],
                 settings: EditSettings, music_track: str | None = None) -> Timeline:
-        current = "\n".join(
-            f"{i + 1}. {c.segment_id} [{c.src_in:.2f}-{c.src_out:.2f}] zoom {c.zoom:.2f}"
-            for i, c in enumerate(timeline.clips)
-        )
+        current = self._describe(timeline)
         user = (
             f"Voici le montage actuel (style {settings.style}, format {timeline.format}, "
             f"sous-titres {timeline.captions}, durée {timeline.duration:.1f} s) :\n{current}\n\n"

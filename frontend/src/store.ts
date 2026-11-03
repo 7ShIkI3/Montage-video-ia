@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, CaptionLine, Clip, EffectsCatalog, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript } from "./api";
+import { api, CaptionLine, Clip, Comment, EffectsCatalog, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript } from "./api";
 
 const uid = () => "c_" + Math.random().toString(36).slice(2, 12);
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
@@ -8,7 +8,20 @@ const MIN_CLIP = 0.1;
 export const clipDur = (c: Clip) => (c.src_out - c.src_in) / Math.max(0.05, c.speed || 1);
 const rid = (p: string) => p + Math.random().toString(36).slice(2, 12);
 
-export type Sel = { kind: "clip" | "text" | "sfx" | "overlay"; id: string };
+export type Sel = { kind: "clip" | "text" | "sfx" | "overlay" | "comment"; id: string };
+type ItemKind = "text" | "sfx" | "overlay" | "comment";
+
+/** Position sur la timeline d'un commentaire ancré sur un rush (null si le passage n'est plus monté). */
+export function commentTime(tl: Timeline, c: Comment): number | null {
+  if (!c.media_id) return null;
+  let t = 0;
+  for (const clip of tl.clips) {
+    if (clip.media_id === c.media_id && c.src_t >= clip.src_in - 1e-3 && c.src_t < clip.src_out + 1e-3)
+      return t + (c.src_t - clip.src_in) / Math.max(0.05, clip.speed || 1);
+    t += clipDur(clip);
+  }
+  return null;
+}
 
 export function clipStarts(tl: Timeline): number[] {
   const out: number[] = [];
@@ -78,12 +91,13 @@ interface State {
   addText: (patch?: Partial<TextItem>) => void;
   addSfx: (kind: string) => void;
   addOverlay: (o: Omit<OverlayItem, "id">) => void;
-  updateItem: (kind: "text" | "sfx" | "overlay", id: string, patch: Record<string, unknown>) => void;
-  deleteItem: (kind: "text" | "sfx" | "overlay", id: string) => void;
+  updateItem: (kind: ItemKind, id: string, patch: Record<string, unknown>) => void;
+  deleteItem: (kind: ItemKind, id: string) => void;
+  addComment: (text: string, general?: boolean) => boolean;
 }
 
-const listOf = (tl: Timeline, kind: "text" | "sfx" | "overlay") =>
-  (kind === "text" ? tl.texts : kind === "sfx" ? tl.sfx : tl.overlays) as Array<{ id: string }>;
+const listOf = (tl: Timeline, kind: ItemKind) =>
+  (kind === "text" ? tl.texts : kind === "sfx" ? tl.sfx : kind === "comment" ? tl.comments : tl.overlays) as Array<{ id: string }>;
 
 export const useStore = create<State>((set, get) => ({
   project: null,
@@ -247,6 +261,21 @@ export const useStore = create<State>((set, get) => ({
     });
     get().selectItem({ kind: "sfx", id });
   },
+  addComment: (text, general = false) => {
+    const { timeline, playhead } = get();
+    if (!timeline || !text.trim()) return false;
+    const hit = general ? null : clipAt(timeline, Math.min(playhead, Math.max(0, timelineDuration(timeline) - 1e-3)));
+    const c = hit ? timeline.clips[hit.index] : null;
+    const id = rid("n_");
+    get().edit((tl) => {
+      tl.comments = [...(tl.comments || []), {
+        id, text: text.trim(), status: "ouvert", reply: "", created_at: Date.now() / 1000,
+        media_id: c ? c.media_id : null,
+        src_t: c && hit ? +(c.src_in + (playhead - hit.start) * (c.speed || 1)).toFixed(3) : 0,
+      }];
+    });
+    return true;
+  },
   addOverlay: (o) => {
     const id = rid("o_");
     get().edit((tl) => {
@@ -263,6 +292,7 @@ export const useStore = create<State>((set, get) => ({
     get().edit((tl) => {
       if (kind === "text") tl.texts = tl.texts.filter((x) => x.id !== id);
       else if (kind === "sfx") tl.sfx = tl.sfx.filter((x) => x.id !== id);
+      else if (kind === "comment") tl.comments = tl.comments.filter((x) => x.id !== id);
       else tl.overlays = tl.overlays.filter((x) => x.id !== id);
     });
     set({ item: null });

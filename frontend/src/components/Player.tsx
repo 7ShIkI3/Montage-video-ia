@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, Clip, fmtTime, OverlayItem, Timeline } from "../api";
-import { clipAt, clipStarts, timelineDuration, useStore } from "../store";
+import { clipAt, clipStarts, commentTime, timelineDuration, useStore } from "../store";
 import { cssFilter, fxClasses, overlaysFor } from "../fxPreview";
 
 // Lecture de la timeline en direct, sans rendu : deux lecteurs vidéo alternent
@@ -287,6 +287,10 @@ export function Player() {
     () => captions.find((l) => playhead >= l.start && playhead < l.end + 0.05),
     [captions, playhead],
   );
+  const bubbles = tl ? (tl.comments || []).filter((c) => {
+    const t = commentTime(tl, c);
+    return t != null && playhead >= t - 0.05 && playhead < t + 2;
+  }) : [];
   const texts = (tl?.texts || []).filter((x) => playhead >= x.start && playhead < x.start + x.duration);
   const fmt = tl?.format ?? "16:9";
   const aspect = fmt === "16:9" ? "16 / 9" : fmt === "9:16" ? "9 / 16" : "1 / 1";
@@ -313,6 +317,9 @@ export function Player() {
               Importe tes rushes puis clique sur <b>Monter avec l'IA</b>
             </div>
           )}
+          {bubbles.map((c) => (
+            <div key={c.id} className={`cm-bubble s-${c.status}`}>💬 {c.text}</div>
+          ))}
           {texts.map((x) => (
             <div key={x.id} className={`ti ti-${x.style} pos-${x.position}`}>
               {x.style === "titre" || x.style === "gros_texte" ? x.text.toUpperCase() : x.text}

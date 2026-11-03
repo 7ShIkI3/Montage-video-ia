@@ -144,3 +144,29 @@ def test_high_fps_and_resolution(rush, tmp_path):
     render(p, tl, {}, out, tmp_path, "2160p", fps=120)
     info = ffmpeg.probe(out)
     assert (info["width"], info["height"], round(info["fps"])) == (3840, 2160, 120)
+
+
+def test_comments_guide_the_ai(rush):
+    """Un commentaire posé sur un moment est appliqué, puis respecté quand l'IA refait le montage."""
+    c = client
+    pid = c.post("/api/projects", json={"name": "Commentaires"}).json()["id"]
+    with rush.open("rb") as f:
+        mid = c.post(f"/api/projects/{pid}/media", files=[("files", ("rush.mp4", f, "video/mp4"))]).json()[0]["id"]
+    assert _wait(c.post(f"/api/projects/{pid}/auto-edit", json={"style": "youtube"}).json())["status"] == "termine"
+    tl = c.get(f"/api/projects/{pid}").json()["timeline"]
+    covers = lambda tl, t: any(x["media_id"] == mid and x["src_in"] <= t < x["src_out"] for x in tl["clips"])
+    assert covers(tl, 9.5)
+    tl["comments"] = [{"media_id": mid, "src_t": 9.5, "text": "Supprime ce passage"},
+                      {"media_id": mid, "src_t": 1.0, "text": "Ajoute un texte « Salut ! »"}]
+    assert c.put(f"/api/projects/{pid}/timeline", json=tl).status_code == 200
+    j = _wait(c.post(f"/api/projects/{pid}/comments/apply").json())
+    assert j["status"] == "termine", j
+    tl = c.get(f"/api/projects/{pid}").json()["timeline"]
+    assert not covers(tl, 9.5)
+    assert all(x["status"] == "applique" and x["reply"] for x in tl["comments"])
+    assert any(t["text"] == "Salut !" for t in tl["texts"])
+    # Re-montage complet : le commentaire est conservé et toujours respecté.
+    assert _wait(c.post(f"/api/projects/{pid}/auto-edit", json={"style": "youtube"}).json())["status"] == "termine"
+    tl = c.get(f"/api/projects/{pid}").json()["timeline"]
+    assert len(tl["comments"]) == 2 and not covers(tl, 9.5)
+    assert c.post(f"/api/projects/{pid}/comments/apply").status_code == 400

@@ -3,7 +3,7 @@ import { api, Health, waitJob } from "../api";
 import { useStore } from "../store";
 import { AIPanel, MediaPanel } from "./LeftPanel";
 import { Player } from "./Player";
-import { CommandBar, Inspector, TranscriptPanel } from "./RightPanel";
+import { CommandBar, CommentsPanel, Inspector, TranscriptPanel } from "./RightPanel";
 import { TimelineView } from "./Timeline";
 
 function useAutosave() {
@@ -39,6 +39,7 @@ function useShortcuts() {
       else if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); s.undo(); }
       else if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); s.redo(); }
       else if (e.key.toLowerCase() === "s" && !mod) { s.splitAtPlayhead(); }
+      else if (e.key.toLowerCase() === "c" && !mod) { e.preventDefault(); s.setPlaying(false); document.getElementById("comment-box")?.focus(); }
       else if ((e.key === "Delete" || e.key === "Backspace") && s.item) {
         if (s.item.kind === "clip") s.deleteClip(s.item.id);
         else s.deleteItem(s.item.kind, s.item.id);
@@ -244,6 +245,7 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
       </main>
       <aside className="right">
         <CommandBar />
+        <CommentsPanel />
         <Inspector />
         <TranscriptPanel />
       </aside>

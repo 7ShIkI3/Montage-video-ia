@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { api, Clip, EffectsCatalog, fmtTime, Opt, Timeline, waitJob } from "../api";
-import { clipStarts, useStore } from "../store";
+import { clipAt, clipStarts, commentTime, useStore } from "../store";
 
 export function CommandBar() {
   const project = useStore((s) => s.project);
@@ -54,6 +54,89 @@ export function CommandBar() {
   );
 }
 
+// Commentaires de montage : posés à un instant (ou sur tout le montage), l'IA les lit et les applique.
+export function CommentsPanel() {
+  const project = useStore((s) => s.project);
+  const tl = useStore((s) => s.timeline);
+  const playhead = useStore((s) => s.playhead);
+  const job = useStore((s) => s.job);
+  const item = useStore((s) => s.item);
+  const dirty = useStore((s) => s.dirty);
+  const { addComment, deleteItem, setPlayhead, selectItem, setJob, notify } = useStore.getState();
+  const [text, setText] = useState("");
+  const [general, setGeneral] = useState(false);
+  if (!tl || !project) return null;
+  const comments = tl.comments || [];
+  const open = comments.filter((c) => c.status === "ouvert");
+  const busy = !!job && (job.status === "en_cours" || job.status === "en_attente");
+  const hit = tl.clips.length ? clipAt(tl, playhead) : null;
+  const clipName = hit ? project.media.find((m) => m.id === tl.clips[hit.index].media_id)?.filename : null;
+  const sorted = [...comments].sort((a, b) => (commentTime(tl, a) ?? -1) - (commentTime(tl, b) ?? -1));
+
+  const add = () => {
+    if (addComment(text, general || !hit)) setText("");
+  };
+  const apply = async () => {
+    try {
+      if (dirty) {
+        await api.saveTimeline(project.id, useStore.getState().timeline!);
+        useStore.getState().markSaved();
+      }
+      const before = useStore.getState().timeline;
+      const done = await waitJob(await api.applyComments(project.id), setJob);
+      await useStore.getState().refreshProject();
+      if (before) useStore.setState((s) => ({ past: [...s.past, before], future: [] }));
+      notify(`IA : ${(done.result as { message?: string })?.message ?? "commentaires appliqués"}.`);
+    } catch (e) {
+      notify((e as Error).message);
+    } finally {
+      setJob(null);
+    }
+  };
+  const label = { ouvert: "En attente", applique: "Appliqué", incompris: "Pas compris" } as const;
+
+  return (
+    <section className="panel comments">
+      <header>
+        <h3>Commentaires pour l'IA</h3>
+        <span className="muted small">{open.length} en attente</span>
+      </header>
+      <textarea id="comment-box" rows={2} value={text} disabled={busy}
+        placeholder={hit && !general ? `À ${fmtTime(playhead, true)} sur ${clipName} : « coupe ce passage », « ralenti », « texte "Wow" »…` : "Remarque sur tout le montage…"}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); add(); } }} />
+      <div className="comment-row">
+        <label className="inline small"><input type="checkbox" checked={general || !hit} disabled={!hit}
+          onChange={(e) => setGeneral(e.target.checked)} /> Sur tout le montage</label>
+        <button className="small-btn" disabled={!text.trim() || busy} onClick={add}>💬 Ajouter</button>
+      </div>
+      {sorted.length > 0 && (
+        <ul className="comment-list">
+          {sorted.map((c) => {
+            const t = commentTime(tl, c);
+            return (
+              <li key={c.id} className={`cm cm-${c.status} ${item?.kind === "comment" && item.id === c.id ? "sel" : ""}`}
+                onClick={() => { selectItem({ kind: "comment", id: c.id }); if (t != null) setPlayhead(t); }}>
+                <div className="cm-head">
+                  <b>{c.media_id ? (t != null ? fmtTime(t, true) : "passage retiré") : "Général"}</b>
+                  <span className={`cm-status s-${c.status}`}>{label[c.status]}</span>
+                  <button className="link" title="Supprimer" onClick={(e) => { e.stopPropagation(); deleteItem("comment", c.id); }}>✕</button>
+                </div>
+                <div>{c.text}</div>
+                {c.reply && <div className="cm-reply">IA : {c.reply}</div>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <button className="primary" disabled={!open.length || busy} onClick={apply}>
+        {busy && job?.kind === "commentaires" ? "L'IA applique…" : `Appliquer les commentaires (${open.length})`}
+      </button>
+      <p className="muted small">Les commentaires restent attachés au moment filmé : l'IA les respecte aussi quand elle refait tout le montage.</p>
+    </section>
+  );
+}
+
 export function Inspector() {
   const project = useStore((s) => s.project);
   const tl = useStore((s) => s.timeline);
@@ -94,7 +177,7 @@ export function Inspector() {
           </label>
           {catalog && <ClipEffects c={c} catalog={catalog} />}
         </>
-      ) : it && it.kind !== "clip" ? (
+      ) : it && it.kind !== "clip" && it.kind !== "comment" ? (
         <ItemEditor />
       ) : (
         <>
