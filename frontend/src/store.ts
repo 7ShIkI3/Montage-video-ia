@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, CaptionLine, Clip, Comment, EffectsCatalog, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript } from "./api";
+import { api, CaptionLine, Clip, Comment, EffectsCatalog, ImpactItem, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript } from "./api";
 
 const uid = () => "c_" + Math.random().toString(36).slice(2, 12);
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
@@ -8,8 +8,8 @@ const MIN_CLIP = 0.1;
 export const clipDur = (c: Clip) => (c.src_out - c.src_in) / Math.max(0.05, c.speed || 1);
 const rid = (p: string) => p + Math.random().toString(36).slice(2, 12);
 
-export type Sel = { kind: "clip" | "text" | "sfx" | "overlay" | "comment"; id: string };
-type ItemKind = "text" | "sfx" | "overlay" | "comment";
+export type Sel = { kind: "clip" | "text" | "sfx" | "overlay" | "comment" | "impact"; id: string };
+export type ItemKind = "text" | "sfx" | "overlay" | "comment" | "impact";
 
 /** Position sur la timeline d'un commentaire ancré sur un rush (null si le passage n'est plus monté). */
 export function commentTime(tl: Timeline, c: Comment): number | null {
@@ -94,6 +94,7 @@ interface State {
   selectItem: (s: Sel | null) => void;
   addText: (patch?: Partial<TextItem>) => void;
   addSfx: (kind: string) => void;
+  addImpact: (kind: string) => void;
   addOverlay: (o: Omit<OverlayItem, "id">) => void;
   updateItem: (kind: ItemKind, id: string, patch: Record<string, unknown>) => void;
   deleteItem: (kind: ItemKind, id: string) => void;
@@ -101,7 +102,8 @@ interface State {
 }
 
 const listOf = (tl: Timeline, kind: ItemKind) =>
-  (kind === "text" ? tl.texts : kind === "sfx" ? tl.sfx : kind === "comment" ? tl.comments : tl.overlays) as Array<{ id: string }>;
+  (kind === "text" ? tl.texts : kind === "sfx" ? tl.sfx : kind === "comment" ? tl.comments
+    : kind === "impact" ? (tl.impacts ??= []) : tl.overlays) as Array<{ id: string }>;
 
 export const useStore = create<State>((set, get) => ({
   project: null,
@@ -269,6 +271,14 @@ export const useStore = create<State>((set, get) => ({
     });
     get().selectItem({ kind: "sfx", id });
   },
+  addImpact: (kind) => {
+    const id = rid("i_");
+    const start = get().playhead;
+    get().edit((tl) => {
+      tl.impacts = [...(tl.impacts || []), { id, start, kind, intensity: 1, x: 0.5, y: 0.5, reason: "" } as ImpactItem];
+    });
+    get().selectItem({ kind: "impact", id });
+  },
   addComment: (text, general = false) => {
     const { timeline, playhead, pendingRegion } = get();
     if (!timeline || !text.trim()) return false;
@@ -304,6 +314,7 @@ export const useStore = create<State>((set, get) => ({
       if (kind === "text") tl.texts = tl.texts.filter((x) => x.id !== id);
       else if (kind === "sfx") tl.sfx = tl.sfx.filter((x) => x.id !== id);
       else if (kind === "comment") tl.comments = tl.comments.filter((x) => x.id !== id);
+      else if (kind === "impact") tl.impacts = (tl.impacts || []).filter((x) => x.id !== id);
       else tl.overlays = tl.overlays.filter((x) => x.id !== id);
     });
     set({ item: null });

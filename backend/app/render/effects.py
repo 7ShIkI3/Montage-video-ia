@@ -37,6 +37,11 @@ VIDEO_EFFECTS: dict[str, dict] = {
     "tremblement": {"label": "Tremblement caméra", "group": "mouvement"},
     "zoom_lent": {"label": "Zoom lent (Ken Burns)", "group": "mouvement"},
     "pulsation": {"label": "Pulsation (zoom au rythme)", "group": "mouvement"},
+    # Rendus par le moteur 3D (render/scene3d.py)
+    "3d_orbite": {"label": "Orbite 3D (caméra qui tourne)", "group": "3d"},
+    "3d_bascule": {"label": "Bascule 3D d'entrée", "group": "3d"},
+    "3d_rotation": {"label": "Rotation 3D d'entrée", "group": "3d"},
+    "3d_flottant": {"label": "Écran flottant 3D", "group": "3d"},
 }
 
 LOOKS = ["aucun", "cinema", "vif", "vintage", "noir_et_blanc", "froid", "chaud", "sepia"]
@@ -85,6 +90,9 @@ TRANSITIONS: dict[str, str] = {
     "glissement": "Glissement",
     "flou": "Flou d'entrée",
     "glitch": "Glitch",
+    "cube_3d": "Cube 3D",
+    "flip_3d": "Retournement 3D",
+    "porte_3d": "Porte 3D",
 }
 
 
@@ -201,6 +209,7 @@ def ensure_sfx() -> dict[str, Path]:
 
 
 def catalog() -> dict:
+    from .scene3d import IMPACTS
     return {
         "video_effects": [{"id": k, **v} for k, v in VIDEO_EFFECTS.items()],
         "looks": [{"id": k, "label": "Aucun" if k == "aucun" else VIDEO_EFFECTS[k]["label"]} for k in LOOKS],
@@ -211,6 +220,8 @@ def catalog() -> dict:
             {"id": "titre", "label": "Titre animé"}, {"id": "bandeau", "label": "Bandeau (bas d'écran)"},
             {"id": "legende", "label": "Légende"}, {"id": "gros_texte", "label": "Gros texte choc"},
             {"id": "emoji", "label": "Emoji"},
+            {"id": "texte_3d", "label": "Texte 3D en relief"},
         ],
+        "impacts": [{"id": k, "label": v["label"]} for k, v in IMPACTS.items()],
         "speeds": [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0],
     }

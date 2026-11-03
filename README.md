@@ -24,6 +24,12 @@ Le plan détaillé et la stratégie sont dans [PLAN.md](PLAN.md).
    QuickSync, VideoToolbox, AMF) ou x264, plus un fichier `.srt`, ou en **XML** pour finir dans Premiere Pro,
    DaVinci Resolve ou Final Cut Pro.
 9. **Prépare la publication** : titres, description avec chapitres YouTube, hashtags et miniature.
+10. **Moteur 3D** (logiciel, NumPy + OpenCV) : caméra en perspective, transitions cube / retournement / porte,
+    écran en orbite ou flottant, bascule et rotation d'entrée, textes en relief animés, et une piste
+    **Impacts** (secousse 3D, zoom choc, flash, flash rouge, étincelles 3D, onde de choc).
+11. **Edit PvP** (gaming) : détecte les coups dans le son, regroupe les combos, garde les meilleurs, met un
+    ralenti sur le coup final, cale chaque coupe sur le tempo de la musique (rythme électro généré si aucune
+    musique n'est choisie) et pose secousses, étincelles, flashs et « COMBO xN » en 3D.
 
 Avec une clé API Anthropic, le réalisateur est **Claude** : il comprend le sens du discours, choisit les
 meilleurs passages, écrit un titre et applique des consignes libres. Sans clé, un réalisateur local
@@ -91,7 +97,15 @@ cd backend && python -m pytest -q
 ```
 
 Le test de bout en bout crée un rush synthétique, lance le montage IA, retouche la timeline, applique une
-consigne puis exporte et vérifie la vidéo produite.
+consigne puis exporte et vérifie la vidéo produite. `tests/test_pvp.py` vérifie la détection des coups, le
+tempo, chaque élément 3D et un edit PvP exporté.
+
+Pour essayer l'edit PvP sans vidéo de jeu, `scripts/make_pvp_clip.py` génère un clip de combat en voxels
+(vue à la première personne, coups, éliminations et sons synthétiques) :
+
+```bash
+python scripts/make_pvp_clip.py pvp.mp4 --seconds 40 --fps 60
+```
 
 ## Structure
 
@@ -101,7 +115,11 @@ backend/app/
   analysis/              audio (silences, pics), vidéo (mouvement, plans), transcription
   ai/segments.py         découpe en moments + notation + prises répétées
   ai/director.py         réalisateurs heuristique et Claude, consignes
+  analysis/hits.py       coups (flux spectral x volume), combos, tempo
+  ai/pvp.py              style Edit PvP (combos, ralentis, calage sur le tempo, musique générée)
   render/                sous-titres (ASS animé, SRT) et rendu FFmpeg une passe
+  render/engine3d.py     moteur 3D : caméra, plans texturés, texte extrudé, particules
+  render/scene3d.py      compositeur 3D image par image entre deux passes FFmpeg
   pipeline.py, jobs.py   orchestration et tâches en arrière-plan
   main.py                API HTTP
 frontend/src/            éditeur React (lecteur, timeline, panneaux)

@@ -10,9 +10,11 @@ from .ai import director as dir_mod
 from .ai.decorate import decorate
 from .ai import publish as publish_mod
 from .ai import comments as comments_mod
+from .ai import pvp as pvp_mod
 from .ai.segments import build_segments
 from .analysis import audio as audio_an
 from .analysis import faces as faces_an
+from .analysis import hits as hits_an
 from .analysis import transcribe as tr_mod
 from .analysis import video as video_an
 from .jobs import JobContext
@@ -62,6 +64,12 @@ def analyze_media(project: Project, m: Media, ctx: JobContext, lo: float, hi: fl
             storage.save_signals(project.id, m.id, signals)
         except Exception as e:  # le recadrage centré reste possible
             log.warning("Suivi des visages impossible pour %s : %s", m.filename, e)
+    if m.has_audio and "hits" not in signals:
+        ctx.step(f"{m.filename} : détection des coups et des chocs", lo + span * 0.47)
+        if pcm is None:
+            pcm = ffmpeg.decode_audio(m.path)
+        signals["hits"] = hits_an.detect_hits(pcm, config.AUDIO_SR)
+        storage.save_signals(project.id, m.id, signals)
     if m.has_audio and storage.load_transcript(project.id, m.id) is None:
         ctx.step(f"{m.filename} : transcription (Whisper {config.WHISPER_MODEL})", lo + span * 0.5)
         try:
@@ -142,7 +150,15 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     notes = [c for c in project.timeline.comments if c.status != "incompris"]
     old_comments = project.timeline.comments
     try:
-        if director.name == "claude" and notes:
+        if settings.style == "pvp":
+            # Edit PvP : calé sur les coups et le tempo, construit localement (calcul précis au centième).
+            tl = pvp_mod.build(project.media, {m.id: (storage.load_signals(project.id, m.id) or {}).get("hits") or []
+                                               for m in project.media}, settings, project.name, music)
+            if not tl.clips:
+                project.warnings.append(tl.summary + " Montage classique utilisé à la place.")
+                tl = dir_mod.HeuristicDirector().direct(segments, settings.model_copy(update={"style": "short"}),
+                                                        order, music)
+        elif director.name == "claude" and notes:
             lines = [comments_mod.context_line(project.timeline, c, segments, k + 1) for k, c in enumerate(notes)]
             tl = director.direct(segments, settings, order, music, comment_lines=lines)
             for c, r in zip(notes, director.last_replies):
@@ -155,7 +171,7 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         log.warning("Réalisateur Claude en échec, repli heuristique : %s", e)
         project.warnings.append(f"Réalisateur Claude indisponible ({e}) : montage heuristique utilisé.")
         tl = dir_mod.HeuristicDirector().direct(segments, settings, order, music)
-    if director.name != "claude" or not _has_effects(tl):
+    if tl.director == "heuristique" or (tl.director == "claude" and not _has_effects(tl)):
         ctx.step("Habillage : transitions, effets, bruitages, titres", 0.97)
         tl = decorate(tl, segments, settings, project.name)
     tl.comments = old_comments
@@ -164,7 +180,7 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         zone = [c for c in notes if comments_mod.is_region_action(c)]
         if zone:
             comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, zone, _faces(project))
-    if notes and tl.director != "claude":
+    if notes and tl.director != "claude":  # heuristique ou pvp
         ctx.step("Application de tes commentaires", 0.98)
         comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, notes, _faces(project))
     project.timeline = tl

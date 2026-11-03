@@ -5,12 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
+
 from .. import storage
 from ..analysis import faces as faces_an
 from ..media import ffmpeg
 from ..models import Project, Timeline, Transcript
 from . import captions as cap
 from . import effects as fx
+from . import scene3d
 
 FPS = 30  # cadence par défaut
 FPS_CHOICES = (24, 25, 30, 50, 60, 100, 120)
@@ -82,7 +85,10 @@ def mask_filters(masks, tag: str, face_kf: list[tuple[float, float]] | None = No
 def build_command(project: Project, timeline: Timeline, transcripts: dict[str, Transcript],
                   out_path: Path, work_dir: Path, quality: str = "1080p",
                   music_path: str | None = None, use_proxy: bool = False,
-                  fps: int | None = None, smooth: bool = False) -> tuple[list[str], float]:
+                  fps: int | None = None, smooth: bool = False,
+                  three_d: bool = False) -> tuple[list[str], float]:
+    """three_d=True : la sortie vidéo (avant sous-titres) part en images brutes BGR sur stdout pour le
+    moteur 3D, et le son va dans work_dir/audio.m4a. Sinon : un seul fichier final."""
     if not timeline.clips:
         raise ValueError("La timeline est vide : rien à exporter.")
     W, H = SIZES[(timeline.format, quality)]
@@ -216,10 +222,7 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
             vlabel = "vlook"
 
     # --- sous-titres + piste Textes (un seul fichier ASS) ---
-    lines = cap.build_lines(timeline, transcripts) if timeline.captions != "aucun" else []
-    if lines or timeline.texts:
-        ass = cap.to_ass(lines, W, H, timeline.captions, timeline.format, timeline.texts)
-        (work_dir / "captions.ass").write_text(ass, encoding="utf-8")
+    if write_ass(timeline, transcripts, W, H, work_dir) and not three_d:
         filters.append(f"[{vlabel}]ass=captions.ass[vout]")
         vlabel = "vout"
 
@@ -264,6 +267,17 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
     script = work_dir / "filtergraph.txt"
     script.write_text(";\n".join(filters), encoding="utf-8")
 
+    if three_d:
+        filters.append(f"[{vlabel}]format=bgr24[vraw]")
+        script.write_text(";\n".join(filters), encoding="utf-8")
+        args = [
+            *inputs,
+            "-filter_complex_script", str(script),
+            "-map", "[aout]", "-c:a", "aac", "-b:a", "192k", str(work_dir / "audio.m4a"),
+            "-map", "[vraw]", "-f", "rawvideo", "-pix_fmt", "bgr24", "-r", str(FPS), "pipe:1",
+        ]
+        return args, total
+
     enc, enc_opts = ffmpeg.best_h264_encoder()
     args = [
         *inputs,
@@ -276,14 +290,80 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
     return args, total
 
 
+def write_ass(timeline: Timeline, transcripts: dict[str, Transcript], W: int, H: int, work_dir: Path) -> bool:
+    lines = cap.build_lines(timeline, transcripts) if timeline.captions != "aucun" else []
+    texts = [t for t in timeline.texts if t.style != "texte_3d"]
+    if not (lines or texts):
+        return False
+    ass = cap.to_ass(lines, W, H, timeline.captions, timeline.format, texts)
+    (work_dir / "captions.ass").write_text(ass, encoding="utf-8")
+    return True
+
+
 def render(project: Project, timeline: Timeline, transcripts: dict[str, Transcript], out_path: Path,
            work_dir: Path, quality: str = "1080p", music_path: str | None = None,
            on_progress: Callable[[float], None] | None = None, fps: int | None = None,
            smooth: bool = False) -> Path:
-    args, total = build_command(project, timeline, transcripts, out_path, work_dir, quality, music_path,
-                                fps=fps, smooth=smooth)
-    # Le filtre ass lit captions.ass en chemin relatif depuis work_dir (évite l'échappement des chemins).
-    ffmpeg.run(args, total, on_progress, cwd=work_dir)
+    if scene3d.needs_3d(timeline):
+        render_3d(project, timeline, transcripts, out_path, work_dir, quality, music_path, on_progress, fps, smooth)
+    else:
+        args, total = build_command(project, timeline, transcripts, out_path, work_dir, quality, music_path,
+                                    fps=fps, smooth=smooth)
+        # Le filtre ass lit captions.ass en chemin relatif depuis work_dir (évite l'échappement des chemins).
+        ffmpeg.run(args, total, on_progress, cwd=work_dir)
     srt = cap.to_srt(cap.build_lines(timeline, transcripts))
     out_path.with_suffix(".srt").write_text(srt, encoding="utf-8")
     return out_path
+
+
+def render_3d(project: Project, timeline: Timeline, transcripts: dict[str, Transcript], out_path: Path,
+              work_dir: Path, quality: str, music_path: str | None, on_progress: Callable[[float], None] | None,
+              fps: int | None, smooth: bool) -> None:
+    """Rendu avec le moteur 3D : FFmpeg (montage) -> images brutes -> scène 3D -> FFmpeg (textes + encodage)."""
+    import subprocess
+    import threading
+
+    W, H = SIZES[(timeline.format, quality)]
+    FPS = fps or source_fps(project, timeline)
+    args, total = build_command(project, timeline, transcripts, out_path, work_dir, quality, music_path,
+                                fps=FPS, smooth=smooth, three_d=True)
+    has_ass = (work_dir / "captions.ass").exists()
+    enc, enc_opts = ffmpeg.best_h264_encoder()
+    video_tmp = work_dir / "video_3d.mp4"
+    dec = subprocess.Popen([ffmpeg.FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", *args],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=work_dir)
+    encp = subprocess.Popen([ffmpeg.FFMPEG, "-hide_banner", "-y", "-loglevel", "error",
+                             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "pipe:0",
+                             *(["-vf", "ass=captions.ass"] if has_ass else []),
+                             "-c:v", enc, *enc_opts, "-pix_fmt", "yuv420p", "-r", str(FPS), str(video_tmp)],
+                            stdin=subprocess.PIPE, stderr=subprocess.PIPE, cwd=work_dir)
+    errs: dict[str, bytes] = {}
+    threading.Thread(target=lambda: errs.__setitem__("dec", dec.stderr.read()), daemon=True).start()
+    threading.Thread(target=lambda: errs.__setitem__("enc", encp.stderr.read()), daemon=True).start()
+    scene = scene3d.Scene3D(timeline, W, H, FPS)
+    size = W * H * 3
+    n_total = max(1, int(round(total * FPS)))
+    n = 0
+    try:
+        while True:
+            buf = dec.stdout.read(size)
+            if not buf or len(buf) < size:
+                break
+            frame = np.frombuffer(bytearray(buf), np.uint8).reshape(H, W, 3)
+            encp.stdin.write(np.ascontiguousarray(scene.process(n, frame)).tobytes())
+            n += 1
+            if on_progress and n % 10 == 0:
+                on_progress(min(0.97, 0.97 * n / n_total))
+    finally:
+        try:
+            encp.stdin.close()
+        except BrokenPipeError:
+            pass
+    rc_dec, rc_enc = dec.wait(), encp.wait()
+    if rc_dec != 0 or rc_enc != 0:
+        msg = (errs.get("dec", b"") + errs.get("enc", b"")).decode(errors="replace").strip()
+        raise ffmpeg.FFmpegError(msg[-1500:] or "Le rendu 3D a échoué")
+    ffmpeg.run(["-i", str(video_tmp), "-i", str(work_dir / "audio.m4a"), "-map", "0:v:0", "-map", "1:a:0",
+                "-c", "copy", "-shortest", "-movflags", "+faststart", str(out_path)], cwd=work_dir)
+    if on_progress:
+        on_progress(1.0)

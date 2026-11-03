@@ -106,7 +106,7 @@ def text_events(texts: list[TextItem], width: int, height: int) -> list[str]:
     out = []
     pos_y = {"haut": int(height * 0.16), "centre": int(height * 0.5), "bas": int(height * 0.8)}
     for t in texts:
-        if not t.text.strip():
+        if not t.text.strip() or t.style == "texte_3d":  # rendu par le moteur 3D
             continue
         st, en = _ass_time(t.start), _ass_time(t.start + max(0.3, t.duration))
         txt = _esc(t.text).replace("\n", "\\N")

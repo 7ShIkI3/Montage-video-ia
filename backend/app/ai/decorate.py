@@ -35,7 +35,7 @@ def decorate(tl: Timeline, segments: list[Segment], settings: EditSettings, proj
     top = float(np.quantile(scores, 0.85)) if scores else 1.0
 
     # 1. Étalonnage global selon le style
-    tl.look = {"youtube": "vif", "short": "vif", "vlog": "cinema", "podcast": "aucun"}[style]
+    tl.look = {"youtube": "vif", "short": "vif", "vlog": "cinema", "podcast": "aucun"}.get(style, "vif")
 
     # 2. Effets par plan : voix, transitions, vitesse, mouvement
     for i, c in enumerate(clips):

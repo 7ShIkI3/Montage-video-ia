@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, Clip, fmtTime, OverlayItem, Timeline } from "../api";
+import { api, Clip, fmtTime, ImpactItem, OverlayItem, Timeline } from "../api";
 import { clipAt, clipStarts, commentTime, timelineDuration, useStore } from "../store";
 import { cssFilter, fxClasses, overlaysFor } from "../fxPreview";
 
@@ -68,6 +68,8 @@ export function Player() {
   const v1 = useRef<HTMLVideoElement>(null);
   const vo = useRef<HTMLVideoElement>(null);
   const veil = useRef<HTMLDivElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
+  const fxLayer = useRef<HTMLDivElement>(null);
   const music = useRef<HTMLAudioElement>(null);
   const active = useRef(0);
   const cur = useRef(-1);
@@ -156,6 +158,16 @@ export function Player() {
       el.animate([{ transform: `translateX(100%) ${base}` }, { transform: base }], { duration: d, easing: "ease-out" });
     } else if (tr === "flou") {
       el.animate([{ filter: `${el.style.filter === "none" ? "" : el.style.filter} blur(14px)` }, { filter: el.style.filter }], { duration: d });
+    } else if (tr === "cube_3d") {
+      el.animate([{ transform: `perspective(1100px) rotateY(-88deg) ${base}`, transformOrigin: "left center", filter: "brightness(.6)" },
+        { transform: `perspective(1100px) rotateY(0deg) ${base}`, transformOrigin: "left center", filter: el.style.filter }],
+        { duration: d, easing: "cubic-bezier(.6,0,.3,1)" });
+    } else if (tr === "flip_3d") {
+      el.animate([{ transform: `perspective(1100px) rotateY(-90deg) scale(.8) ${base}` }, { transform: `perspective(1100px) rotateY(0deg) ${base}` }],
+        { duration: d, easing: "cubic-bezier(.2,.7,.3,1.2)" });
+    } else if (tr === "porte_3d") {
+      el.animate([{ transform: `perspective(1000px) rotateY(-100deg) ${base}`, transformOrigin: "left center" },
+        { transform: `perspective(1000px) rotateY(0deg) ${base}`, transformOrigin: "left center" }], { duration: d, easing: "ease-out" });
     } else if (tr === "glitch") {
       el.animate(
         [
@@ -166,6 +178,63 @@ export function Player() {
         ],
         { duration: d },
       );
+    }
+  }
+
+  function animateEntry3d(el: HTMLVideoElement, c: Clip) {
+    const base = el.style.transform;
+    if (c.effects.includes("3d_bascule")) {
+      el.animate([{ transform: `perspective(900px) rotateX(78deg) ${base}`, transformOrigin: "center bottom" },
+        { transform: `perspective(900px) rotateX(0deg) ${base}`, transformOrigin: "center bottom" }],
+        { duration: 650, easing: "cubic-bezier(.2,.8,.3,1.25)" });
+    } else if (c.effects.includes("3d_rotation")) {
+      el.animate([{ transform: `perspective(900px) translateZ(-900px) rotateY(105deg) rotateZ(-8deg) ${base}` },
+        { transform: `perspective(900px) translateZ(0) rotateY(0) ${base}` }], { duration: 600, easing: "cubic-bezier(.2,.8,.3,1.2)" });
+    }
+  }
+
+  // Impacts 3D (aperçu CSS) : secousse, zoom choc, flashs, étincelles, onde de choc.
+  function fireImpact(im: ImpactItem) {
+    const A = Math.max(0.2, Math.min(2.5, im.intensity));
+    const st = stage.current;
+    const v = veil.current;
+    if (im.kind === "secousse" && st) {
+      const k = 6 * A;
+      st.animate([0, 1, 2, 3, 4, 5, 6].map((i) => {
+        const f = Math.exp(-i * 0.7);
+        return { transform: `perspective(900px) scale(${1 + 0.06 * f * A}) rotateZ(${(i % 2 ? -1 : 1) * 1.6 * f * A}deg) rotateX(${(i % 3 - 1) * 2 * f * A}deg) translate(${(i % 2 ? k : -k) * f}px, ${(i % 3 - 1) * k * f}px)` };
+      }).concat([{ transform: "none" }]), { duration: 420, easing: "linear" });
+    } else if (im.kind === "zoom" && st) {
+      st.animate([{ transform: "scale(1)" }, { transform: `scale(${1 + 0.2 * A})`, offset: 0.15 }, { transform: "scale(1)" }],
+        { duration: 340, easing: "ease-out", composite: "add" });
+    } else if ((im.kind === "flash" || im.kind === "flash_rouge") && v) {
+      v.style.background = im.kind === "flash" ? "#fff" : "radial-gradient(circle, transparent 35%, rgba(230,30,40,.9))";
+      v.animate([{ opacity: Math.min(0.85, 0.7 * A) }, { opacity: 0 }], { duration: im.kind === "flash" ? 140 : 220, easing: "ease-out" });
+    } else if ((im.kind === "etincelles" || im.kind === "onde") && fxLayer.current) {
+      const layer = fxLayer.current;
+      if (im.kind === "onde") {
+        const ring = document.createElement("div");
+        ring.className = "fx-ring";
+        ring.style.left = `${im.x * 100}%`;
+        ring.style.top = `${im.y * 100}%`;
+        layer.appendChild(ring);
+        ring.animate([{ transform: "translate(-50%,-50%) rotateX(62deg) scale(.15)", opacity: 1 },
+          { transform: "translate(-50%,-50%) rotateX(62deg) scale(1.6)", opacity: 0 }], { duration: 450, easing: "ease-out" })
+          .onfinish = () => ring.remove();
+      } else {
+        const n = Math.round(18 + 14 * A);
+        for (let i = 0; i < n; i++) {
+          const p = document.createElement("div");
+          p.className = "fx-spark";
+          p.style.left = `${im.x * 100}%`;
+          p.style.top = `${im.y * 100}%`;
+          layer.appendChild(p);
+          const a = Math.random() * Math.PI * 2, r = (60 + Math.random() * 160) * A;
+          p.animate([{ transform: "translate(-50%,-50%) scale(1)", opacity: 1 },
+            { transform: `translate(calc(-50% + ${Math.cos(a) * r}px), calc(-50% + ${Math.sin(a) * r + 60}px)) scale(.3)`, opacity: 0 }],
+            { duration: 300 + Math.random() * 300, easing: "cubic-bezier(.1,.7,.4,1)" }).onfinish = () => p.remove();
+        }
+      }
     }
   }
 
@@ -241,7 +310,10 @@ export function Player() {
     reported.current = t0;
     const el = vids()[active.current];
     el.play().catch(() => setPlaying(false));
-    if (t0 < 0.05) animateTransition(el, tl.clips[cur.current]);
+    if (t0 < 0.05) {
+      animateTransition(el, tl.clips[cur.current]);
+      animateEntry3d(el, tl.clips[cur.current]);
+    }
     preloadNext();
     const mu = music.current;
     if (mu && tl.music.track) {
@@ -251,6 +323,7 @@ export function Player() {
     }
     const starts = clipStarts(tl);
     const sfx = [...(tl.sfx || [])].sort((x, y) => x.start - y.start);
+    const impacts = [...(tl.impacts || [])].sort((x, y) => x.start - y.start);
 
     const tick = () => {
       const vs = vids();
@@ -260,6 +333,7 @@ export function Player() {
       const sp = c.speed || 1;
       const t = starts[cur.current] + (el.currentTime - c.src_in) / sp;
       for (const s of sfx) if (s.start > reported.current && s.start <= t) playSfx(s.kind, s.volume);
+      for (const im of impacts) if (im.start > reported.current && im.start <= t) fireImpact(im);
       reported.current = t;
       setPlayhead(t);
       syncOverlay(t, true);
@@ -290,6 +364,7 @@ export function Player() {
           setShown(active.current);
           cur.current = ni;
           animateTransition(other, n);
+          animateEntry3d(other, n);
           preloadNext();
         }
         setCurIdx(ni);
@@ -333,7 +408,7 @@ export function Player() {
     <div className="player">
       <div className="player-stage">
         <div className={`frame frame-${fmt.replace(":", "x")}`} style={{ aspectRatio: aspect }}>
-          <div className={`fxwrap ${fxClasses(fxEff, look).join(" ")}`}>
+          <div ref={stage} className={`fxwrap ${fxClasses(fxEff, look).join(" ")}`}>
             <video ref={v0} className={shown === 0 ? "on" : ""} playsInline preload="auto" />
             <video ref={v1} className={shown === 1 ? "on" : ""} playsInline preload="auto" />
           </div>
@@ -342,6 +417,7 @@ export function Player() {
           {layers.grain && <div className="layer grain" />}
           {layers.letterbox && <div className="layer letterbox" />}
           <div ref={veil} className="layer veil" />
+          <div ref={fxLayer} className="layer fx-layer" />
           {!tl?.clips.length && (
             <div className="frame-empty">
               Importe tes rushes puis clique sur <b>Monter avec l'IA</b>
@@ -395,7 +471,8 @@ export function Player() {
           )}
           {texts.map((x) => (
             <div key={x.id} className={`ti ti-${x.style} pos-${x.position}`}>
-              {x.style === "titre" || x.style === "gros_texte" ? x.text.toUpperCase() : x.text}
+              {x.style === "texte_3d" ? <span data-t={x.text}>{x.text}</span>
+                : x.style === "titre" || x.style === "gros_texte" ? x.text.toUpperCase() : x.text}
             </div>
           ))}
           {line && tl?.captions !== "aucun" && (

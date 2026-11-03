@@ -36,6 +36,7 @@ STYLES: dict[str, StyleProfile] = {
     "youtube": StyleProfile(True, 0.15, None, None, False, 3.0, 0.15),
     "vlog": StyleProfile(True, 0.1, None, None, False, 3.5, 0.15),
     "short": StyleProfile(True, 0.0, 40.0, 60.0, True, 2.5, 0.1),
+    "pvp": StyleProfile(True, 0.0, 30.0, 120.0, True, 2.5, 0.1),
 }
 
 
@@ -277,7 +278,7 @@ PLAN_SCHEMA = {
                     "start": {"type": "number"},
                     "duration": {"type": "number"},
                     "text": {"type": "string"},
-                    "style": {"type": "string", "enum": ["titre", "bandeau", "legende", "gros_texte", "emoji"]},
+                    "style": {"type": "string", "enum": ["titre", "bandeau", "legende", "gros_texte", "emoji", "texte_3d"]},
                     "position": {"type": "string", "enum": ["haut", "centre", "bas"]},
                 },
                 "required": ["start", "duration", "text", "style", "position"],
@@ -349,6 +350,9 @@ Habillage (tu es aussi le monteur truquiste, sauf si la consigne demande la sobr
   ding sur une révélation, boom sur un moment choc). Au plus un toutes les 1 à 2 secondes.
 - broll : plans d'illustration (segments kind=action non utilisés dans clips) posés par-dessus une longue
   prise de parole ; start en temps timeline ; plein cadre ou en incrustation.
+- Moteur 3D : transitions cube_3d / flip_3d / porte_3d, effets 3d_orbite / 3d_flottant / 3d_bascule /
+  3d_rotation, et texts de style texte_3d (titre en relief animé). Parfaits pour le gaming et les shorts
+  énergiques, à doser ailleurs.
 Effets vidéo possibles : {", ".join(fx.VIDEO_EFFECTS)}.
 Effets audio possibles : {", ".join(fx.AUDIO_EFFECTS)}.
 Bruitages possibles : {", ".join(fx.SFX)}.

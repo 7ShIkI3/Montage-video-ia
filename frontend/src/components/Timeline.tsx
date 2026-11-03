@@ -117,7 +117,7 @@ export function TimelineView() {
   };
 
   // Glisser un texte, un bruitage ou un plan de coupe sur sa piste (une seule étape d'annulation).
-  const startMoveItem = (e: React.MouseEvent, kind: "text" | "sfx" | "overlay", id: string, start: number) => {
+  const startMoveItem = (e: React.MouseEvent, kind: "text" | "sfx" | "overlay" | "impact", id: string, start: number) => {
     e.stopPropagation();
     e.preventDefault();
     selectItem({ kind, id });
@@ -263,6 +263,15 @@ export function TimelineView() {
                 title={`${labelOf(catalog?.sfx, s.kind)} · ${Math.round(s.volume * 100)} %`}>
                 🔊 {labelOf(catalog?.sfx, s.kind)}
               </div>
+            ))}
+          </div>
+          <div className="track track-impacts" data-label="Impacts 3D" onMouseDown={seekFromEvent}>
+            {(tl.impacts || []).map((s, k, all) => (
+              <div key={s.id} className={`impact-pin k-${s.kind} ${isSel("impact", s.id) ? "sel" : ""}`}
+                // les impacts posés au même instant s'affichent en éventail pour rester cliquables
+                style={{ left: s.start * pps + 8 * all.slice(0, k).filter((o) => Math.abs(o.start - s.start) < 0.02).length }}
+                onMouseDown={(e) => startMoveItem(e, "impact", s.id, s.start)}
+                title={`${labelOf(catalog?.impacts, s.kind)} · ${Math.round(s.intensity * 100)} %${s.reason ? " · " + s.reason : ""}`} />
             ))}
           </div>
           <div className="track track-comments" data-label="Commentaires" onMouseDown={seekFromEvent}>

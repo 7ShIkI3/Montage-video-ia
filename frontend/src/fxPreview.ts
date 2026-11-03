@@ -21,7 +21,7 @@ export function cssFilter(effects: string[], look: string): string {
 export function fxClasses(effects: string[], look: string): string[] {
   const all = new Set([look, ...effects]);
   const out: string[] = [];
-  for (const k of ["glitch", "tremblement", "pulsation", "zoom_lent", "miroir"]) if (all.has(k)) out.push(`fx-${k}`);
+  for (const k of ["glitch", "tremblement", "pulsation", "zoom_lent", "miroir", "3d_orbite", "3d_flottant"]) if (all.has(k)) out.push(`fx-${k}`);
   return out;
 }
 

@@ -1,6 +1,6 @@
 // Types et appels vers le serveur du Monteur IA.
 
-export type Style = "youtube" | "short" | "vlog" | "podcast";
+export type Style = "youtube" | "short" | "vlog" | "podcast" | "pvp";
 export type Format = "16:9" | "9:16" | "1:1";
 export type CaptionStyle = "karaoke" | "classique" | "aucun";
 
@@ -38,7 +38,7 @@ export interface Clip {
   masks: Mask[];
 }
 
-export type TextStyle = "titre" | "bandeau" | "legende" | "gros_texte" | "emoji";
+export type TextStyle = "titre" | "bandeau" | "legende" | "gros_texte" | "emoji" | "texte_3d";
 export type TextPos = "haut" | "centre" | "bas";
 
 export interface TextItem {
@@ -55,6 +55,18 @@ export interface SfxItem {
   start: number;
   kind: string;
   volume: number;
+}
+
+export type ImpactKind = "secousse" | "zoom" | "flash" | "flash_rouge" | "etincelles" | "onde";
+
+export interface ImpactItem {
+  id: string;
+  start: number;
+  kind: ImpactKind;
+  intensity: number;
+  x: number;
+  y: number;
+  reason: string;
 }
 
 export interface OverlayItem {
@@ -103,6 +115,7 @@ export interface EffectsCatalog {
   audio_effects: Opt[];
   sfx: Opt[];
   text_styles: Opt[];
+  impacts: Opt[];
   speeds: number[];
 }
 
@@ -125,6 +138,7 @@ export interface Timeline {
   texts: TextItem[];
   sfx: SfxItem[];
   overlays: OverlayItem[];
+  impacts: ImpactItem[];
   reframe: boolean;
   comments: Comment[];
 }

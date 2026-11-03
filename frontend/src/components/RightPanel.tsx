@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { api, Clip, EffectsCatalog, fmtTime, Opt, Timeline, waitJob } from "../api";
-import { clipAt, clipStarts, commentTime, useStore } from "../store";
+import { clipAt, clipStarts, commentTime, ItemKind, useStore } from "../store";
 
 export function CommandBar() {
   const project = useStore((s) => s.project);
@@ -325,8 +325,9 @@ function ClipEffects({ c, catalog }: { c: Clip; catalog: EffectsCatalog }) {
 }
 
 function GlobalFx({ tl, catalog }: { tl: Timeline; catalog: EffectsCatalog }) {
-  const { setTimelineProps, addText, addSfx } = useStore.getState();
+  const { setTimelineProps, addText, addSfx, addImpact } = useStore.getState();
   const [kind, setKind] = useState(catalog.sfx[0]?.id ?? "whoosh");
+  const [ik, setIk] = useState(catalog.impacts?.[0]?.id ?? "secousse");
   const n = tl.clips.reduce((a, c) => a + c.effects.length + c.audio_effects.length + (c.transition !== "aucune" ? 1 : 0), 0);
   return (
     <div className="fx-section">
@@ -337,7 +338,7 @@ function GlobalFx({ tl, catalog }: { tl: Timeline; catalog: EffectsCatalog }) {
       </label>
       <p className="muted small">
         {n} effet(s) et transition(s) sur les plans · {tl.texts?.length ?? 0} texte(s) · {tl.sfx?.length ?? 0} bruitage(s) ·{" "}
-        {tl.overlays?.length ?? 0} plan(s) de coupe
+        {tl.overlays?.length ?? 0} plan(s) de coupe · {tl.impacts?.length ?? 0} impact(s)
       </p>
       <div className="field-row">
         <button className="small-btn" onClick={() => addText()}>＋ Texte au curseur</button>
@@ -348,6 +349,12 @@ function GlobalFx({ tl, catalog }: { tl: Timeline; catalog: EffectsCatalog }) {
         </select>
         <button className="small-btn" onClick={() => new Audio(api.sfxUrl(kind)).play().catch(() => undefined)}>▶</button>
         <button className="small-btn" onClick={() => addSfx(kind)}>＋ Bruitage</button>
+      </div>
+      <div className="sfx-row">
+        <select value={ik} onChange={(e) => setIk(e.target.value)}>
+          {(catalog.impacts ?? []).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+        <button className="small-btn" onClick={() => addImpact(ik)}>＋ Impact 3D</button>
       </div>
     </div>
   );
@@ -360,8 +367,8 @@ function ItemEditor() {
   const catalog = useStore((s) => s.catalog);
   const { updateItem, deleteItem, selectItem } = useStore.getState();
   if (!tl || !it || it.kind === "clip" || !project) return null;
-  const up = (patch: Record<string, unknown>) => updateItem(it.kind as "text" | "sfx" | "overlay", it.id, patch);
-  const del = () => deleteItem(it.kind as "text" | "sfx" | "overlay", it.id);
+  const up = (patch: Record<string, unknown>) => updateItem(it.kind as ItemKind, it.id, patch);
+  const del = () => deleteItem(it.kind as ItemKind, it.id);
   const back = <button className="link" onClick={() => selectItem(null)}>← Montage</button>;
 
   if (it.kind === "text") {
@@ -388,6 +395,35 @@ function ItemEditor() {
           <label>Durée (s)<input type="number" step={0.1} value={x.duration.toFixed(2)} onChange={(e) => up({ duration: Math.max(0.3, +e.target.value) })} /></label>
         </div>
         <button className="small-btn danger" onClick={del}>Supprimer le texte</button>
+      </>
+    );
+  }
+  if (it.kind === "impact") {
+    const x = (tl.impacts ?? []).find((t) => t.id === it.id);
+    if (!x) return null;
+    const located = x.kind === "etincelles" || x.kind === "onde";
+    return (
+      <>
+        <header><h3>Impact 3D</h3>{back}</header>
+        {x.reason && <p className="muted small">{x.reason}</p>}
+        <div className="field-row">
+          <label>Effet
+            <select value={x.kind} onChange={(e) => up({ kind: e.target.value })}>
+              {(catalog?.impacts ?? []).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+          </label>
+          <label>Position (s)<input type="number" step={0.02} value={x.start.toFixed(2)} onChange={(e) => up({ start: Math.max(0, +e.target.value) })} /></label>
+        </div>
+        <label>Intensité {Math.round(x.intensity * 100)} %
+          <input type="range" min={0.2} max={2.5} step={0.05} value={x.intensity} onChange={(e) => up({ intensity: +e.target.value })} />
+        </label>
+        {located && (
+          <div className="field-row">
+            <label>Point X {Math.round(x.x * 100)} %<input type="range" min={0} max={1} step={0.01} value={x.x} onChange={(e) => up({ x: +e.target.value })} /></label>
+            <label>Point Y {Math.round(x.y * 100)} %<input type="range" min={0} max={1} step={0.01} value={x.y} onChange={(e) => up({ y: +e.target.value })} /></label>
+          </div>
+        )}
+        <button className="small-btn danger" onClick={del}>Supprimer l'impact</button>
       </>
     );
   }

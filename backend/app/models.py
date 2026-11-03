@@ -12,7 +12,7 @@ def new_id(prefix: str = "") -> str:
     return prefix + uuid.uuid4().hex[:10]
 
 
-Style = Literal["youtube", "short", "vlog", "podcast"]
+Style = Literal["youtube", "short", "vlog", "podcast", "pvp"]
 Format = Literal["16:9", "9:16", "1:1"]
 CaptionStyle = Literal["karaoke", "classique", "aucun"]
 
@@ -119,7 +119,7 @@ class TextItem(BaseModel):
     start: float
     duration: float = 2.5
     text: str
-    style: Literal["titre", "bandeau", "legende", "gros_texte", "emoji"] = "titre"
+    style: Literal["titre", "bandeau", "legende", "gros_texte", "emoji", "texte_3d"] = "titre"
     position: Literal["haut", "centre", "bas"] = "centre"
 
 
@@ -146,6 +146,18 @@ class SfxItem(BaseModel):
     start: float
     kind: str = "whoosh"
     volume: float = 0.8
+
+
+class ImpactItem(BaseModel):
+    """Impact sur la piste Impacts : secousse 3D, zoom choc, flash, étincelles, onde de choc."""
+
+    id: str = Field(default_factory=lambda: new_id("i_"))
+    start: float
+    kind: Literal["secousse", "zoom", "flash", "flash_rouge", "etincelles", "onde"] = "secousse"
+    intensity: float = 1.0  # 0.2 à 2.5
+    x: float = 0.5  # point d'origine à l'écran (étincelles, onde)
+    y: float = 0.5
+    reason: str = ""
 
 
 class OverlayItem(BaseModel):
@@ -196,6 +208,7 @@ class Timeline(BaseModel):
     texts: list[TextItem] = Field(default_factory=list)
     sfx: list[SfxItem] = Field(default_factory=list)
     overlays: list[OverlayItem] = Field(default_factory=list)
+    impacts: list[ImpactItem] = Field(default_factory=list)
     comments: list[Comment] = Field(default_factory=list)
     reframe: bool = True  # recadrage automatique sur le visage quand le format est plus étroit que la source
 
