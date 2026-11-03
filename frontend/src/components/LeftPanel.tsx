@@ -1,0 +1,157 @@
+import { useRef, useState } from "react";
+import { api, EditSettings, fmtTime, Style, waitJob } from "../api";
+import { useStore } from "../store";
+
+const STYLES: { id: Style; name: string; desc: string }[] = [
+  { id: "youtube", name: "YouTube", desc: "Rythme soutenu, coupes franches" },
+  { id: "short", name: "Short", desc: "Vertical, 15–60 s, accroche d'abord" },
+  { id: "vlog", name: "Vlog", desc: "Ambiance et plans d'illustration" },
+  { id: "podcast", name: "Podcast", desc: "Garde tout, retire silences et « euh »" },
+];
+
+export function MediaPanel() {
+  const project = useStore((s) => s.project);
+  const notify = useStore((s) => s.notify);
+  const input = useRef<HTMLInputElement>(null);
+  const [upload, setUpload] = useState<number | null>(null);
+  const [over, setOver] = useState(false);
+  if (!project) return null;
+
+  const send = async (files: File[]) => {
+    if (!files.length) return;
+    setUpload(0);
+    try {
+      await api.uploadMedia(project.id, files, setUpload);
+      await useStore.getState().refreshProject();
+    } catch (e) {
+      notify(`Import impossible : ${(e as Error).message}`);
+    } finally {
+      setUpload(null);
+    }
+  };
+
+  return (
+    <section className={`panel media-panel ${over ? "over" : ""}`}
+      onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => { e.preventDefault(); setOver(false); send([...e.dataTransfer.files]); }}>
+      <header>
+        <h3>Rushes</h3>
+        <button className="small-btn" onClick={() => input.current?.click()}>+ Importer</button>
+        <input ref={input} type="file" multiple accept="video/*,audio/*" hidden
+          onChange={(e) => { send([...(e.target.files ?? [])]); e.target.value = ""; }} />
+      </header>
+      {upload !== null && (
+        <div className="progress"><div style={{ width: `${upload * 100}%` }} /><span>Envoi {Math.round(upload * 100)} %</span></div>
+      )}
+      {!project.media.length && upload === null && (
+        <div className="dropzone" onClick={() => input.current?.click()}>
+          Glisse tes vidéos ici<br /><span className="muted small">MP4, MOV, MKV, WEBM… plusieurs fichiers possibles</span>
+        </div>
+      )}
+      <ul className="media-list">
+        {project.media.map((m) => (
+          <li key={m.id}>
+            <div className="thumb">
+              {m.proxy ? <img src={api.thumbUrl(project.id, m.id)} alt="" /> : <span>{m.has_video ? "🎬" : "🎙"}</span>}
+            </div>
+            <div className="meta">
+              <div className="name" title={m.filename}>{m.filename}</div>
+              <div className="muted small">
+                {fmtTime(m.duration)} · {m.width ? `${m.width}×${m.height}` : "audio"} {m.analyzed ? "· analysé ✓" : ""}
+              </div>
+            </div>
+            <button className="icon-btn" title="Retirer" onClick={async () => {
+              if (!confirm(`Retirer ${m.filename} du projet ?`)) return;
+              await api.deleteMedia(project.id, m.id);
+              await useStore.getState().refreshProject();
+            }}>✕</button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+export function AIPanel() {
+  const project = useStore((s) => s.project);
+  const job = useStore((s) => s.job);
+  const { setJob, notify } = useStore.getState();
+  const [s, setS] = useState<EditSettings | null>(null);
+  if (!project) return null;
+  const settings = s ?? project.settings;
+  const set = (patch: Partial<EditSettings>) => setS({ ...settings, ...patch });
+  const busy = !!job && (job.status === "en_cours" || job.status === "en_attente");
+
+  const run = async () => {
+    if (!project.media.length) return notify("Importe d'abord au moins une vidéo.");
+    const dirty = useStore.getState().dirty;
+    if (project.timeline.clips.length && !confirm(
+      dirty ? "Remonter remplace le montage actuel et tes retouches non enregistrées. Continuer ?"
+        : "Remonter remplace le montage actuel. Continuer ?")) return;
+    try {
+      await api.patchProject(project.id, { settings });
+      const j = await api.autoEdit(project.id, settings);
+      await waitJob(j, setJob);
+      await useStore.getState().load(project.id);
+      notify("Montage terminé. Tu peux le retoucher ou demander des changements à l'IA.");
+    } catch (e) {
+      notify(`Le montage a échoué : ${(e as Error).message}`);
+    } finally {
+      setJob(null);
+    }
+  };
+
+  return (
+    <section className="panel ai-panel">
+      <header><h3>Réalisation IA</h3></header>
+      <div className="styles">
+        {STYLES.map((st) => (
+          <button key={st.id} className={`style-card ${settings.style === st.id ? "on" : ""}`}
+            onClick={() => set({ style: st.id, format: st.id === "short" ? "9:16" : settings.format === "9:16" ? "16:9" : settings.format })}>
+            <b>{st.name}</b><span>{st.desc}</span>
+          </button>
+        ))}
+      </div>
+      <div className="field-row">
+        <label>Durée cible
+          <select value={settings.target_duration ?? ""} onChange={(e) => set({ target_duration: e.target.value ? +e.target.value : null })}>
+            <option value="">Auto</option>
+            {[15, 30, 45, 60, 90, 180, 300, 600].map((d) => <option key={d} value={d}>{d < 60 ? `${d} s` : `${d / 60} min`}</option>)}
+          </select>
+        </label>
+        <label>Format
+          <select value={settings.format} onChange={(e) => set({ format: e.target.value as EditSettings["format"] })}>
+            <option value="16:9">16:9 paysage</option>
+            <option value="9:16">9:16 vertical</option>
+            <option value="1:1">1:1 carré</option>
+          </select>
+        </label>
+      </div>
+      <label>Sous-titres
+        <select value={settings.captions} onChange={(e) => set({ captions: e.target.value as EditSettings["captions"] })}>
+          <option value="karaoke">Animés mot par mot</option>
+          <option value="classique">Classiques</option>
+          <option value="aucun">Aucun</option>
+        </select>
+      </label>
+      <div className="toggles">
+        <label><input type="checkbox" checked={settings.remove_silences} onChange={(e) => set({ remove_silences: e.target.checked })} /> Couper les silences</label>
+        <label><input type="checkbox" checked={settings.remove_fillers} onChange={(e) => set({ remove_fillers: e.target.checked })} /> Couper les « euh »</label>
+        <label><input type="checkbox" checked={settings.punch_zooms} onChange={(e) => set({ punch_zooms: e.target.checked })} /> Zooms dynamiques</label>
+        <label><input type="checkbox" checked={settings.music} onChange={(e) => set({ music: e.target.checked })} /> Musique de fond</label>
+      </div>
+      <label>Consignes pour l'IA <span className="muted small">(facultatif)</span>
+        <textarea rows={2} placeholder="Ex. : garde surtout la partie sur le matériel, ton dynamique"
+          value={settings.instructions} onChange={(e) => set({ instructions: e.target.value })} />
+      </label>
+      <button className="primary big" onClick={run} disabled={busy || !project.media.length}>
+        {busy ? "L'IA travaille…" : project.timeline.clips.length ? "↻ Remonter avec l'IA" : "✨ Monter avec l'IA"}
+      </button>
+      {busy && job && (
+        <div className="progress"><div style={{ width: `${job.progress * 100}%` }} /><span>{job.message || "En attente…"}</span></div>
+      )}
+      {project.warnings.map((w, i) => <p key={i} className="warn small">{w}</p>)}
+    </section>
+  );
+}
