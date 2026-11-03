@@ -312,6 +312,7 @@ class ExportReq(BaseModel):
     quality: str = "1080p"
     fps: int | None = None  # None = comme la source
     smooth: bool = False  # interpolation de mouvement quand la source a moins d'images
+    container: str = "mp4"  # mp4, webm, mov (ProRes) ou gif
 
 
 @app.post("/api/projects/{pid}/export")
@@ -323,7 +324,10 @@ def export(pid: str, body: ExportReq):
         raise HTTPException(400, "Qualité inconnue")
     if body.fps is not None and body.fps not in render_mod.FPS_CHOICES:
         raise HTTPException(400, f"Cadence non prise en charge (choix : {', '.join(map(str, render_mod.FPS_CHOICES))})")
-    return manager.submit(pid, "export", lambda ctx: pipeline.export(pid, body.quality, ctx, body.fps, body.smooth))
+    if body.container not in (*render_mod.CONTAINERS, "gif"):
+        raise HTTPException(400, "Format de fichier inconnu")
+    return manager.submit(pid, "export", lambda ctx: pipeline.export(pid, body.quality, ctx, body.fps, body.smooth,
+                                                                     body.container))
 
 
 @app.post("/api/projects/{pid}/publish-kit")
@@ -363,6 +367,168 @@ def get_export(pid: str, name: str):
     if not path.exists():
         raise HTTPException(404, "Export introuvable")
     return FileResponse(path, filename=path.name)
+
+
+# --- Préréglages par réseau et file d'export -------------------------------------------
+
+@app.get("/api/export-presets")
+def export_presets():
+    return [{"id": k, **v} for k, v in pipeline.PRESETS.items()]
+
+
+class PresetExportReq(BaseModel):
+    preset: str
+    versions: list[str] | None = None  # None = version active ; liste = file d'export
+
+
+@app.post("/api/projects/{pid}/export-preset")
+def export_with_preset(pid: str, body: PresetExportReq):
+    p = _project(pid)
+    if body.preset not in pipeline.PRESETS:
+        raise HTTPException(400, "Préréglage inconnu")
+    known = {v.id for v in p.versions}
+    if body.versions and not set(body.versions) <= known:
+        raise HTTPException(400, "Version inconnue")
+    return manager.submit(pid, "export", lambda ctx: pipeline.export_preset(pid, body.preset, ctx, body.versions))
+
+
+# --- Versions du montage et shorts automatiques ----------------------------------------
+
+class VersionReq(BaseModel):
+    name: str | None = None
+
+
+def _versions_view(p: Project) -> dict:
+    p.ensure_versions()
+    return {"active": p.active_version, "versions": [
+        {"id": v.id, "name": v.name, "score": v.score, "note": v.note, "created_at": v.created_at,
+         "duration": round((p.timeline if v.id == p.active_version else (v.timeline or Timeline())).duration, 2)}
+        for v in p.versions]}
+
+
+@app.get("/api/projects/{pid}/versions")
+def list_versions(pid: str):
+    return _versions_view(_project(pid))
+
+
+@app.post("/api/projects/{pid}/versions")
+def duplicate_version(pid: str, body: VersionReq):
+    p = _project(pid)
+    pipeline.version_duplicate(p, body.name)
+    storage.save_project(p)
+    return _versions_view(p)
+
+
+@app.post("/api/projects/{pid}/versions/{vid}/activate")
+def activate_version(pid: str, vid: str):
+    p = _project(pid)
+    try:
+        pipeline.version_activate(p, vid)
+    except KeyError:
+        raise HTTPException(404, "Version introuvable")
+    storage.save_project(p)
+    return p
+
+
+@app.patch("/api/projects/{pid}/versions/{vid}")
+def rename_version(pid: str, vid: str, body: VersionReq):
+    p = _project(pid)
+    v = next((v for v in p.versions if v.id == vid), None)
+    if not v:
+        raise HTTPException(404, "Version introuvable")
+    v.name = (body.name or v.name).strip()[:60] or v.name
+    storage.save_project(p)
+    return _versions_view(p)
+
+
+@app.delete("/api/projects/{pid}/versions/{vid}")
+def delete_version(pid: str, vid: str):
+    p = _project(pid)
+    try:
+        pipeline.version_delete(p, vid)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    storage.save_project(p)
+    return p
+
+
+class ShortsReq(BaseModel):
+    count: int = 3
+    duration: float = 30.0
+    format: str = "9:16"
+
+
+@app.post("/api/projects/{pid}/shorts")
+def make_shorts(pid: str, body: ShortsReq):
+    p = _project(pid)
+    if not p.media:
+        raise HTTPException(400, "Ajoute au moins une vidéo.")
+    if body.format not in ("9:16", "1:1", "16:9"):
+        raise HTTPException(400, "Format inconnu")
+    count = max(1, min(10, body.count))
+    dur = max(10.0, min(180.0, body.duration))
+    return manager.submit(pid, "shorts", lambda ctx: pipeline.make_shorts(pid, ctx, count, dur, body.format))
+
+
+# --- Images (logos, stickers) ------------------------------------------------------------
+
+IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+@app.post("/api/projects/{pid}/assets")
+async def upload_asset(pid: str, file: UploadFile = File(...)):
+    _project(pid)
+    name = _safe_name(file.filename or "image.png")
+    if Path(name).suffix.lower() not in IMAGE_EXT:
+        raise HTTPException(400, "Image attendue (PNG, JPG ou WebP).")
+    dst = storage.assets_dir(pid) / name
+    i = 1
+    while dst.exists():
+        dst = storage.assets_dir(pid) / f"{Path(name).stem} ({i}){Path(name).suffix}"
+        i += 1
+    await _save_upload(file, dst)
+    return {"asset": dst.name}
+
+
+@app.get("/api/projects/{pid}/assets/{name}")
+def get_asset(pid: str, name: str):
+    path = storage.assets_dir(pid) / Path(name).name
+    if not path.exists():
+        raise HTTPException(404, "Image introuvable")
+    return FileResponse(path)
+
+
+# --- Modèles de style ---------------------------------------------------------------------
+
+class TemplateReq(BaseModel):
+    name: str
+
+
+@app.get("/api/templates")
+def templates():
+    return pipeline.list_templates()
+
+
+@app.post("/api/projects/{pid}/templates")
+def save_template(pid: str, body: TemplateReq):
+    return pipeline.save_template(_project(pid), body.name)
+
+
+@app.post("/api/projects/{pid}/templates/{tid}/apply")
+def apply_template(pid: str, tid: str):
+    p = _project(pid)
+    try:
+        pipeline.apply_template(p, tid)
+    except KeyError:
+        raise HTTPException(404, "Modèle introuvable")
+    storage.save_project(p)
+    return p
+
+
+@app.delete("/api/templates/{tid}")
+def delete_template(tid: str):
+    pipeline.delete_template(tid)
+    return {"ok": True}
 
 
 # --- Tâches -----------------------------------------------------------------------------

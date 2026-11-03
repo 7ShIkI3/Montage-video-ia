@@ -5,6 +5,7 @@ import { AIPanel, MediaPanel } from "./LeftPanel";
 import { Player } from "./Player";
 import { CommandBar, CommentsPanel, Inspector, TranscriptPanel } from "./RightPanel";
 import { TimelineView } from "./Timeline";
+import { PresetExport, TemplatesPanel, VersionsPanel } from "./Studio";
 
 function useAutosave() {
   const tl = useStore((s) => s.timeline);
@@ -104,6 +105,7 @@ function ExportButton() {
   const [fps, setFps] = useState<number | null>(null);
   const [smooth, setSmooth] = useState(false);
   const [last, setLast] = useState<string | null>(null);
+  const [lastMany, setLastMany] = useState<string[]>([]);
   if (!project) return null;
   const busy = job?.kind === "export" && job.status !== "termine" && job.status !== "erreur";
   const used = new Set(project.timeline.clips.map((c) => c.media_id));
@@ -145,6 +147,11 @@ function ExportButton() {
       {open && (
         <div className="popover">
           <h4>Exporter la vidéo</h4>
+          <PresetExport onDone={setLastMany} />
+          {lastMany.length > 0 && (
+            <ul className="small">{lastMany.map((x) => <li key={x}><a href={api.exportUrl(project.id, x)} download>Télécharger « {x} »</a></li>)}</ul>
+          )}
+          <h4>Réglages sur mesure</h4>
           <div className="field-row">
             <label>Qualité
               <select value={quality} onChange={(e) => setQuality(e.target.value)}>
@@ -182,12 +189,13 @@ function ExportButton() {
             </div>
           </div>
           <PublishKitPanel />
-          {project.exports.filter((x) => x.endsWith(".mp4")).length > 0 && (
+          {project.exports.length > 0 && (
             <details>
-              <summary className="small">Exports précédents ({project.exports.filter((x) => x.endsWith(".mp4")).length})</summary>
+              <summary className="small">Exports précédents ({project.exports.length})</summary>
               <ul className="small">
-                {project.exports.filter((x) => x.endsWith(".mp4")).reverse().map((x) => (
-                  <li key={x}><a href={api.exportUrl(project.id, x)} download>{x}</a> · <a href={api.exportUrl(project.id, x.replace(/\.mp4$/, ".srt"))} download>.srt</a></li>
+                {[...project.exports].reverse().map((x) => (
+                  <li key={x}><a href={api.exportUrl(project.id, x)} download>{x}</a>
+                    {/\.(mp4|webm|mov)$/.test(x) && <> · <a href={api.exportUrl(project.id, x.replace(/\.(mp4|webm|mov)$/, ".srt"))} download>.srt</a></>}</li>
                 ))}
               </ul>
             </details>
@@ -240,6 +248,8 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
       <aside className="left">
         <MediaPanel />
         <AIPanel />
+        <VersionsPanel />
+        <TemplatesPanel />
       </aside>
       <main className="center">
         <Player />

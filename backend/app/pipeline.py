@@ -218,20 +218,27 @@ def ai_command(project_id: str, instruction: str, ctx: JobContext) -> dict:
     return {"message": msg, "director": director.name}
 
 
-def export(project_id: str, quality: str, ctx: JobContext, fps: int | None = None, smooth: bool = False) -> str:
+def export(project_id: str, quality: str, ctx: JobContext, fps: int | None = None, smooth: bool = False,
+           container: str = "mp4", tl: Timeline | None = None, fmt: str | None = None, label: str | None = None) -> str:
     project = storage.load_project(project_id)
-    tl = project.timeline
+    tl = (tl or project.timeline).model_copy(deep=True)
+    if fmt and fmt != tl.format:
+        tl.format = fmt  # le recadrage automatique suit le visage dans le nouveau format
     out_dir = storage.exports_dir(project.id)
-    idx = len(list(out_dir.glob("*.mp4"))) + 1
-    safe = "".join(ch for ch in (tl.title or project.name) if ch.isalnum() or ch in " -_").strip()[:50] or "montage"
+    idx = len([p for p in out_dir.iterdir() if p.suffix in (".mp4", ".webm", ".mov", ".gif")]) + 1
+    base = label or tl.title or project.name
+    safe = "".join(ch for ch in base if ch.isalnum() or ch in " -_·").strip()[:70] or "montage"
     rate = fps or render_mod.source_fps(project, tl)
-    out = out_dir / f"{idx:02d} - {safe} ({tl.format.replace(':', 'x')} {quality} {rate}fps).mp4"
+    ext = "gif" if container == "gif" else render_mod.CONTAINERS.get(container, render_mod.CONTAINERS["mp4"])[0]
+    out = out_dir / f"{idx:02d} - {safe} ({tl.format.replace(':', 'x')} {quality} {rate}fps).{ext}"
     work = storage.cache_dir(project.id) / f"render_{idx}"
     work.mkdir(parents=True, exist_ok=True)
     music = tl.music.track if tl.music.track and Path(tl.music.track).exists() else None
     ctx.step(f"Rendu {quality} à {rate} i/s" + (" avec interpolation" if smooth else ""), 0.01)
     render_mod.render(project, tl, transcripts_for(project), out.resolve(), work.resolve(), quality, music,
-                      ctx.sub(0.01, 0.99, f"Rendu {quality} à {rate} i/s"), fps=rate, smooth=smooth)
+                      ctx.sub(0.01, 0.99, f"Rendu {quality} à {rate} i/s"), fps=rate, smooth=smooth,
+                      container=container)
+    project = storage.load_project(project_id)
     project.exports.append(out.name)
     storage.save_project(project)
     ctx.step("Export terminé", 1.0)
@@ -301,3 +308,270 @@ def apply_comments(project_id: str, ctx: JobContext) -> dict:
     msg = f"{ok} commentaire(s) appliqué(s)" + (f", {len(open_c) - ok} non compris" if ok < len(open_c) else "")
     ctx.step(msg, 1.0)
     return {"message": msg}
+
+
+# ---------------------------------------------------------------------------
+# Versions du montage
+# ---------------------------------------------------------------------------
+
+def _version(project: Project, vid: str):
+    for v in project.versions:
+        if v.id == vid:
+            return v
+    raise KeyError(vid)
+
+
+def version_duplicate(project: Project, name: str | None = None):
+    """Copie la version active sous un nouveau nom et bascule dessus."""
+    from .models import Version
+    cur = project.ensure_versions()
+    cur.timeline = project.timeline.model_copy(deep=True)
+    v = Version(name=(name or f"{cur.name} (copie)").strip()[:60])
+    project.versions.append(v)
+    version_activate(project, v.id, v.timeline or cur.timeline)
+    return v
+
+
+def version_activate(project: Project, vid: str, timeline: Timeline | None = None) -> None:
+    cur = project.ensure_versions()
+    target = _version(project, vid)
+    if target.id == cur.id:
+        return
+    cur.timeline = project.timeline.model_copy(deep=True)
+    project.timeline = (timeline or target.timeline or Timeline()).model_copy(deep=True)
+    target.timeline = None
+    project.active_version = target.id
+
+
+def version_delete(project: Project, vid: str) -> None:
+    project.ensure_versions()
+    if len(project.versions) <= 1:
+        raise ValueError("Impossible de supprimer la dernière version.")
+    if vid == project.active_version:
+        other = next(v for v in project.versions if v.id != vid)
+        version_activate(project, other.id)
+    project.versions = [v for v in project.versions if v.id != vid]
+
+
+# ---------------------------------------------------------------------------
+# Shorts automatiques : plusieurs clips courts tirés des rushes, avec score viral
+# ---------------------------------------------------------------------------
+
+def _windows(segments: list[Segment], target: float, max_gap: float = 4.0):
+    """Fenêtres de segments consécutifs d'un même rush, de la durée d'un short."""
+    by_media: dict[str, list[Segment]] = {}
+    for s in sorted(segments, key=lambda s: (s.media_id, s.start)):
+        if not s.duplicate_of:
+            by_media.setdefault(s.media_id, []).append(s)
+    lo = max(6.0, target * 0.45)
+    for mid, segs in by_media.items():
+        for i in range(len(segs)):
+            win, dur = [], 0.0
+            for s in segs[i:]:
+                if win and s.start - win[-1].end > max_gap:
+                    break
+                if dur + s.duration > target * 1.15 and win:
+                    break
+                win.append(s)
+                dur += s.duration
+            if dur >= lo:
+                yield mid, win
+
+
+def virality(win: list[Segment]) -> tuple[int, list[str]]:
+    """Score 0-100 : accroche du début, intensité, réactions, rythme, fin nette."""
+    import numpy as np
+    first = win[0]
+    hook = max(first.features.get("hook", 0.0), win[1].features.get("hook", 0.0) if len(win) > 1 else 0.0)
+    mean = float(np.mean([s.score for s in win]))
+    energy = float(np.mean([s.features.get("energy", 0.0) for s in win]))
+    dur = sum(s.duration for s in win)
+    peaks = sum(s.features.get("peak", 0.0) for s in win) / max(1.0, dur / 15)
+    rate = float(np.mean([s.features.get("speech_rate", 0.0) for s in win if s.kind == "speech"] or [0.0]))
+    motion = float(np.mean([s.features.get("motion", 0.0) for s in win]))
+    ends = 1.0 if (win[-1].text.rstrip()[-1:] in ".!?…" or win[-1].kind == "action") else 0.4
+    v = (0.28 * min(1.0, hook + first.score) + 0.24 * mean + 0.14 * energy + 0.12 * min(1.0, peaks)
+         + 0.1 * min(1.0, rate / 3.2 + motion) + 0.12 * ends)
+    reasons = []
+    if hook >= 0.6:
+        reasons.append("accroche forte dès les premières secondes")
+    if energy > 0.55:
+        reasons.append("voix énergique")
+    if peaks >= 0.5:
+        reasons.append("réactions (rires, cris)")
+    if rate > 2.6 or motion > 0.45:
+        reasons.append("rythme soutenu")
+    if ends >= 1:
+        reasons.append("se termine sur une phrase complète")
+    return int(round(100 * min(1.0, v))), reasons or ["passage le plus solide disponible"]
+
+
+def make_shorts(project_id: str, ctx: JobContext, count: int = 3, target: float = 30.0,
+                fmt: str = "9:16") -> list[dict]:
+    from .models import Version
+    project = storage.load_project(project_id)
+    if not project.media:
+        raise ValueError("Ajoute au moins une vidéo.")
+    n = len(project.media)
+    for i, m in enumerate(project.media):
+        if not m.analyzed:
+            analyze_media(project, m, ctx, 0.6 * i / n, 0.6 * (i + 1) / n)
+            storage.save_project(project)
+    ctx.step("Recherche des passages les plus partageables", 0.65)
+    settings = project.settings.model_copy(update={"style": "short", "format": fmt, "target_duration": target})
+    segments = all_segments(project, settings)
+    cands = [(mid, win, *virality(win)) for mid, win in _windows(segments, target)]
+    cands.sort(key=lambda x: -x[2])
+    chosen: list[tuple] = []
+    for c in cands:
+        mid, win = c[0], c[1]
+        a, b = win[0].start, win[-1].end
+        if all(not (x[0] == mid and a < x[1][-1].end and b > x[1][0].start) for x in chosen):
+            chosen.append(c)
+        if len(chosen) >= count:
+            break
+    if not chosen:
+        raise ValueError("Pas assez de matière pour un short (il faut au moins 6 secondes de passage continu).")
+    project.ensure_versions()
+    out = []
+    names = {m.id: m.filename for m in project.media}
+    for k, (mid, win, score, reasons) in enumerate(chosen, 1):
+        ctx.step(f"Montage du short {k}/{len(chosen)}", 0.7 + 0.28 * (k - 1) / len(chosen))
+        ids = {s.id for s in win}
+        sub = [s for s in segments if s.id in ids]
+        tl = dir_mod.HeuristicDirector().direct(sub, settings, [mid], None)
+        tl = decorate(tl, sub, settings, project.name)
+        hook = next((s.text for s in win if s.text), "")
+        tl.title = " ".join(hook.split()[:6]) or f"{project.name} — short {k}"
+        tl.summary = f"Short tiré de {names.get(mid, 'la vidéo')} ({win[0].start:.0f}–{win[-1].end:.0f} s)."
+        v = Version(name=f"Short {k} · {score}/100", timeline=tl, score=score, note=", ".join(reasons).capitalize() + ".")
+        project.versions.append(v)
+        out.append({"id": v.id, "name": v.name, "score": score, "note": v.note, "duration": round(tl.duration, 1)})
+    storage.save_project(project)
+    ctx.step(f"{len(out)} short(s) prêt(s) dans les versions", 1.0)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Préréglages d'export par réseau et file d'export
+# ---------------------------------------------------------------------------
+
+PRESETS: dict[str, dict] = {
+    "tiktok": {"label": "TikTok", "format": "9:16", "quality": "1080p", "container": "mp4"},
+    "reels": {"label": "Instagram Reels", "format": "9:16", "quality": "1080p", "container": "mp4"},
+    "shorts": {"label": "YouTube Shorts", "format": "9:16", "quality": "1080p", "container": "mp4"},
+    "youtube": {"label": "YouTube 1080p", "format": "16:9", "quality": "1080p", "container": "mp4"},
+    "youtube_4k": {"label": "YouTube 4K", "format": "16:9", "quality": "2160p", "container": "mp4"},
+    "instagram_carre": {"label": "Instagram (carré)", "format": "1:1", "quality": "1080p", "container": "mp4"},
+    "x": {"label": "X (Twitter)", "format": "16:9", "quality": "1080p", "fps": 30, "container": "mp4"},
+    "web": {"label": "Web (WebM)", "quality": "1080p", "container": "webm"},
+    "prores": {"label": "ProRes (montage pro, .mov)", "quality": "1080p", "container": "mov"},
+    "gif": {"label": "GIF animé", "quality": "720p", "fps": 15, "container": "gif"},
+}
+
+
+class _Scoped:
+    """Sous-tâche : ramène la progression 0..1 d'une étape sur une tranche de la tâche."""
+
+    def __init__(self, ctx: JobContext, lo: float, hi: float):
+        self.ctx, self.lo, self.hi = ctx, lo, hi
+
+    def _m(self, p: float) -> float:
+        return self.lo + (self.hi - self.lo) * p
+
+    def step(self, message: str, progress: float) -> None:
+        self.ctx.step(message, self._m(progress))
+
+    def sub(self, a: float, b: float, message: str | None = None):
+        return self.ctx.sub(self._m(a), self._m(b), message)
+
+
+def export_preset(project_id: str, preset: str, ctx: JobContext, version_ids: list[str] | None = None) -> list[str]:
+    """Exporte une ou plusieurs versions avec un préréglage (file d'export : les unes après les autres)."""
+    p = PRESETS[preset]
+    project = storage.load_project(project_id)
+    project.ensure_versions()
+    ids = version_ids or [project.active_version]
+    out = []
+    for k, vid in enumerate(ids):
+        project = storage.load_project(project_id)
+        v = _version(project, vid)
+        tl = project.timeline if vid == project.active_version else v.timeline
+        if not tl or not tl.clips:
+            continue
+        ctx.step(f"{v.name} : {p['label']}", k / len(ids))
+        sub = _Scoped(ctx, k / len(ids), (k + 1) / len(ids))
+        out.append(export(project_id, p["quality"], sub, p.get("fps"), False, p["container"], tl=tl,
+                          fmt=p.get("format"), label=f"{v.name} - {p['label']}" if len(project.versions) > 1 else p["label"]))
+    if not out:
+        raise ValueError("Aucune version à exporter (timelines vides).")
+    ctx.step(f"{len(out)} fichier(s) exporté(s)", 1.0)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Modèles de style réutilisables (look, sous-titres, musique, logo…)
+# ---------------------------------------------------------------------------
+
+def _templates_path() -> Path:
+    return config.DATA_DIR / "templates.json"
+
+
+def list_templates() -> list[dict]:
+    import json
+    p = _templates_path()
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
+
+
+def _save_templates(items: list[dict]) -> None:
+    import json
+    _templates_path().write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def save_template(project: Project, name: str) -> dict:
+    import shutil
+    from .models import new_id
+    tl = project.timeline
+    adir = config.DATA_DIR / "template_assets"
+    adir.mkdir(parents=True, exist_ok=True)
+    images = []
+    for g in tl.images:
+        src = storage.assets_dir(project.id) / Path(g.asset).name
+        if src.exists():
+            shutil.copy2(src, adir / src.name)
+            images.append(g.model_dump())
+    t = {"id": new_id("tpl_"), "name": name.strip()[:60] or "Mon modèle", "style": project.settings.style,
+         "instructions": project.settings.instructions, "format": tl.format, "captions": tl.captions,
+         "look": tl.look, "reframe": tl.reframe, "music_volume": tl.music.volume, "ducking": tl.music.ducking,
+         "music_track": tl.music.track, "images": images}
+    items = [x for x in list_templates() if x["name"] != t["name"]] + [t]
+    _save_templates(items)
+    return t
+
+
+def delete_template(tid: str) -> None:
+    _save_templates([x for x in list_templates() if x["id"] != tid])
+
+
+def apply_template(project: Project, tid: str) -> Project:
+    import shutil
+    from .models import ImageItem, new_id
+    t = next((x for x in list_templates() if x["id"] == tid), None)
+    if not t:
+        raise KeyError(tid)
+    tl = project.timeline
+    tl.format, tl.captions, tl.look, tl.reframe = t["format"], t["captions"], t["look"], t["reframe"]
+    tl.music.volume, tl.music.ducking = t["music_volume"], t["ducking"]
+    if t.get("music_track") and Path(t["music_track"]).exists():
+        tl.music.track = t["music_track"]
+    adir = config.DATA_DIR / "template_assets"
+    keep = [g for g in tl.images if g.duration is not None]  # les stickers ponctuels restent
+    for g in t.get("images", []):
+        src = adir / Path(g["asset"]).name
+        if src.exists():
+            shutil.copy2(src, storage.assets_dir(project.id) / src.name)
+            keep.append(ImageItem(**{**g, "id": new_id("g_")}))
+    tl.images = keep
+    project.settings = project.settings.model_copy(update={
+        "style": t["style"], "instructions": t["instructions"], "format": t["format"], "captions": t["captions"]})
+    return project

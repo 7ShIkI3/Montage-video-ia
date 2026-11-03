@@ -160,6 +160,20 @@ class ImpactItem(BaseModel):
     reason: str = ""
 
 
+class ImageItem(BaseModel):
+    """Image posée sur la vidéo (piste Images) : logo, filigrane, sticker, photo."""
+
+    id: str = Field(default_factory=lambda: new_id("g_"))
+    asset: str  # nom du fichier dans le dossier assets du projet
+    start: float = 0.0
+    duration: float | None = None  # None = toute la vidéo (filigrane)
+    x: float = 0.9  # centre de l'image, en fraction de la largeur
+    y: float = 0.1
+    scale: float = 0.14  # largeur de l'image en fraction de la largeur de la vidéo
+    opacity: float = 0.85
+    anim: Literal["aucune", "fondu", "pop"] = "fondu"
+
+
 class OverlayItem(BaseModel):
     """Plan de coupe (B-roll) sur la piste vidéo 2, plein cadre ou en incrustation."""
 
@@ -170,6 +184,8 @@ class OverlayItem(BaseModel):
     start: float
     mode: Literal["plein", "incrustation"] = "plein"
     reason: str = ""
+    chroma: Literal["aucun", "vert", "bleu"] = "aucun"  # incrustation sur fond vert / bleu
+    corner: Literal["haut_droite", "haut_gauche", "bas_droite", "bas_gauche"] = "haut_droite"
 
     @property
     def duration(self) -> float:
@@ -209,12 +225,24 @@ class Timeline(BaseModel):
     sfx: list[SfxItem] = Field(default_factory=list)
     overlays: list[OverlayItem] = Field(default_factory=list)
     impacts: list[ImpactItem] = Field(default_factory=list)
+    images: list[ImageItem] = Field(default_factory=list)
     comments: list[Comment] = Field(default_factory=list)
     reframe: bool = True  # recadrage automatique sur le visage quand le format est plus étroit que la source
 
     @property
     def duration(self) -> float:
         return sum(c.duration for c in self.clips)
+
+
+class Version(BaseModel):
+    """Une version du montage : le projet en garde plusieurs (montage principal, shorts, essais)."""
+
+    id: str = Field(default_factory=lambda: new_id("v_"))
+    name: str = "Montage principal"
+    created_at: float = Field(default_factory=time.time)
+    timeline: Timeline | None = None  # None pour la version active (sa timeline est Project.timeline)
+    score: float | None = None  # score viral 0-100 pour les shorts automatiques
+    note: str = ""
 
 
 class Project(BaseModel):
@@ -228,6 +256,16 @@ class Project(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     exports: list[str] = Field(default_factory=list)
     publish_kit: dict | None = None  # titres, description, chapitres, hashtags, miniature
+    versions: list[Version] = Field(default_factory=lambda: [Version()])
+    active_version: str | None = None
+
+    def ensure_versions(self) -> Version:
+        """Version active (créée si besoin pour les anciens projets)."""
+        if not self.versions:
+            self.versions = [Version()]
+        if not self.active_version or not any(v.id == self.active_version for v in self.versions):
+            self.active_version = self.versions[0].id
+        return next(v for v in self.versions if v.id == self.active_version)
 
     def media_by_id(self, media_id: str) -> Media:
         for m in self.media:

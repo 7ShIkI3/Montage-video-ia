@@ -31,6 +31,13 @@ def cache_dir(project_id: str) -> Path:
     return d
 
 
+def assets_dir(project_id: str) -> Path:
+    """Images du projet (logos, stickers, photos)."""
+    d = project_dir(project_id) / "assets"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def exports_dir(project_id: str) -> Path:
     d = project_dir(project_id) / "exports"
     d.mkdir(parents=True, exist_ok=True)
@@ -45,6 +52,7 @@ def _write_json(path: Path, data: str) -> None:
 
 def save_project(project: Project) -> Project:
     with _lock:
+        project.ensure_versions()
         project.updated_at = time.time()
         d = project_dir(project.id)
         d.mkdir(parents=True, exist_ok=True)
@@ -57,7 +65,10 @@ def load_project(project_id: str) -> Project:
         path = project_dir(project_id) / "project.json"
         if not path.exists():
             raise FileNotFoundError(project_id)
-        return Project.model_validate_json(path.read_text(encoding="utf-8"))
+        p = Project.model_validate_json(path.read_text(encoding="utf-8"))
+    if p.active_version is None:  # projet créé avant les versions : on fige l'identifiant de la version
+        save_project(p)
+    return p
 
 
 def list_projects() -> list[Project]:

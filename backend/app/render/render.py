@@ -26,6 +26,27 @@ for _q, _s in QUALITIES.items():
     SIZES[("1:1", _q)] = (_s, _s)
 
 
+# Conteneurs de sortie : (extension, options vidéo, options audio). "mp4" utilise le meilleur encodeur H.264.
+CONTAINERS = {
+    "mp4": ("mp4", None, ["-c:a", "aac", "-b:a", "192k"]),
+    "webm": ("webm", ["-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-row-mt", "1",
+                      "-crf", "31", "-b:v", "0", "-pix_fmt", "yuv420p"], ["-c:a", "libopus", "-b:a", "160k"]),
+    "mov": ("mov", ["-c:v", "prores_ks", "-profile:v", "2", "-pix_fmt", "yuv422p10le"], ["-c:a", "pcm_s16le"]),
+}
+
+
+def video_codec_args(container: str = "mp4") -> list[str]:
+    _, v, _ = CONTAINERS.get(container, CONTAINERS["mp4"])
+    if v is None:
+        enc, opts = ffmpeg.best_h264_encoder()
+        return ["-c:v", enc, *opts, "-pix_fmt", "yuv420p"]
+    return list(v)
+
+
+def audio_codec_args(container: str = "mp4") -> list[str]:
+    return list(CONTAINERS.get(container, CONTAINERS["mp4"])[2])
+
+
 def source_fps(project: Project, timeline: Timeline) -> int:
     """Cadence « comme la source » : la plus haute des rushes utilisés, ramenée au choix standard le plus proche."""
     used = {c.media_id for c in timeline.clips}
@@ -86,7 +107,7 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
                   out_path: Path, work_dir: Path, quality: str = "1080p",
                   music_path: str | None = None, use_proxy: bool = False,
                   fps: int | None = None, smooth: bool = False,
-                  three_d: bool = False) -> tuple[list[str], float]:
+                  three_d: bool = False, container: str = "mp4") -> tuple[list[str], float]:
     """three_d=True : la sortie vidéo (avant sous-titres) part en images brutes BGR sur stdout pour le
     moteur 3D, et le son va dans work_dir/audio.m4a. Sinon : un seul fichier final."""
     if not timeline.clips:
@@ -196,17 +217,21 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
         inputs += ["-ss", f"{o.src_in:.3f}", "-t", f"{od:.3f}", "-i", m.path]
         oi = n_in
         n_in += 1
+        key = {"vert": "0x00FF00", "bleu": "0x0047FF"}.get(o.chroma)
+        chroma = f"format=yuva420p,chromakey={key}:0.17:0.08," if key else ""
         if o.mode == "incrustation":
             pw = _even(W * 0.34)
             ph = _even(pw * H / W)
-            prep = (f"scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph},"
-                    f"pad={pw + 8}:{ph + 8}:4:4:color=white")
-            x, y = f"W-w-{int(W * 0.04)}", f"{int(H * 0.05)}"
+            prep = (f"scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph}"
+                    + ("" if key else f",pad={pw + 8}:{ph + 8}:4:4:color=white"))
+            mx, my = int(W * 0.04), int(H * 0.05)
+            x = f"W-w-{mx}" if o.corner.endswith("droite") else f"{mx}"
+            y = f"{my}" if o.corner.startswith("haut") else f"H-h-{my}"
         else:
             prep = _cover(W, H)
             x, y = "0", "0"
         filters.append(
-            f"[{oi}:v:0]setpts=PTS-STARTPTS,fps={FPS},{prep},setsar=1,format=yuva420p,"
+            f"[{oi}:v:0]setpts=PTS-STARTPTS,fps={FPS},{chroma}{prep},setsar=1,format=yuva420p,"
             f"fade=t=in:st=0:d=0.2:alpha=1,fade=t=out:st={max(0.0, od - 0.2):.3f}:d=0.2:alpha=1,"
             f"setpts=PTS+{o.start:.3f}/TB[ov{j}]"
         )
@@ -220,6 +245,29 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
         if f:
             filters.append(f"[{vlabel}]{f}[vlook]")
             vlabel = "vlook"
+
+    # --- piste Images : logos, filigranes, stickers ---
+    for k, g in enumerate(timeline.images):
+        path = storage.assets_dir(project.id) / Path(g.asset).name
+        if not path.exists() or g.start >= total:
+            continue
+        gd = min(total - g.start, g.duration if g.duration else total)
+        inputs += ["-loop", "1", "-t", f"{gd:.3f}", "-i", str(path)]
+        gi = n_in
+        n_in += 1
+        gw = _even(W * max(0.02, min(1.0, g.scale)))
+        chain = [f"[{gi}:v]fps={FPS},scale={gw}:-2:flags=lanczos,format=rgba,"
+                 f"colorchannelmixer=aa={max(0.0, min(1.0, g.opacity)):.3f}"]
+        if g.anim != "aucune" and gd > 0.6:
+            chain.append(f"fade=t=in:st=0:d=0.3:alpha=1,fade=t=out:st={gd - 0.3:.3f}:d=0.3:alpha=1")
+        if g.anim == "pop":
+            chain[0] = chain[0].replace(f"scale={gw}:-2:flags=lanczos",
+                                        f"scale=w='{gw}*min(1,0.4+0.6*t/0.25+0.15*sin(PI*min(1,t/0.25)))':h=-2:eval=frame:flags=lanczos")
+        chain.append(f"setpts=PTS-STARTPTS+{g.start:.3f}/TB[img{k}]")
+        filters.append(",".join(chain))
+        filters.append(f"[{vlabel}][img{k}]overlay=x='W*{g.x:.4f}-w/2':y='H*{g.y:.4f}-h/2':eof_action=pass:"
+                       f"enable='between(t,{g.start:.3f},{g.start + gd:.3f})'[vimg{k}]")
+        vlabel = f"vimg{k}"
 
     # --- sous-titres + piste Textes (un seul fichier ASS) ---
     if write_ass(timeline, transcripts, W, H, work_dir) and not three_d:
@@ -273,19 +321,18 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
         args = [
             *inputs,
             "-filter_complex_script", str(script),
-            "-map", "[aout]", "-c:a", "aac", "-b:a", "192k", str(work_dir / "audio.m4a"),
+            "-map", "[aout]", *audio_codec_args(container), str(work_dir / f"audio.{'wav' if container == 'mov' else 'mka'}"),
             "-map", "[vraw]", "-f", "rawvideo", "-pix_fmt", "bgr24", "-r", str(FPS), "pipe:1",
         ]
         return args, total
 
-    enc, enc_opts = ffmpeg.best_h264_encoder()
     args = [
         *inputs,
         "-filter_complex_script", str(script),
         "-map", f"[{vlabel}]", "-map", "[aout]",
-        "-c:v", enc, *enc_opts, "-pix_fmt", "yuv420p", "-r", str(FPS),
-        "-c:a", "aac", "-b:a", "192k",
-        "-movflags", "+faststart", str(out_path),
+        *video_codec_args(container), "-r", str(FPS),
+        *audio_codec_args(container),
+        *(["-movflags", "+faststart"] if container in ("mp4", "mov") else []), str(out_path),
     ]
     return args, total
 
@@ -303,12 +350,15 @@ def write_ass(timeline: Timeline, transcripts: dict[str, Transcript], W: int, H:
 def render(project: Project, timeline: Timeline, transcripts: dict[str, Transcript], out_path: Path,
            work_dir: Path, quality: str = "1080p", music_path: str | None = None,
            on_progress: Callable[[float], None] | None = None, fps: int | None = None,
-           smooth: bool = False) -> Path:
+           smooth: bool = False, container: str = "mp4") -> Path:
+    if container == "gif":
+        return render_gif(project, timeline, transcripts, out_path, work_dir, quality, music_path, on_progress, fps)
     if scene3d.needs_3d(timeline):
-        render_3d(project, timeline, transcripts, out_path, work_dir, quality, music_path, on_progress, fps, smooth)
+        render_3d(project, timeline, transcripts, out_path, work_dir, quality, music_path, on_progress, fps, smooth,
+                  container)
     else:
         args, total = build_command(project, timeline, transcripts, out_path, work_dir, quality, music_path,
-                                    fps=fps, smooth=smooth)
+                                    fps=fps, smooth=smooth, container=container)
         # Le filtre ass lit captions.ass en chemin relatif depuis work_dir (évite l'échappement des chemins).
         ffmpeg.run(args, total, on_progress, cwd=work_dir)
     srt = cap.to_srt(cap.build_lines(timeline, transcripts))
@@ -318,7 +368,7 @@ def render(project: Project, timeline: Timeline, transcripts: dict[str, Transcri
 
 def render_3d(project: Project, timeline: Timeline, transcripts: dict[str, Transcript], out_path: Path,
               work_dir: Path, quality: str, music_path: str | None, on_progress: Callable[[float], None] | None,
-              fps: int | None, smooth: bool) -> None:
+              fps: int | None, smooth: bool, container: str = "mp4") -> None:
     """Rendu avec le moteur 3D : FFmpeg (montage) -> images brutes -> scène 3D -> FFmpeg (textes + encodage)."""
     import subprocess
     import threading
@@ -326,16 +376,16 @@ def render_3d(project: Project, timeline: Timeline, transcripts: dict[str, Trans
     W, H = SIZES[(timeline.format, quality)]
     FPS = fps or source_fps(project, timeline)
     args, total = build_command(project, timeline, transcripts, out_path, work_dir, quality, music_path,
-                                fps=FPS, smooth=smooth, three_d=True)
+                                fps=FPS, smooth=smooth, three_d=True, container=container)
     has_ass = (work_dir / "captions.ass").exists()
-    enc, enc_opts = ffmpeg.best_h264_encoder()
-    video_tmp = work_dir / "video_3d.mp4"
+    video_tmp = work_dir / f"video_3d.{CONTAINERS.get(container, CONTAINERS['mp4'])[0]}"
+    audio_tmp = work_dir / f"audio.{'wav' if container == 'mov' else 'mka'}"
     dec = subprocess.Popen([ffmpeg.FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", *args],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=work_dir)
     encp = subprocess.Popen([ffmpeg.FFMPEG, "-hide_banner", "-y", "-loglevel", "error",
                              "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "pipe:0",
                              *(["-vf", "ass=captions.ass"] if has_ass else []),
-                             "-c:v", enc, *enc_opts, "-pix_fmt", "yuv420p", "-r", str(FPS), str(video_tmp)],
+                             *video_codec_args(container), "-r", str(FPS), str(video_tmp)],
                             stdin=subprocess.PIPE, stderr=subprocess.PIPE, cwd=work_dir)
     errs: dict[str, bytes] = {}
     threading.Thread(target=lambda: errs.__setitem__("dec", dec.stderr.read()), daemon=True).start()
@@ -363,7 +413,25 @@ def render_3d(project: Project, timeline: Timeline, transcripts: dict[str, Trans
     if rc_dec != 0 or rc_enc != 0:
         msg = (errs.get("dec", b"") + errs.get("enc", b"")).decode(errors="replace").strip()
         raise ffmpeg.FFmpegError(msg[-1500:] or "Le rendu 3D a échoué")
-    ffmpeg.run(["-i", str(video_tmp), "-i", str(work_dir / "audio.m4a"), "-map", "0:v:0", "-map", "1:a:0",
-                "-c", "copy", "-shortest", "-movflags", "+faststart", str(out_path)], cwd=work_dir)
+    ffmpeg.run(["-i", str(video_tmp), "-i", str(audio_tmp), "-map", "0:v:0", "-map", "1:a:0",
+                "-c", "copy", "-shortest", *(["-movflags", "+faststart"] if container in ("mp4", "mov") else []),
+                str(out_path)], cwd=work_dir)
     if on_progress:
         on_progress(1.0)
+
+
+def render_gif(project: Project, timeline: Timeline, transcripts: dict[str, Transcript], out_path: Path,
+               work_dir: Path, quality: str, music_path: str | None,
+               on_progress: Callable[[float], None] | None, fps: int | None) -> Path:
+    """GIF animé (sans son) : rendu MP4 puis palette optimisée, largeur limitée pour garder un poids raisonnable."""
+    tmp = work_dir / "gif_source.mp4"
+    sub = (lambda x: on_progress(0.85 * x)) if on_progress else None
+    render(project, timeline, transcripts, tmp, work_dir, quality, music_path, sub, fps=min(fps or 15, 25))
+    W, H = SIZES[(timeline.format, quality)]
+    w = min(W, 640 if W >= H else 480)
+    rate = min(fps or 15, 25)
+    ffmpeg.run(["-i", str(tmp), "-vf", f"fps={rate},scale={w}:-2:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];"
+                f"[b][p]paletteuse=dither=bayer:bayer_scale=4", "-loop", "0", str(out_path)], cwd=work_dir)
+    if on_progress:
+        on_progress(1.0)
+    return out_path

@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { api, Clip, EffectsCatalog, fmtTime, Opt, Timeline, waitJob } from "../api";
 import { clipAt, clipStarts, commentTime, ItemKind, useStore } from "../store";
+import { ImageButtons } from "./Studio";
 
 export function CommandBar() {
   const project = useStore((s) => s.project);
@@ -356,6 +357,7 @@ function GlobalFx({ tl, catalog }: { tl: Timeline; catalog: EffectsCatalog }) {
         </select>
         <button className="small-btn" onClick={() => addImpact(ik)}>＋ Impact 3D</button>
       </div>
+      <ImageButtons />
     </div>
   );
 }
@@ -427,6 +429,46 @@ function ItemEditor() {
       </>
     );
   }
+  if (it.kind === "image") {
+    const x = (tl.images ?? []).find((t) => t.id === it.id);
+    if (!x) return null;
+    const spots: [string, number, number][] = [["↖", 0.1, 0.1], ["↑", 0.5, 0.1], ["↗", 0.9, 0.1], ["←", 0.1, 0.5], ["•", 0.5, 0.5],
+      ["→", 0.9, 0.5], ["↙", 0.1, 0.9], ["↓", 0.5, 0.9], ["↘", 0.9, 0.9]];
+    return (
+      <>
+        <header><h3>Image</h3>{back}</header>
+        <img className="asset-thumb" src={api.assetUrl(project.id, x.asset)} alt="" />
+        <label className="inline">
+          <input type="checkbox" checked={x.duration == null} onChange={(e) => up(e.target.checked ? { duration: null, start: 0 } : { duration: 3 })} />
+          Sur toute la vidéo (filigrane)
+        </label>
+        {x.duration != null && (
+          <div className="field-row">
+            <label>Début (s)<input type="number" step={0.1} value={x.start.toFixed(2)} onChange={(e) => up({ start: Math.max(0, +e.target.value) })} /></label>
+            <label>Durée (s)<input type="number" step={0.1} value={x.duration.toFixed(2)} onChange={(e) => up({ duration: Math.max(0.3, +e.target.value) })} /></label>
+          </div>
+        )}
+        <div className="fx-title">Position</div>
+        <div className="spot-grid">
+          {spots.map(([l, sx, sy]) => (
+            <button key={l} className={`fx-chip ${Math.abs(x.x - sx) < 0.02 && Math.abs(x.y - sy) < 0.02 ? "on" : ""}`} onClick={() => up({ x: sx, y: sy })}>{l}</button>
+          ))}
+        </div>
+        <label>Taille {Math.round(x.scale * 100)} % de la largeur
+          <input type="range" min={0.04} max={1} step={0.01} value={x.scale} onChange={(e) => up({ scale: +e.target.value })} />
+        </label>
+        <label>Opacité {Math.round(x.opacity * 100)} %
+          <input type="range" min={0.1} max={1} step={0.05} value={x.opacity} onChange={(e) => up({ opacity: +e.target.value })} />
+        </label>
+        <label>Animation
+          <select value={x.anim} onChange={(e) => up({ anim: e.target.value })}>
+            <option value="aucune">Aucune</option><option value="fondu">Fondu</option><option value="pop">Pop</option>
+          </select>
+        </label>
+        <button className="small-btn danger" onClick={del}>Retirer l'image</button>
+      </>
+    );
+  }
   if (it.kind === "sfx") {
     const x = tl.sfx.find((t) => t.id === it.id);
     if (!x) return null;
@@ -468,6 +510,22 @@ function ItemEditor() {
         <label>Source fin<input type="number" step={0.05} value={x.src_out.toFixed(2)} onChange={(e) => up({ src_out: Math.min(m?.duration ?? 1e9, Math.max(+e.target.value, x.src_in + 0.2)) })} /></label>
       </div>
       <label>Placé à (s)<input type="number" step={0.1} value={x.start.toFixed(2)} onChange={(e) => up({ start: Math.max(0, +e.target.value) })} /></label>
+      <div className="field-row">
+        <label>Fond à retirer
+          <select value={x.chroma ?? "aucun"} onChange={(e) => up({ chroma: e.target.value })}>
+            <option value="aucun">Aucun</option><option value="vert">Fond vert</option><option value="bleu">Fond bleu</option>
+          </select>
+        </label>
+        {x.mode === "incrustation" && (
+          <label>Coin
+            <select value={x.corner ?? "haut_droite"} onChange={(e) => up({ corner: e.target.value })}>
+              <option value="haut_droite">Haut droite</option><option value="haut_gauche">Haut gauche</option>
+              <option value="bas_droite">Bas droite</option><option value="bas_gauche">Bas gauche</option>
+            </select>
+          </label>
+        )}
+      </div>
+      {x.chroma && x.chroma !== "aucun" && <p className="muted small">Le fond est retiré à l'export ; l'aperçu le montre encore.</p>}
       <button className="small-btn danger" onClick={del}>Retirer le plan de coupe</button>
     </>
   );

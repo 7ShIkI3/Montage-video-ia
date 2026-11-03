@@ -117,7 +117,7 @@ export function TimelineView() {
   };
 
   // Glisser un texte, un bruitage ou un plan de coupe sur sa piste (une seule étape d'annulation).
-  const startMoveItem = (e: React.MouseEvent, kind: "text" | "sfx" | "overlay" | "impact", id: string, start: number) => {
+  const startMoveItem = (e: React.MouseEvent, kind: "text" | "sfx" | "overlay" | "impact" | "image", id: string, start: number) => {
     e.stopPropagation();
     e.preventDefault();
     selectItem({ kind, id });
@@ -262,6 +262,15 @@ export function TimelineView() {
                 onMouseDown={(e) => startMoveItem(e, "sfx", s.id, s.start)}
                 title={`${labelOf(catalog?.sfx, s.kind)} · ${Math.round(s.volume * 100)} %`}>
                 🔊 {labelOf(catalog?.sfx, s.kind)}
+              </div>
+            ))}
+          </div>
+          <div className="track track-images" data-label="Images" onMouseDown={seekFromEvent}>
+            {(tl.images || []).map((g) => (
+              <div key={g.id} className={`item-block image ${isSel("image", g.id) ? "sel" : ""}`}
+                style={{ left: g.start * pps, width: Math.max(16, (g.duration ?? Math.max(0, total - g.start)) * pps) }}
+                onMouseDown={(e) => startMoveItem(e, "image", g.id, g.start)} title={g.asset}>
+                🖼 {g.duration == null ? "Filigrane · " : ""}{g.asset}
               </div>
             ))}
           </div>

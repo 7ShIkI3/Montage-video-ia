@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, CaptionLine, Clip, Comment, EffectsCatalog, ImpactItem, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript } from "./api";
+import { api, CaptionLine, Clip, Comment, EffectsCatalog, ImageItem, ImpactItem, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript } from "./api";
 
 const uid = () => "c_" + Math.random().toString(36).slice(2, 12);
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
@@ -8,8 +8,8 @@ const MIN_CLIP = 0.1;
 export const clipDur = (c: Clip) => (c.src_out - c.src_in) / Math.max(0.05, c.speed || 1);
 const rid = (p: string) => p + Math.random().toString(36).slice(2, 12);
 
-export type Sel = { kind: "clip" | "text" | "sfx" | "overlay" | "comment" | "impact"; id: string };
-export type ItemKind = "text" | "sfx" | "overlay" | "comment" | "impact";
+export type Sel = { kind: "clip" | "text" | "sfx" | "overlay" | "comment" | "impact" | "image"; id: string };
+export type ItemKind = "text" | "sfx" | "overlay" | "comment" | "impact" | "image";
 
 /** Position sur la timeline d'un commentaire ancré sur un rush (null si le passage n'est plus monté). */
 export function commentTime(tl: Timeline, c: Comment): number | null {
@@ -95,6 +95,8 @@ interface State {
   addText: (patch?: Partial<TextItem>) => void;
   addSfx: (kind: string) => void;
   addImpact: (kind: string) => void;
+  addImage: (asset: string, watermark: boolean) => void;
+  setTimeline: (p: Project) => void;
   addOverlay: (o: Omit<OverlayItem, "id">) => void;
   updateItem: (kind: ItemKind, id: string, patch: Record<string, unknown>) => void;
   deleteItem: (kind: ItemKind, id: string) => void;
@@ -103,7 +105,7 @@ interface State {
 
 const listOf = (tl: Timeline, kind: ItemKind) =>
   (kind === "text" ? tl.texts : kind === "sfx" ? tl.sfx : kind === "comment" ? tl.comments
-    : kind === "impact" ? (tl.impacts ??= []) : tl.overlays) as Array<{ id: string }>;
+    : kind === "impact" ? (tl.impacts ??= []) : kind === "image" ? (tl.images ??= []) : tl.overlays) as Array<{ id: string }>;
 
 export const useStore = create<State>((set, get) => ({
   project: null,
@@ -271,6 +273,18 @@ export const useStore = create<State>((set, get) => ({
     });
     get().selectItem({ kind: "sfx", id });
   },
+  addImage: (asset, watermark) => {
+    const id = rid("g_");
+    const start = watermark ? 0 : get().playhead;
+    get().edit((tl) => {
+      tl.images = [...(tl.images || []), {
+        id, asset, start, duration: watermark ? null : 3, x: watermark ? 0.9 : 0.5, y: watermark ? 0.1 : 0.5,
+        scale: watermark ? 0.14 : 0.3, opacity: watermark ? 0.85 : 1, anim: watermark ? "fondu" : "pop",
+      } as ImageItem];
+    });
+    get().selectItem({ kind: "image", id });
+  },
+  setTimeline: (p) => set({ project: p, timeline: p.timeline, past: [], future: [], dirty: false, item: null, selected: null, playhead: 0 }),
   addImpact: (kind) => {
     const id = rid("i_");
     const start = get().playhead;
@@ -315,6 +329,7 @@ export const useStore = create<State>((set, get) => ({
       else if (kind === "sfx") tl.sfx = tl.sfx.filter((x) => x.id !== id);
       else if (kind === "comment") tl.comments = tl.comments.filter((x) => x.id !== id);
       else if (kind === "impact") tl.impacts = (tl.impacts || []).filter((x) => x.id !== id);
+      else if (kind === "image") tl.images = (tl.images || []).filter((x) => x.id !== id);
       else tl.overlays = tl.overlays.filter((x) => x.id !== id);
     });
     set({ item: null });

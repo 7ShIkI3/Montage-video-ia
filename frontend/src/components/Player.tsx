@@ -469,6 +469,10 @@ export function Player() {
               {!drag && <div className="pick-hint">Trace un rectangle (ou clique) sur l'élément à commenter · Échap pour annuler</div>}
             </div>
           )}
+          {project && (tl?.images || []).filter((g) => playhead >= g.start && (g.duration == null || playhead < g.start + g.duration)).map((g) => (
+            <img key={g.id} className={`img-layer anim-${g.anim}`} src={api.assetUrl(project.id, g.asset)} alt=""
+              style={{ left: `${g.x * 100}%`, top: `${g.y * 100}%`, width: `${g.scale * 100}%`, opacity: g.opacity }} />
+          ))}
           {texts.map((x) => (
             <div key={x.id} className={`ti ti-${x.style} pos-${x.position}`}>
               {x.style === "texte_3d" ? <span data-t={x.text}>{x.text}</span>

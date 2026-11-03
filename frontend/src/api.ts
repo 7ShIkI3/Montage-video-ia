@@ -77,6 +77,53 @@ export interface OverlayItem {
   start: number;
   mode: "plein" | "incrustation";
   reason: string;
+  chroma?: "aucun" | "vert" | "bleu";
+  corner?: "haut_droite" | "haut_gauche" | "bas_droite" | "bas_gauche";
+}
+
+export interface ImageItem {
+  id: string;
+  asset: string;
+  start: number;
+  duration: number | null;
+  x: number;
+  y: number;
+  scale: number;
+  opacity: number;
+  anim: "aucune" | "fondu" | "pop";
+}
+
+export interface VersionInfo {
+  id: string;
+  name: string;
+  score: number | null;
+  note: string;
+  created_at: number;
+  duration: number;
+}
+
+export interface Versions {
+  active: string;
+  versions: VersionInfo[];
+}
+
+export interface ExportPreset {
+  id: string;
+  label: string;
+  format?: Format;
+  quality: string;
+  fps?: number;
+  container: string;
+}
+
+export interface StyleTemplate {
+  id: string;
+  name: string;
+  style: Style;
+  format: Format;
+  captions: CaptionStyle;
+  look: string;
+  images: ImageItem[];
 }
 
 export interface Region {
@@ -139,6 +186,7 @@ export interface Timeline {
   sfx: SfxItem[];
   overlays: OverlayItem[];
   impacts: ImpactItem[];
+  images: ImageItem[];
   reframe: boolean;
   comments: Comment[];
 }
@@ -167,6 +215,7 @@ export interface Project {
   warnings: string[];
   exports: string[];
   publish_kit: PublishKit | null;
+  active_version: string | null;
 }
 
 export interface PublishKit {
@@ -311,6 +360,26 @@ export const api = {
     req<Job>(`/api/projects/${id}/export`, json("POST", { quality, fps, smooth })),
   applyComments: (id: string) => req<Job>(`/api/projects/${id}/comments/apply`, { method: "POST" }),
   publishKit: (id: string) => req<Job>(`/api/projects/${id}/publish-kit`, { method: "POST" }),
+  versions: (id: string) => req<Versions>(`/api/projects/${id}/versions`),
+  duplicateVersion: (id: string, name?: string) => req<Versions>(`/api/projects/${id}/versions`, json("POST", { name })),
+  activateVersion: (id: string, vid: string) => req<Project>(`/api/projects/${id}/versions/${vid}/activate`, { method: "POST" }),
+  renameVersion: (id: string, vid: string, name: string) => req<Versions>(`/api/projects/${id}/versions/${vid}`, json("PATCH", { name })),
+  deleteVersion: (id: string, vid: string) => req<Project>(`/api/projects/${id}/versions/${vid}`, { method: "DELETE" }),
+  makeShorts: (id: string, count: number, duration: number, format: Format) =>
+    req<Job>(`/api/projects/${id}/shorts`, json("POST", { count, duration, format })),
+  presets: () => req<ExportPreset[]>(`/api/export-presets`),
+  exportPreset: (id: string, preset: string, versions: string[] | null) =>
+    req<Job>(`/api/projects/${id}/export-preset`, json("POST", { preset, versions })),
+  uploadAsset: async (id: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return req<{ asset: string }>(`/api/projects/${id}/assets`, { method: "POST", body: fd });
+  },
+  assetUrl: (id: string, name: string) => `/api/projects/${id}/assets/${encodeURIComponent(name)}`,
+  templates: () => req<StyleTemplate[]>(`/api/templates`),
+  saveTemplate: (id: string, name: string) => req<StyleTemplate>(`/api/projects/${id}/templates`, json("POST", { name })),
+  applyTemplate: (id: string, tid: string) => req<Project>(`/api/projects/${id}/templates/${tid}/apply`, { method: "POST" }),
+  deleteTemplate: (tid: string) => req<{ ok: boolean }>(`/api/templates/${tid}`, { method: "DELETE" }),
   xmlUrl: (id: string) => `/api/projects/${id}/export.xml`,
   srtUrl: (id: string) => `/api/projects/${id}/captions.srt`,
   job: (jobId: string) => req<Job>(`/api/jobs/${jobId}`),
