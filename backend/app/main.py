@@ -16,6 +16,7 @@ from .jobs import manager
 from .media import ffmpeg
 from .models import EditSettings, Project, Timeline
 from .render import captions as cap
+from .render import effects as fx
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -246,6 +247,21 @@ def get_captions(pid: str):
         return []
     return [{"start": ln.start, "end": ln.end, "words": [w.model_dump() for w in ln.words]}
             for ln in cap.build_lines(p.timeline, pipeline.transcripts_for(p))]
+
+
+# --- Effets ---------------------------------------------------------------------------
+
+@app.get("/api/effects")
+def effects_catalog():
+    return fx.catalog()
+
+
+@app.get("/api/sfx/{name}")
+def sfx_file(name: str):
+    files = fx.ensure_sfx()
+    if name not in files:
+        raise HTTPException(404, "Bruitage inconnu")
+    return FileResponse(files[name], media_type="audio/wav")
 
 
 # --- Musique -----------------------------------------------------------------------

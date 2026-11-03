@@ -14,7 +14,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from .. import config
-from ..models import Clip, EditSettings, MusicSettings, Segment, Timeline
+from ..models import Clip, EditSettings, MusicSettings, OverlayItem, Segment, SfxItem, TextItem, Timeline
+from ..render import effects as fx
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +54,9 @@ def merge_contiguous(clips: list[Clip], gap: float) -> list[Clip]:
         if out:
             p = out[-1]
             if (p.media_id == c.media_id and 0 <= c.src_in - p.src_out <= gap
-                    and abs(p.zoom - c.zoom) < 1e-3):
+                    and abs(p.zoom - c.zoom) < 1e-3 and abs(p.speed - c.speed) < 1e-3
+                    and p.effects == c.effects and p.audio_effects == c.audio_effects
+                    and c.transition == "aucune"):
                 p.src_out = c.src_out
                 p.score = max(p.score, c.score)
                 continue
@@ -235,6 +238,11 @@ class HeuristicDirector:
 # Réalisateur Claude
 # ---------------------------------------------------------------------------
 
+_VFX = list(fx.VIDEO_EFFECTS)
+_AFX = list(fx.AUDIO_EFFECTS)
+_TR = list(fx.TRANSITIONS)
+_SFX = list(fx.SFX)
+
 PLAN_SCHEMA = {
     "type": "object",
     "properties": {
@@ -249,9 +257,53 @@ PLAN_SCHEMA = {
                     "trim_start": {"type": "number"},
                     "trim_end": {"type": "number"},
                     "zoom": {"type": "number"},
+                    "speed": {"type": "number"},
+                    "transition": {"type": "string", "enum": _TR},
+                    "effects": {"type": "array", "items": {"type": "string", "enum": _VFX}},
+                    "audio_effects": {"type": "array", "items": {"type": "string", "enum": _AFX}},
                     "reason": {"type": "string"},
                 },
-                "required": ["segment_id", "trim_start", "trim_end", "zoom", "reason"],
+                "required": ["segment_id", "trim_start", "trim_end", "zoom", "speed", "transition",
+                             "effects", "audio_effects", "reason"],
+                "additionalProperties": False,
+            },
+        },
+        "look": {"type": "string", "enum": [*fx.LOOKS, "inchangé"]},
+        "texts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "start": {"type": "number"},
+                    "duration": {"type": "number"},
+                    "text": {"type": "string"},
+                    "style": {"type": "string", "enum": ["titre", "bandeau", "legende", "gros_texte", "emoji"]},
+                    "position": {"type": "string", "enum": ["haut", "centre", "bas"]},
+                },
+                "required": ["start", "duration", "text", "style", "position"],
+                "additionalProperties": False,
+            },
+        },
+        "sfx": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"start": {"type": "number"}, "kind": {"type": "string", "enum": _SFX}},
+                "required": ["start", "kind"],
+                "additionalProperties": False,
+            },
+        },
+        "broll": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "segment_id": {"type": "string"},
+                    "start": {"type": "number"},
+                    "duration": {"type": "number"},
+                    "mode": {"type": "string", "enum": ["plein", "incrustation"]},
+                },
+                "required": ["segment_id", "start", "duration", "mode"],
                 "additionalProperties": False,
             },
         },
@@ -259,11 +311,11 @@ PLAN_SCHEMA = {
         "captions": {"type": "string", "enum": ["karaoke", "classique", "aucun", "inchangé"]},
         "music": {"type": "string", "enum": ["oui", "non", "inchangé"]},
     },
-    "required": ["title", "summary", "clips", "format", "captions", "music"],
+    "required": ["title", "summary", "clips", "look", "texts", "sfx", "broll", "format", "captions", "music"],
     "additionalProperties": False,
 }
 
-SYSTEM_PROMPT = """Tu es un monteur vidéo professionnel. On te donne la liste des moments candidats \
+SYSTEM_PROMPT = f"""Tu es un monteur vidéo professionnel. On te donne la liste des moments candidats \
 repérés dans les rushes (transcription horodatée et signaux mesurés). Tu construis le montage final.
 
 Règles de métier :
@@ -279,7 +331,25 @@ Règles de métier :
 - reason : une phrase courte en français qui explique ton choix à l'utilisateur.
 - title : un titre accrocheur pour la vidéo ; summary : 1 à 2 phrases sur le montage.
 - format / captions / music : "inchangé" sauf si la consigne de l'utilisateur demande un changement.
-L'ordre de la liste `clips` est l'ordre de la timeline."""
+L'ordre de la liste `clips` est l'ordre de la timeline.
+
+Habillage (tu es aussi le monteur truquiste, sauf si la consigne demande la sobriété) :
+- speed : 1.0 par défaut ; 0.5 pour un ralenti sur une action courte et spectaculaire, 1.5 à 2 pour accélérer.
+- transition : transition d'entrée du plan. "aucune" pour les coupes franches dans une même prise ;
+  fondu_noir / zoom_avant / glissement / glitch / flash quand on change de lieu, de sujet ou de fichier.
+- effects : effets vidéo du plan (souvent vide). zoom_lent sur les plans d'illustration, glitch ou
+  tremblement pour un moment choc, noir_et_blanc pour un flashback, etc.
+- audio_effects : voix_claire sur la parole ; anti_bruit si le son est mauvais ; echo ou radio pour un effet.
+- look : étalonnage de toute la vidéo (vif pour YouTube/Short, cinema pour Vlog, aucun pour Podcast).
+- texts : temps en secondes sur la timeline finale. Un titre d'ouverture, un gros_texte pour l'accroche
+  des shorts, des bandeaux pour présenter un sujet, quelques emoji bien placés. Peu mais bien.
+- sfx : bruitages synchronisés sur la timeline finale (whoosh sur les transitions, pop sur les zooms,
+  ding sur une révélation, boom sur un moment choc). Au plus un toutes les 1 à 2 secondes.
+- broll : plans d'illustration (segments kind=action non utilisés dans clips) posés par-dessus une longue
+  prise de parole ; start en temps timeline ; plein cadre ou en incrustation.
+Effets vidéo possibles : {", ".join(fx.VIDEO_EFFECTS)}.
+Effets audio possibles : {", ".join(fx.AUDIO_EFFECTS)}.
+Bruitages possibles : {", ".join(fx.SFX)}."""
 
 
 def _segments_table(segments: list[Segment], limit: int = 700) -> str:
@@ -334,8 +404,13 @@ class ClaudeDirector:
             seg = by_id.get(item.get("segment_id", ""))
             if not seg:
                 continue
-            clips.append(_clip_from_segment(seg, item.get("reason", ""), item.get("zoom", 1.0),
-                                            item.get("trim_start", 0.0), item.get("trim_end", 0.0)))
+            c = _clip_from_segment(seg, item.get("reason", ""), item.get("zoom", 1.0),
+                                   item.get("trim_start", 0.0), item.get("trim_end", 0.0))
+            c.speed = float(np.clip(item.get("speed", 1.0) or 1.0, 0.25, 4.0))
+            c.transition = item.get("transition") if item.get("transition") in fx.TRANSITIONS else "aucune"
+            c.effects = [e for e in item.get("effects", []) if e in fx.VIDEO_EFFECTS]
+            c.audio_effects = [e for e in item.get("audio_effects", []) if e in fx.AUDIO_EFFECTS]
+            clips.append(c)
         if not clips:
             raise RuntimeError("Le réalisateur IA n'a retenu aucun segment valide.")
         s2 = settings.model_copy()
@@ -348,7 +423,23 @@ class ClaudeDirector:
         elif plan.get("music") == "non":
             s2.music = False
         tl = base_timeline(s2, music_track)
-        tl.clips = merge_contiguous(clips, 0.1)
+        tl.clips = clips
+        total = tl.duration
+        if plan.get("look") in fx.LOOKS:
+            tl.look = plan["look"]
+        tl.texts = [TextItem(start=max(0.0, min(t["start"], total)), duration=max(0.3, t["duration"]),
+                             text=t["text"], style=t["style"], position=t["position"])
+                    for t in plan.get("texts", []) if t.get("text")]
+        tl.sfx = [SfxItem(start=max(0.0, s["start"]), kind=s["kind"], volume=0.6)
+                  for s in plan.get("sfx", []) if s.get("kind") in fx.SFX and s.get("start", 0) < total]
+        for b in plan.get("broll", []):
+            seg = by_id.get(b.get("segment_id", ""))
+            if not seg:
+                continue
+            L = max(0.5, min(b.get("duration", 2.5), seg.duration))
+            tl.overlays.append(OverlayItem(media_id=seg.media_id, src_in=seg.start, src_out=round(seg.start + L, 3),
+                                           start=max(0.0, b.get("start", 0.0)), mode=b.get("mode", "plein"),
+                                           reason="Plan de coupe choisi par l'IA."))
         tl.title = plan.get("title", "")
         tl.summary = plan.get("summary", "")
         tl.director = self.name
@@ -425,11 +516,64 @@ def heuristic_command(instruction: str, timeline: Timeline, segments: list[Segme
         s2.punch_zooms = not any(k in text for k in ("sans", "enlève", "enleve", "supprime", "pas de"))
         changed.append("zooms " + ("activés" if s2.punch_zooms else "désactivés"))
 
+    # Effets demandés en clair : ils s'appliquent sur la timeline existante.
+    fx_words = {
+        "noir et blanc": ("look", "noir_et_blanc"), "cinéma": ("look", "cinema"), "cinema": ("look", "cinema"),
+        "vintage": ("look", "vintage"), "sépia": ("look", "sepia"), "sepia": ("look", "sepia"),
+        "couleurs vives": ("look", "vif"), "tons froids": ("look", "froid"), "tons chauds": ("look", "chaud"),
+        "ralenti": ("speed", 0.5), "accélér": ("speed", 1.5), "accéler": ("speed", 1.5),
+        "glitch": ("effect", "glitch"), "tremblement": ("effect", "tremblement"), "grain": ("effect", "grain"),
+        "vignette": ("effect", "vignette"), "transition": ("transition", "fondu_noir"),
+        "fondu": ("transition", "fondu_noir"), "écho": ("audio", "echo"), "echo": ("audio", "echo"),
+        "voix robot": ("audio", "robot"), "radio": ("audio", "radio"),
+        "bruitage": ("sfx", "whoosh"), "whoosh": ("sfx", "whoosh"),
+    }
+    neg = any(k in text for k in ("sans", "enlève", "enleve", "supprime", "retire", "pas de"))
+    fx_hits = [(k, v) for k, v in fx_words.items() if k in text]
+    if "sans effet" in text or "aucun effet" in text:
+        fx_hits = [("_reset", ("reset", None))]
     remove = re.findall(r"[«\"']([^»\"']+)[»\"']", instruction)
     if changed:
         tl = HeuristicDirector().direct(segments, s2, media_order, music_track)
     else:
         tl = timeline.model_copy(deep=True)
+    for word, (kind, val) in fx_hits:
+        if kind == "reset":
+            tl.look = "aucun"
+            tl.sfx, tl.texts, tl.overlays = [], [], []
+            for c in tl.clips:
+                c.effects, c.transition, c.speed = [], "aucune", 1.0
+            changed.append("tous les effets retirés")
+        elif kind == "look":
+            tl.look = "aucun" if neg else val
+            changed.append(f"look {word} {'retiré' if neg else 'appliqué'}")
+        elif kind == "speed":
+            sel = [c for c in tl.clips if c.score >= np.quantile([x.score for x in tl.clips], 0.8)] or tl.clips[:1]
+            for c in (tl.clips if neg else sel):
+                c.speed = 1.0 if neg else val
+            changed.append(f"{word} {'retiré' if neg else f'sur {len(sel)} plan(s) fort(s)'}")
+        elif kind == "effect":
+            for c in tl.clips:
+                c.effects = [e for e in c.effects if e != val] + ([] if neg else [val])
+            changed.append(f"effet {word} {'retiré' if neg else 'ajouté'}")
+        elif kind == "audio":
+            for c in tl.clips:
+                c.audio_effects = [e for e in c.audio_effects if e != val] + ([] if neg else [val])
+            changed.append(f"effet audio {word} {'retiré' if neg else 'ajouté'}")
+        elif kind == "transition":
+            for i, c in enumerate(tl.clips):
+                c.transition = "aucune" if neg else (c.transition if c.transition != "aucune" or i == 0 else val)
+            changed.append("transitions " + ("retirées" if neg else "ajoutées entre les plans"))
+        elif kind == "sfx":
+            if neg:
+                tl.sfx = []
+            else:
+                t = 0.0
+                for i, c in enumerate(tl.clips):
+                    if i:
+                        tl.sfx.append(SfxItem(start=max(0.0, t - 0.25), kind="whoosh", volume=0.5))
+                    t += c.duration
+            changed.append("bruitages " + ("retirés" if neg else "ajoutés sur les coupes"))
     if remove and any(k in text for k in ("enlève", "enleve", "supprime", "retire", "coupe")):
         by_id = {s.id: s for s in segments}
         before = len(tl.clips)
@@ -440,7 +584,8 @@ def heuristic_command(instruction: str, timeline: Timeline, segments: list[Segme
     if not changed:
         raise ValueError(
             "Sans clé API Claude, je comprends seulement : une durée (« 30 secondes »), un format "
-            "(« vertical »), les sous-titres, la musique, les zooms, ou « enlève \"mot\" ». "
+            "(« vertical »), les sous-titres, la musique, les zooms, des effets (« noir et blanc », « ralenti », "
+            "« transitions », « bruitages », « sans effets »), ou « enlève \"mot\" ». "
             "Ajoute ANTHROPIC_API_KEY pour des consignes libres."
         )
     return tl, ", ".join(changed), s2

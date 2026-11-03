@@ -139,6 +139,7 @@ export function AIPanel() {
         <label><input type="checkbox" checked={settings.remove_silences} onChange={(e) => set({ remove_silences: e.target.checked })} /> Couper les silences</label>
         <label><input type="checkbox" checked={settings.remove_fillers} onChange={(e) => set({ remove_fillers: e.target.checked })} /> Couper les « euh »</label>
         <label><input type="checkbox" checked={settings.punch_zooms} onChange={(e) => set({ punch_zooms: e.target.checked })} /> Zooms dynamiques</label>
+        <label><input type="checkbox" checked={settings.auto_effects ?? true} onChange={(e) => set({ auto_effects: e.target.checked })} /> Habillage auto</label>
         <label><input type="checkbox" checked={settings.music} onChange={(e) => set({ music: e.target.checked })} /> Musique de fond</label>
       </div>
       <label>Consignes pour l'IA <span className="muted small">(facultatif)</span>

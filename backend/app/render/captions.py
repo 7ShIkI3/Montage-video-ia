@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from ..models import CaptionLine, Timeline, Transcript, Word
+from ..models import CaptionLine, TextItem, Timeline, Transcript, Word
 
 SENT_END = re.compile(r"[.!?…,;:]$")
 
@@ -20,8 +20,9 @@ def timeline_words(timeline: Timeline, transcripts: dict[str, Transcript]) -> li
                     continue
                 mid = (w.start + w.end) / 2
                 if c.src_in <= mid < c.src_out:
-                    s = t0 + max(0.0, w.start - c.src_in)
-                    e = t0 + min(c.duration, w.end - c.src_in)
+                    sp = max(0.05, c.speed)
+                    s = t0 + max(0.0, w.start - c.src_in) / sp
+                    e = t0 + min(c.duration, (w.end - c.src_in) / sp)
                     if e > s:
                         out.append(Word(start=round(s, 3), end=round(e, 3), text=w.text, prob=w.prob))
         t0 += c.duration
@@ -82,7 +83,58 @@ def _esc(t: str) -> str:
     return t.replace("\\", "").replace("{", "(").replace("}", ")")
 
 
-def to_ass(lines: list[CaptionLine], width: int, height: int, style: str, fmt: str) -> str:
+def _text_styles(width: int, height: int) -> list[str]:
+    base = min(width, height)
+    f = "Arial Black"
+    t = int(base * 0.11)
+    g = int(base * 0.13)
+    b = int(base * 0.055)
+    lg = int(base * 0.04)
+    e = int(base * 0.16)
+    # Name, Font, Size, Primary, Secondary, Outline, Back, Bold, Italic, Underline, Strike, ScaleX, ScaleY,
+    # Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+    return [
+        f"Style: Titre,{f},{t},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,100,2,0,1,{max(3, t // 14)},{max(2, t // 25)},5,60,60,60,1",
+        f"Style: GrosTexte,{f},{g},&H0000E5FF,&H00FFFFFF,&H00000000,&HA0000000,-1,0,0,0,100,100,0,0,1,{max(4, g // 10)},{max(2, g // 20)},5,60,60,60,1",
+        f"Style: Bandeau,Arial,{b},&H00FFFFFF,&H00FFFFFF,&H00FF5C7C,&H00FF5C7C,-1,0,0,0,100,100,1,0,3,{max(8, b // 3)},0,1,{int(width * 0.05)},60,{int(height * 0.12)},1",
+        f"Style: Legende,Arial,{lg},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,-1,0,0,100,100,0,0,1,2,1,2,60,60,{int(height * 0.18)},1",
+        f"Style: Emoji,DejaVu Sans,{e},&H0000E5FF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{max(3, e // 16)},2,5,60,60,60,1",
+    ]
+
+
+def text_events(texts: list[TextItem], width: int, height: int) -> list[str]:
+    out = []
+    pos_y = {"haut": int(height * 0.16), "centre": int(height * 0.5), "bas": int(height * 0.8)}
+    for t in texts:
+        if not t.text.strip():
+            continue
+        st, en = _ass_time(t.start), _ass_time(t.start + max(0.3, t.duration))
+        txt = _esc(t.text).replace("\n", "\\N")
+        x = width // 2
+        y = pos_y.get(t.position, pos_y["centre"])
+        if t.style == "titre":
+            tag = rf"{{\an5\pos({x},{y})\fad(250,300)\fscx60\fscy60\t(0,250,\fscx100\fscy100)}}"
+            out.append(f"Dialogue: 2,{st},{en},Titre,,0,0,0,,{tag}{txt.upper()}")
+        elif t.style == "gros_texte":
+            tag = rf"{{\an5\pos({x},{y})\fad(80,150)\frz-4\fscx130\fscy130\t(0,120,\fscx100\fscy100)}}"
+            out.append(f"Dialogue: 2,{st},{en},GrosTexte,,0,0,0,,{tag}{txt.upper()}")
+        elif t.style == "bandeau":
+            x0 = -int(width * 0.4)
+            x1 = int(width * 0.05)
+            yb = int(height * 0.86) if t.position != "haut" else int(height * 0.12)
+            tag = rf"{{\an4\move({x0},{yb},{x1},{yb},0,300)\fad(0,250)}}"
+            out.append(f"Dialogue: 2,{st},{en},Bandeau,,0,0,0,,{tag} {txt} ")
+        elif t.style == "emoji":
+            tag = rf"{{\an5\pos({x},{y})\fad(100,200)\fscx40\fscy40\t(0,200,\fscx110\fscy110)\t(200,320,\fscx100\fscy100)}}"
+            out.append(f"Dialogue: 2,{st},{en},Emoji,,0,0,0,,{tag}{txt}")
+        else:
+            tag = rf"{{\an5\pos({x},{y})\fad(200,200)}}"
+            out.append(f"Dialogue: 2,{st},{en},Legende,,0,0,0,,{tag}{txt}")
+    return out
+
+
+def to_ass(lines: list[CaptionLine], width: int, height: int, style: str, fmt: str,
+           texts: list[TextItem] | None = None) -> str:
     vertical = fmt == "9:16"
     base = min(width, height)
     if style == "karaoke":
@@ -102,7 +154,8 @@ def to_ass(lines: list[CaptionLine], width: int, height: int, style: str, fmt: s
         f"PlayResX: {width}\nPlayResY: {height}\n\n"
         "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
-        f"Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n{styl}\n\n"
+        f"Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n{styl}\n"
+        + "\n".join(_text_styles(width, height)) + "\n\n"
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
     events = []
@@ -125,4 +178,5 @@ def to_ass(lines: list[CaptionLine], width: int, height: int, style: str, fmt: s
                 events.append(f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Default,,0,0,0,,{pop}{' '.join(parts)}")
         else:
             events.append(f"Dialogue: 0,{_ass_time(ln.start)},{_ass_time(ln.end)},Default,,0,0,0,,{_esc(ln.text)}")
+    events += text_events(texts or [], width, height)
     return head + "\n".join(events) + "\n"

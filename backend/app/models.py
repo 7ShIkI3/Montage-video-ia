@@ -73,6 +73,52 @@ class Clip(BaseModel):
     reason: str = ""
     zoom: float = 1.0
     volume: float = 1.0
+    speed: float = 1.0  # 0.25 à 4 : ralenti / accéléré
+    transition: str = "aucune"  # transition d'entrée (voir render/effects.py)
+    transition_duration: float = 0.35
+    effects: list[str] = Field(default_factory=list)  # effets vidéo
+    audio_effects: list[str] = Field(default_factory=list)  # effets audio
+
+    @property
+    def source_duration(self) -> float:
+        return max(0.0, self.src_out - self.src_in)
+
+    @property
+    def duration(self) -> float:
+        """Durée sur la timeline (tient compte de la vitesse)."""
+        return self.source_duration / max(0.05, self.speed)
+
+
+class TextItem(BaseModel):
+    """Titre, bandeau ou texte incrusté sur la piste Textes."""
+
+    id: str = Field(default_factory=lambda: new_id("t_"))
+    start: float
+    duration: float = 2.5
+    text: str
+    style: Literal["titre", "bandeau", "legende", "gros_texte", "emoji"] = "titre"
+    position: Literal["haut", "centre", "bas"] = "centre"
+
+
+class SfxItem(BaseModel):
+    """Bruitage placé sur la piste Effets sonores."""
+
+    id: str = Field(default_factory=lambda: new_id("s_"))
+    start: float
+    kind: str = "whoosh"
+    volume: float = 0.8
+
+
+class OverlayItem(BaseModel):
+    """Plan de coupe (B-roll) sur la piste vidéo 2, plein cadre ou en incrustation."""
+
+    id: str = Field(default_factory=lambda: new_id("o_"))
+    media_id: str
+    src_in: float
+    src_out: float
+    start: float
+    mode: Literal["plein", "incrustation"] = "plein"
+    reason: str = ""
 
     @property
     def duration(self) -> float:
@@ -94,6 +140,7 @@ class EditSettings(BaseModel):
     remove_silences: bool = True
     punch_zooms: bool = True
     music: bool = False
+    auto_effects: bool = True  # l'IA place transitions, effets, bruitages, titres et B-roll
     instructions: str = ""  # consignes libres données au réalisateur IA
 
 
@@ -106,6 +153,10 @@ class Timeline(BaseModel):
     summary: str = ""
     director: str = ""  # "claude" ou "heuristique"
     rejected: list[Clip] = Field(default_factory=list)
+    look: str = "aucun"  # étalonnage global appliqué à toute la vidéo
+    texts: list[TextItem] = Field(default_factory=list)
+    sfx: list[SfxItem] = Field(default_factory=list)
+    overlays: list[OverlayItem] = Field(default_factory=list)
 
     @property
     def duration(self) -> float:

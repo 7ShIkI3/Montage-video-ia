@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { api, fmtTime, waitJob } from "../api";
+import { api, Clip, EffectsCatalog, fmtTime, Opt, Timeline, waitJob } from "../api";
 import { clipStarts, useStore } from "../store";
 
 export function CommandBar() {
@@ -10,7 +10,8 @@ export function CommandBar() {
   const [text, setText] = useState("");
   const busy = !!job && (job.status === "en_cours" || job.status === "en_attente");
   if (!project) return null;
-  const examples = ["Fais une version de 30 secondes", "Passe en vertical", "Enlève le passage sur « la météo »", "Ajoute de la musique"];
+  const examples = ["Fais une version de 30 secondes", "Passe en vertical", "Look cinéma", "Ajoute des transitions et des bruitages",
+    "Ralenti sur l'action", "Enlève le passage sur « la météo »"];
 
   const send = async (instruction: string) => {
     if (!instruction.trim()) return;
@@ -57,6 +58,8 @@ export function Inspector() {
   const project = useStore((s) => s.project);
   const tl = useStore((s) => s.timeline);
   const selected = useStore((s) => s.selected);
+  const it = useStore((s) => s.item);
+  const catalog = useStore((s) => s.catalog);
   const { updateClip, restoreRejected, setTimelineProps, notify } = useStore.getState();
   const segments = useStore((s) => s.segments);
   const [showRejected, setShowRejected] = useState(false);
@@ -89,7 +92,10 @@ export function Inspector() {
           <label>Volume {Math.round(c.volume * 100)} %
             <input type="range" min={0} max={2} step={0.05} value={c.volume} onChange={(e) => updateClip(c.id, { volume: +e.target.value })} />
           </label>
+          {catalog && <ClipEffects c={c} catalog={catalog} />}
         </>
+      ) : it && it.kind !== "clip" ? (
+        <ItemEditor />
       ) : (
         <>
           <header><h3>Montage</h3></header>
@@ -111,6 +117,7 @@ export function Inspector() {
               </select>
             </label>
           </div>
+          {catalog && <GlobalFx tl={tl} catalog={catalog} />}
           <div className="music-row">
             <span>Musique : {tl.music.track ? tl.music.track.split(/[\\/]/).pop() : "aucune"}</span>
             <button className="small-btn" onClick={() => musicInput.current?.click()}>Choisir…</button>
@@ -156,6 +163,170 @@ export function Inspector() {
         </div>
       )}
     </section>
+  );
+}
+
+function Chips({ opts, value, onToggle }: { opts: Opt[]; value: string[]; onToggle: (id: string) => void }) {
+  return (
+    <div className="fx-chips">
+      {opts.map((o) => (
+        <button key={o.id} type="button" className={`fx-chip ${value.includes(o.id) ? "on" : ""}`} onClick={() => onToggle(o.id)}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const toggle = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+
+function ClipEffects({ c, catalog }: { c: Clip; catalog: EffectsCatalog }) {
+  const { updateClip } = useStore.getState();
+  const groups = Array.from(new Set(catalog.video_effects.map((o) => o.group || "Effets")));
+  return (
+    <div className="fx-section">
+      <div className="field-row">
+        <label>Transition d'entrée
+          <select value={c.transition} onChange={(e) => updateClip(c.id, { transition: e.target.value })}>
+            {catalog.transitions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        </label>
+        <label>Vitesse
+          <select value={c.speed} onChange={(e) => updateClip(c.id, { speed: +e.target.value })}>
+            {catalog.speeds.map((v) => <option key={v} value={v}>{v === 1 ? "Normale" : `×${v}`}</option>)}
+          </select>
+        </label>
+      </div>
+      {c.transition !== "aucune" && (
+        <label>Durée de transition {c.transition_duration.toFixed(2)} s
+          <input type="range" min={0.1} max={1.5} step={0.05} value={c.transition_duration}
+            onChange={(e) => updateClip(c.id, { transition_duration: +e.target.value })} />
+        </label>
+      )}
+      {groups.map((g) => (
+        <div key={g}>
+          <div className="fx-title">{g}</div>
+          <Chips opts={catalog.video_effects.filter((o) => (o.group || "Effets") === g)} value={c.effects}
+            onToggle={(id) => updateClip(c.id, { effects: toggle(c.effects, id) })} />
+        </div>
+      ))}
+      <div className="fx-title">Effets sur la voix</div>
+      <Chips opts={catalog.audio_effects} value={c.audio_effects}
+        onToggle={(id) => updateClip(c.id, { audio_effects: toggle(c.audio_effects, id) })} />
+    </div>
+  );
+}
+
+function GlobalFx({ tl, catalog }: { tl: Timeline; catalog: EffectsCatalog }) {
+  const { setTimelineProps, addText, addSfx } = useStore.getState();
+  const [kind, setKind] = useState(catalog.sfx[0]?.id ?? "whoosh");
+  const n = tl.clips.reduce((a, c) => a + c.effects.length + c.audio_effects.length + (c.transition !== "aucune" ? 1 : 0), 0);
+  return (
+    <div className="fx-section">
+      <label>Étalonnage (look global)
+        <select value={tl.look || "aucun"} onChange={(e) => setTimelineProps({ look: e.target.value })}>
+          {catalog.looks.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+      </label>
+      <p className="muted small">
+        {n} effet(s) et transition(s) sur les plans · {tl.texts?.length ?? 0} texte(s) · {tl.sfx?.length ?? 0} bruitage(s) ·{" "}
+        {tl.overlays?.length ?? 0} plan(s) de coupe
+      </p>
+      <div className="field-row">
+        <button className="small-btn" onClick={() => addText()}>＋ Texte au curseur</button>
+      </div>
+      <div className="sfx-row">
+        <select value={kind} onChange={(e) => setKind(e.target.value)}>
+          {catalog.sfx.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+        <button className="small-btn" onClick={() => new Audio(api.sfxUrl(kind)).play().catch(() => undefined)}>▶</button>
+        <button className="small-btn" onClick={() => addSfx(kind)}>＋ Bruitage</button>
+      </div>
+    </div>
+  );
+}
+
+function ItemEditor() {
+  const tl = useStore((s) => s.timeline);
+  const it = useStore((s) => s.item);
+  const project = useStore((s) => s.project);
+  const catalog = useStore((s) => s.catalog);
+  const { updateItem, deleteItem, selectItem } = useStore.getState();
+  if (!tl || !it || it.kind === "clip" || !project) return null;
+  const up = (patch: Record<string, unknown>) => updateItem(it.kind as "text" | "sfx" | "overlay", it.id, patch);
+  const del = () => deleteItem(it.kind as "text" | "sfx" | "overlay", it.id);
+  const back = <button className="link" onClick={() => selectItem(null)}>← Montage</button>;
+
+  if (it.kind === "text") {
+    const x = tl.texts.find((t) => t.id === it.id);
+    if (!x) return null;
+    return (
+      <>
+        <header><h3>Texte à l'écran</h3>{back}</header>
+        <label>Texte<textarea rows={2} value={x.text} onChange={(e) => up({ text: e.target.value })} /></label>
+        <div className="field-row">
+          <label>Style
+            <select value={x.style} onChange={(e) => up({ style: e.target.value })}>
+              {(catalog?.text_styles ?? []).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+          </label>
+          <label>Position
+            <select value={x.position} onChange={(e) => up({ position: e.target.value })}>
+              <option value="haut">Haut</option><option value="centre">Centre</option><option value="bas">Bas</option>
+            </select>
+          </label>
+        </div>
+        <div className="field-row">
+          <label>Début (s)<input type="number" step={0.1} value={x.start.toFixed(2)} onChange={(e) => up({ start: Math.max(0, +e.target.value) })} /></label>
+          <label>Durée (s)<input type="number" step={0.1} value={x.duration.toFixed(2)} onChange={(e) => up({ duration: Math.max(0.3, +e.target.value) })} /></label>
+        </div>
+        <button className="small-btn danger" onClick={del}>Supprimer le texte</button>
+      </>
+    );
+  }
+  if (it.kind === "sfx") {
+    const x = tl.sfx.find((t) => t.id === it.id);
+    if (!x) return null;
+    return (
+      <>
+        <header><h3>Bruitage</h3>{back}</header>
+        <div className="field-row">
+          <label>Son
+            <select value={x.kind} onChange={(e) => up({ kind: e.target.value })}>
+              {(catalog?.sfx ?? []).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+          </label>
+          <label>Position (s)<input type="number" step={0.05} value={x.start.toFixed(2)} onChange={(e) => up({ start: Math.max(0, +e.target.value) })} /></label>
+        </div>
+        <label>Volume {Math.round(x.volume * 100)} %
+          <input type="range" min={0} max={1.5} step={0.05} value={x.volume} onChange={(e) => up({ volume: +e.target.value })} />
+        </label>
+        <div className="field-row">
+          <button className="small-btn" onClick={() => new Audio(api.sfxUrl(x.kind)).play().catch(() => undefined)}>▶ Écouter</button>
+          <button className="small-btn danger" onClick={del}>Supprimer</button>
+        </div>
+      </>
+    );
+  }
+  const x = tl.overlays.find((t) => t.id === it.id);
+  if (!x) return null;
+  const m = project.media.find((mm) => mm.id === x.media_id);
+  return (
+    <>
+      <header><h3>Plan de coupe (B-roll)</h3>{back}</header>
+      <p className="muted small">{m?.filename} · {x.reason}</p>
+      <label>Affichage
+        <select value={x.mode} onChange={(e) => up({ mode: e.target.value })}>
+          <option value="plein">Plein écran</option><option value="incrustation">Incrustation (coin)</option>
+        </select>
+      </label>
+      <div className="field-row">
+        <label>Source début<input type="number" step={0.05} value={x.src_in.toFixed(2)} onChange={(e) => up({ src_in: Math.max(0, Math.min(+e.target.value, x.src_out - 0.2)) })} /></label>
+        <label>Source fin<input type="number" step={0.05} value={x.src_out.toFixed(2)} onChange={(e) => up({ src_out: Math.min(m?.duration ?? 1e9, Math.max(+e.target.value, x.src_in + 0.2)) })} /></label>
+      </div>
+      <label>Placé à (s)<input type="number" step={0.1} value={x.start.toFixed(2)} onChange={(e) => up({ start: Math.max(0, +e.target.value) })} /></label>
+      <button className="small-btn danger" onClick={del}>Retirer le plan de coupe</button>
+    </>
   );
 }
 
@@ -207,8 +378,9 @@ export function TranscriptPanel() {
         {items.map(({ c, ci, start, words }) => (
           <p key={c.id}>
             {words.map(({ w, idx }, wi) => {
-              const t = start + (w.start - c.src_in);
-              const isNow = playhead >= t && playhead < start + (w.end - c.src_in);
+              const sp = c.speed || 1;
+              const t = start + (w.start - c.src_in) / sp;
+              const isNow = playhead >= t && playhead < start + (w.end - c.src_in) / sp;
               const inSel = sel && sel.clip === ci && wi >= Math.min(sel.a, sel.b) && wi <= Math.max(sel.a, sel.b);
               return (
                 <span key={idx} className={`w ${isNow ? "now" : ""} ${inSel ? "sel" : ""} ${w.prob < 0.5 ? "unsure" : ""}`}

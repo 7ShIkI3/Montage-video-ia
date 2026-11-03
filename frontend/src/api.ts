@@ -28,6 +28,56 @@ export interface Clip {
   reason: string;
   zoom: number;
   volume: number;
+  speed: number;
+  transition: string;
+  transition_duration: number;
+  effects: string[];
+  audio_effects: string[];
+}
+
+export type TextStyle = "titre" | "bandeau" | "legende" | "gros_texte" | "emoji";
+export type TextPos = "haut" | "centre" | "bas";
+
+export interface TextItem {
+  id: string;
+  start: number;
+  duration: number;
+  text: string;
+  style: TextStyle;
+  position: TextPos;
+}
+
+export interface SfxItem {
+  id: string;
+  start: number;
+  kind: string;
+  volume: number;
+}
+
+export interface OverlayItem {
+  id: string;
+  media_id: string;
+  src_in: number;
+  src_out: number;
+  start: number;
+  mode: "plein" | "incrustation";
+  reason: string;
+}
+
+export interface Opt {
+  id: string;
+  label: string;
+  group?: string;
+}
+
+export interface EffectsCatalog {
+  video_effects: Opt[];
+  looks: Opt[];
+  transitions: Opt[];
+  audio_effects: Opt[];
+  sfx: Opt[];
+  text_styles: Opt[];
+  speeds: number[];
 }
 
 export interface MusicSettings {
@@ -45,6 +95,10 @@ export interface Timeline {
   summary: string;
   director: string;
   rejected: Clip[];
+  look: string;
+  texts: TextItem[];
+  sfx: SfxItem[];
+  overlays: OverlayItem[];
 }
 
 export interface EditSettings {
@@ -56,6 +110,7 @@ export interface EditSettings {
   remove_silences: boolean;
   punch_zooms: boolean;
   music: boolean;
+  auto_effects: boolean;
   instructions: string;
 }
 
@@ -155,6 +210,8 @@ const json = (method: string, body: unknown): RequestInit => ({
 
 export const api = {
   health: () => req<Health>("/api/health"),
+  effects: () => req<EffectsCatalog>("/api/effects"),
+  sfxUrl: (kind: string) => `/api/sfx/${kind}`,
   listProjects: () => req<ProjectSummary[]>("/api/projects"),
   createProject: (name: string) => req<Project>("/api/projects", json("POST", { name })),
   getProject: (id: string) => req<Project>(`/api/projects/${id}`),

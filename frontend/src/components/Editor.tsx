@@ -39,10 +39,13 @@ function useShortcuts() {
       else if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); s.undo(); }
       else if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); s.redo(); }
       else if (e.key.toLowerCase() === "s" && !mod) { s.splitAtPlayhead(); }
-      else if ((e.key === "Delete" || e.key === "Backspace") && s.selected) { s.deleteClip(s.selected); }
+      else if ((e.key === "Delete" || e.key === "Backspace") && s.item) {
+        if (s.item.kind === "clip") s.deleteClip(s.item.id);
+        else s.deleteItem(s.item.kind, s.item.id);
+      }
       else if (e.key === "ArrowLeft") { s.setPlayhead(s.playhead - (e.shiftKey ? 1 : 1 / 30)); }
       else if (e.key === "ArrowRight") { s.setPlayhead(s.playhead + (e.shiftKey ? 1 : 1 / 30)); }
-      else if (e.key === "Escape") { s.select(null); }
+      else if (e.key === "Escape") { s.selectItem(null); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

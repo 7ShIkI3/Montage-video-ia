@@ -60,3 +60,36 @@ def test_full_flow(rush):
     info = ffmpeg.probe(out)
     assert (info["width"], info["height"]) == (720, 1280)
     assert info["has_audio"]
+
+
+def test_every_effect_renders(rush, tmp_path):
+    """Chaque effet, transition, effet audio, vitesse, piste Textes/Bruitages/B-roll passe dans FFmpeg."""
+    from app import pipeline, storage
+    from app.models import Clip, OverlayItem, Project, SfxItem, TextItem, Timeline
+    from app.render import effects as fx
+    from app.render.render import render
+
+    p = Project(name="Effets")
+    m = pipeline.ingest(p, rush, "rush.mp4")
+    clips = []
+    t = 0.0
+    vfx = list(fx.VIDEO_EFFECTS)
+    afx = list(fx.AUDIO_EFFECTS)
+    trs = list(fx.TRANSITIONS)
+    n = max(len(vfx), len(afx), len(trs))
+    for i in range(n):
+        a = (i * 1.1) % 20
+        clips.append(Clip(media_id=m.id, src_in=a, src_out=a + 0.8, speed=[1.0, 0.5, 2.0][i % 3],
+                          effects=[vfx[i % len(vfx)]], audio_effects=[afx[i % len(afx)]],
+                          transition=trs[i % len(trs)], zoom=1.0 + 0.05 * (i % 3)))
+    tl = Timeline(clips=clips, look="cinema", captions="aucun", format="9:16",
+                  texts=[TextItem(start=0.2, text="Titre", style=s) for s in
+                         ["titre", "bandeau", "legende", "gros_texte", "emoji"]],
+                  sfx=[SfxItem(start=0.3 * k, kind=k_) for k, k_ in enumerate(fx.SFX)],
+                  overlays=[OverlayItem(media_id=m.id, src_in=2, src_out=3.5, start=1.0, mode="plein"),
+                            OverlayItem(media_id=m.id, src_in=5, src_out=6.5, start=4.0, mode="incrustation")])
+    out = tmp_path / "effets.mp4"
+    render(p, tl, {}, out, tmp_path, "720p")
+    info = ffmpeg.probe(out)
+    assert (info["width"], info["height"]) == (720, 1280)
+    assert abs(info["duration"] - tl.duration) < 0.5, (info["duration"], tl.duration)

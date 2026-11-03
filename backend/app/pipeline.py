@@ -7,6 +7,7 @@ from pathlib import Path
 
 from . import config, storage
 from .ai import director as dir_mod
+from .ai.decorate import decorate
 from .ai.segments import build_segments
 from .analysis import audio as audio_an
 from .analysis import transcribe as tr_mod
@@ -97,6 +98,11 @@ def pick_music(project: Project, style: str) -> str | None:
     return str(rnd.choice(styled or tracks))
 
 
+def _has_effects(tl: Timeline) -> bool:
+    return bool(tl.texts or tl.sfx or tl.overlays or (tl.look and tl.look != "aucun")
+                or any(c.effects or c.audio_effects or c.transition != "aucune" for c in tl.clips))
+
+
 def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timeline:
     project = storage.load_project(project_id)
     if not project.media:
@@ -125,6 +131,9 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         log.warning("Réalisateur Claude en échec, repli heuristique : %s", e)
         project.warnings.append(f"Réalisateur Claude indisponible ({e}) : montage heuristique utilisé.")
         tl = dir_mod.HeuristicDirector().direct(segments, settings, order, music)
+    if director.name != "claude" or not _has_effects(tl):
+        ctx.step("Habillage : transitions, effets, bruitages, titres", 0.97)
+        tl = decorate(tl, segments, settings, project.name)
     project.timeline = tl
     storage.save_project(project)
     ctx.step(f"Montage prêt : {len(tl.clips)} plans, {tl.duration:.0f} s", 1.0)
@@ -146,11 +155,14 @@ def ai_command(project_id: str, instruction: str, ctx: JobContext) -> dict:
     else:
         tl, msg, s2 = dir_mod.heuristic_command(instruction, project.timeline, segments,
                                                 project.settings, order, music)
+        if tl.director == "heuristique" and tl is not project.timeline and not _has_effects(tl):
+            tl = decorate(tl, segments, s2, project.name)
         project.settings = s2
         if s2.music and not tl.music.track:
             tl.music.track = pick_music(project, s2.style)
     project.timeline = tl
     storage.save_project(project)
+    ctx.step(msg or "Consigne appliquée", 1.0)
     return {"message": msg, "director": director.name}
 
 
