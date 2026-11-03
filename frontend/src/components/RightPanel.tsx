@@ -62,7 +62,9 @@ export function CommentsPanel() {
   const job = useStore((s) => s.job);
   const item = useStore((s) => s.item);
   const dirty = useStore((s) => s.dirty);
-  const { addComment, deleteItem, setPlayhead, selectItem, setJob, notify } = useStore.getState();
+  const { addComment, deleteItem, setPlayhead, selectItem, setJob, notify, setPicking, setPendingRegion } = useStore.getState();
+  const picking = useStore((s) => s.picking);
+  const pending = useStore((s) => s.pendingRegion);
   const [text, setText] = useState("");
   const [general, setGeneral] = useState(false);
   if (!tl || !project) return null;
@@ -105,10 +107,28 @@ export function CommentsPanel() {
         placeholder={hit && !general ? `À ${fmtTime(playhead, true)} sur ${clipName} : « coupe ce passage », « ralenti », « texte "Wow" »…` : "Remarque sur tout le montage…"}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); add(); } }} />
+      {pending ? (
+        <div className="zone-pill">
+          <span>⬚ Zone sélectionnée sur l'image</span>
+          <button className="link" onClick={() => setPendingRegion(null)} title="Retirer la zone">✕</button>
+        </div>
+      ) : null}
+      {pending && (
+        <div className="quick-actions">
+          {[["Flouter", "Floute ça"], ["Pixeliser", "Pixelise ça"], ["Cacher", "Cache ça en noir"],
+            ["Entourer", "Entoure ça"], ["Zoomer dessus", "Zoom sur ça"], ["Cadrer dessus", "Cadre sur ça"]].map(([l, t]) => (
+            <button key={l} className="chip" disabled={busy} onClick={() => addComment(text.trim() ? `${t}. ${text.trim()}` : t) && setText("")}>{l}</button>
+          ))}
+        </div>
+      )}
       <div className="comment-row">
-        <label className="inline small"><input type="checkbox" checked={general || !hit} disabled={!hit}
-          onChange={(e) => setGeneral(e.target.checked)} /> Sur tout le montage</label>
-        <button className="small-btn" disabled={!text.trim() || busy} onClick={add}>💬 Ajouter</button>
+        <button className={`small-btn pick-btn ${picking ? "on" : ""}`} disabled={!hit || busy}
+          onClick={() => setPicking(!picking)} title="Sélectionner un élément directement sur l'image">
+          ⬚ {picking ? "Trace la zone…" : "Sélectionner sur la vidéo"}
+        </button>
+        <label className="inline small"><input type="checkbox" checked={general || !hit} disabled={!hit || !!pending}
+          onChange={(e) => setGeneral(e.target.checked)} /> Tout le montage</label>
+        <button className="small-btn primary-soft" disabled={!text.trim() || busy} onClick={add}>💬 Ajouter</button>
       </div>
       {sorted.length > 0 && (
         <ul className="comment-list">
@@ -122,7 +142,7 @@ export function CommentsPanel() {
                   <span className={`cm-status s-${c.status}`}>{label[c.status]}</span>
                   <button className="link" title="Supprimer" onClick={(e) => { e.stopPropagation(); deleteItem("comment", c.id); }}>✕</button>
                 </div>
-                <div>{c.text}</div>
+                <div>{c.region && <span className="zone-tag" title="Commentaire sur une zone de l'image">⬚</span>} {c.text}</div>
                 {c.reply && <div className="cm-reply">IA : {c.reply}</div>}
               </li>
             );

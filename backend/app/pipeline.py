@@ -109,6 +109,10 @@ def pick_music(project: Project, style: str) -> str | None:
     return str(rnd.choice(styled or tracks))
 
 
+def _faces(project: Project) -> dict[str, dict]:
+    return {m.id: (storage.load_signals(project.id, m.id) or {}).get("faces") or {} for m in project.media}
+
+
 def _has_effects(tl: Timeline) -> bool:
     return bool(tl.texts or tl.sfx or tl.overlays or (tl.look and tl.look != "aucun")
                 or any(c.effects or c.audio_effects or c.transition != "aucune" for c in tl.clips))
@@ -155,9 +159,14 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         ctx.step("Habillage : transitions, effets, bruitages, titres", 0.97)
         tl = decorate(tl, segments, settings, project.name)
     tl.comments = old_comments
+    if tl.director == "claude":
+        comments_mod.carry_overrides(project.timeline, tl)
+        zone = [c for c in notes if comments_mod.is_region_action(c)]
+        if zone:
+            comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, zone, _faces(project))
     if notes and tl.director != "claude":
         ctx.step("Application de tes commentaires", 0.98)
-        comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, notes)
+        comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, notes, _faces(project))
     project.timeline = tl
     storage.save_project(project)
     ctx.step(f"Montage prêt : {len(tl.clips)} plans, {tl.duration:.0f} s", 1.0)
@@ -185,6 +194,8 @@ def ai_command(project_id: str, instruction: str, ctx: JobContext) -> dict:
         if s2.music and not tl.music.track:
             tl.music.track = pick_music(project, s2.style)
     tl.comments = project.timeline.comments
+    if tl is not project.timeline:
+        comments_mod.carry_overrides(project.timeline, tl)
     project.timeline = tl
     storage.save_project(project)
     ctx.step(msg or "Consigne appliquée", 1.0)
@@ -234,20 +245,40 @@ def apply_comments(project_id: str, ctx: JobContext) -> dict:
     segments = storage.load_segments(project.id) or all_segments(project, project.settings)
     director = dir_mod.get_director()
     ctx.step(f"L'IA lit tes {len(open_c)} commentaire(s)" + (" (Claude)" if director.name == "claude" else ""), 0.2)
+    durations = {m.id: m.duration for m in project.media}
     if director.name == "claude":
-        lines = [comments_mod.context_line(tl, c, segments, k + 1) for k, c in enumerate(open_c)]
+        # Les actions sur une zone de l'image (flou, cadre, zoom…) sont appliquées au pixel près en local ;
+        # le reste part à Claude, avec l'image de chaque zone sélectionnée.
+        zone = [c for c in open_c if comments_mod.is_region_action(c)]
+        if zone:
+            comments_mod.apply_all(tl, segments, project.settings, durations, zone, _faces(project))
+        rest = [c for c in open_c if c not in zone]
+        lines = [comments_mod.context_line(tl, c, segments, k + 1) for k, c in enumerate(rest)]
+        images = []
+        for k, c in enumerate(rest):
+            if c.region is not None and c.media_id:
+                try:
+                    m = project.media_by_id(c.media_id)
+                    images.append((k + 1, comments_mod.frame_with_region(m.proxy or m.path, c.src_t, c.region)))
+                except Exception as e:
+                    log.warning("Image de zone impossible : %s", e)
         try:
-            new_tl, replies = director.apply_comments(tl, lines, segments, project.settings, tl.music.track)
+            if not rest:
+                raise StopIteration
+            new_tl, replies = director.apply_comments(tl, lines, segments, project.settings, tl.music.track, images)
+            comments_mod.carry_overrides(tl, new_tl)
             new_tl.comments = tl.comments
             new_tl.reframe = tl.reframe
-            for k, c in enumerate(open_c):
+            for k, c in enumerate(rest):
                 c.status, c.reply = "applique", (replies[k] if k < len(replies) else "Pris en compte.")
             tl = new_tl
+        except StopIteration:
+            pass
         except Exception as e:
             log.warning("Commentaires via Claude impossibles, interprète local : %s", e)
-            comments_mod.apply_all(tl, segments, project.settings, {m.id: m.duration for m in project.media})
+            comments_mod.apply_all(tl, segments, project.settings, durations, None, _faces(project))
     else:
-        comments_mod.apply_all(tl, segments, project.settings, {m.id: m.duration for m in project.media})
+        comments_mod.apply_all(tl, segments, project.settings, {m.id: m.duration for m in project.media}, None, _faces(project))
     project.timeline = tl
     storage.save_project(project)
     ok = sum(c.status == "applique" for c in open_c)

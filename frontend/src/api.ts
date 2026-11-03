@@ -33,6 +33,9 @@ export interface Clip {
   transition_duration: number;
   effects: string[];
   audio_effects: string[];
+  focus_x: number | null;
+  focus_y: number | null;
+  masks: Mask[];
 }
 
 export type TextStyle = "titre" | "bandeau" | "legende" | "gros_texte" | "emoji";
@@ -64,10 +67,23 @@ export interface OverlayItem {
   reason: string;
 }
 
+export interface Region {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface Mask extends Region {
+  kind: "flou" | "pixel" | "noir" | "cadre";
+  follow_dx: number | null;
+}
+
 export interface Comment {
   id: string;
   media_id: string | null;
   src_t: number;
+  region: Region | null;
   text: string;
   status: "ouvert" | "applique" | "incompris";
   reply: string;

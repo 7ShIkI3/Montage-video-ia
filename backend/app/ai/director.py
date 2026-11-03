@@ -383,7 +383,7 @@ class ClaudeDirector:
 
         self.client = anthropic.Anthropic()
 
-    def _call(self, user_content: str, system: str | None = None, schema: dict | None = None) -> dict:
+    def _call(self, user_content: str | list, system: str | None = None, schema: dict | None = None) -> dict:
         response = self.client.beta.messages.create(
             model=config.CLAUDE_MODEL,
             max_tokens=16000,
@@ -483,7 +483,8 @@ class ClaudeDirector:
         return "\n".join(lines)
 
     def apply_comments(self, timeline: Timeline, comment_lines: list[str], segments: list[Segment],
-                       settings: EditSettings, music_track: str | None = None) -> tuple[Timeline, list[str]]:
+                       settings: EditSettings, music_track: str | None = None,
+                       images: list[tuple[int, bytes]] | None = None) -> tuple[Timeline, list[str]]:
         user = (
             f"Voici le montage actuel (style {settings.style}, format {timeline.format}, "
             f"sous-titres {timeline.captions}, durée {timeline.duration:.1f} s) :\n{self._describe(timeline)}\n\n"
@@ -492,7 +493,17 @@ class ClaudeDirector:
             "avec une réponse par commentaire dans comment_replies.\n\n"
             f"Moments candidats disponibles :\n{_segments_table(segments)}"
         )
-        plan = self._call(user)
+        content: str | list = user
+        if images:
+            import base64
+
+            content = []
+            for n, data in images[:8]:
+                content.append({"type": "text", "text": f"Image n°{n} (zone sélectionnée en jaune) :"})
+                content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                            "data": base64.b64encode(data).decode()}})
+            content.append({"type": "text", "text": user})
+        plan = self._call(content)
         tl = self._to_timeline(plan, segments, settings, music_track)
         tl.music = timeline.music
         return tl, list(plan.get("comment_replies") or [])

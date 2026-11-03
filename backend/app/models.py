@@ -63,6 +63,26 @@ class Segment(BaseModel):
         return self.end - self.start
 
 
+class Region(BaseModel):
+    """Zone de l'image, en coordonnées normalisées (0..1) du rush source."""
+
+    x: float
+    y: float
+    w: float
+    h: float
+
+    def clamp(self) -> "Region":
+        x, y = min(max(self.x, 0.0), 0.99), min(max(self.y, 0.0), 0.99)
+        return Region(x=x, y=y, w=min(max(self.w, 0.01), 1 - x), h=min(max(self.h, 0.01), 1 - y))
+
+
+class Mask(Region):
+    """Zone traitée sur un plan : flou (visage, plaque…), pixelisé, cache noir ou cadre de mise en avant."""
+
+    kind: Literal["flou", "pixel", "noir", "cadre"] = "flou"
+    follow_dx: float | None = None  # si défini, la zone suit le visage (x = position du visage + décalage)
+
+
 class Clip(BaseModel):
     id: str = Field(default_factory=lambda: new_id("c_"))
     media_id: str
@@ -78,6 +98,9 @@ class Clip(BaseModel):
     transition_duration: float = 0.35
     effects: list[str] = Field(default_factory=list)  # effets vidéo
     audio_effects: list[str] = Field(default_factory=list)  # effets audio
+    focus_x: float | None = None  # point de cadrage imposé (0..1 du rush), prioritaire sur le suivi du visage
+    focus_y: float | None = None
+    masks: list[Mask] = Field(default_factory=list)
 
     @property
     def source_duration(self) -> float:
@@ -109,6 +132,7 @@ class Comment(BaseModel):
     id: str = Field(default_factory=lambda: new_id("n_"))
     media_id: str | None = None  # None = commentaire général sur tout le montage
     src_t: float = 0.0
+    region: Region | None = None  # zone sélectionnée sur l'image (« floute ça », « zoom sur lui »…)
     text: str
     status: Literal["ouvert", "applique", "incompris"] = "ouvert"
     reply: str = ""

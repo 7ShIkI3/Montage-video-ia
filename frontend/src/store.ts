@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, CaptionLine, Clip, Comment, EffectsCatalog, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript } from "./api";
+import { api, CaptionLine, Clip, Comment, EffectsCatalog, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript } from "./api";
 
 const uid = () => "c_" + Math.random().toString(36).slice(2, 12);
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
@@ -63,6 +63,10 @@ interface State {
   pxPerSec: number;
   catalog: EffectsCatalog | null;
   item: Sel | null;
+  picking: boolean;
+  pendingRegion: { media_id: string; src_t: number; region: Region } | null;
+  setPicking: (p: boolean) => void;
+  setPendingRegion: (r: State["pendingRegion"]) => void;
 
   load: (id: string) => Promise<void>;
   refreshProject: () => Promise<void>;
@@ -116,6 +120,10 @@ export const useStore = create<State>((set, get) => ({
   pxPerSec: 40,
   catalog: null,
   item: null,
+  picking: false,
+  pendingRegion: null,
+  setPicking: (p) => set({ picking: p, playing: p ? false : get().playing }),
+  setPendingRegion: (r) => set({ pendingRegion: r, picking: false }),
 
   load: async (id) => {
     if (!get().catalog) api.effects().then((c) => set({ catalog: c })).catch(() => undefined);
@@ -262,18 +270,21 @@ export const useStore = create<State>((set, get) => ({
     get().selectItem({ kind: "sfx", id });
   },
   addComment: (text, general = false) => {
-    const { timeline, playhead } = get();
+    const { timeline, playhead, pendingRegion } = get();
     if (!timeline || !text.trim()) return false;
     const hit = general ? null : clipAt(timeline, Math.min(playhead, Math.max(0, timelineDuration(timeline) - 1e-3)));
     const c = hit ? timeline.clips[hit.index] : null;
     const id = rid("n_");
+    const pr = !general ? pendingRegion : null;
     get().edit((tl) => {
       tl.comments = [...(tl.comments || []), {
         id, text: text.trim(), status: "ouvert", reply: "", created_at: Date.now() / 1000,
-        media_id: c ? c.media_id : null,
-        src_t: c && hit ? +(c.src_in + (playhead - hit.start) * (c.speed || 1)).toFixed(3) : 0,
+        media_id: pr ? pr.media_id : c ? c.media_id : null,
+        src_t: pr ? pr.src_t : c && hit ? +(c.src_in + (playhead - hit.start) * (c.speed || 1)).toFixed(3) : 0,
+        region: pr ? pr.region : null,
       }];
     });
+    set({ pendingRegion: null });
     return true;
   },
   addOverlay: (o) => {

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from ..models import Clip, Comment, EditSettings, Segment, SfxItem, TextItem, Timeline
+from ..models import Clip, Comment, EditSettings, Mask, Segment, SfxItem, TextItem, Timeline
 from ..render import effects as fx
 
 NEG = ("sans", "pas de", "enlève l", "enleve l", "retire l", "supprime l")
@@ -58,8 +58,15 @@ TRANSITION_WORDS = {
 QUOTE = r"[«\"“]\s*([^»\"”]+?)\s*[»\"”]"
 
 
+def face_at(faces: dict | None, t: float) -> float | None:
+    if not faces or not faces.get("cx"):
+        return None
+    i = min(len(faces["cx"]) - 1, max(0, int(round(t / faces["hop"]))))
+    return faces["cx"][i]
+
+
 def apply_local(tl: Timeline, c: Comment, segments: list[Segment], media_duration: dict[str, float],
-                phase: str = "all") -> str | None:
+                phase: str = "all", faces: dict[str, dict] | None = None) -> str | None:
     """Applique un commentaire au plan visé. Renvoie ce qui a été fait, ou None si rien n'est compris.
 
     phase « edit » : coupes, durée, ordre, vitesse, effets ; phase « add » : textes et bruitages, posés
@@ -91,6 +98,43 @@ def apply_local(tl: Timeline, c: Comment, segments: list[Segment], media_duratio
         return "; ".join(done) or None
     i, t_tl = hit
     clip = tl.clips[i]
+
+    # Zone sélectionnée sur l'image : flou, cache, cadre, zoom ou cadrage sur l'élément choisi.
+    if c.region is not None:
+        r = c.region.clamp()
+        cx, cy = r.x + r.w / 2, r.y + r.h / 2
+        region_done = []
+        kind = None
+        if _has(text, "pixel"):
+            kind = "pixel"
+        elif _has(text, "noir", "censure", "cache complètement", "masque en noir"):
+            kind = "noir"
+        elif _has(text, "flou", "floute", "cache", "masque", "anonym", "plaque", "logo", "visage"):
+            kind = "flou"
+        elif _has(text, "entoure", "cercle", "encadre", "surligne", "montre", "souligne", "flèche", "fleche", "met en avant", "mets en avant"):
+            kind = "cadre"
+        if kind:
+            clip.masks = [m for m in clip.masks if not (abs(m.x - r.x) < 0.02 and abs(m.y - r.y) < 0.02)]
+            if not neg:
+                # Un visage suivi dans la zone : la zone le suit pendant tout le plan.
+                fc = face_at((faces or {}).get(clip.media_id), c.src_t)
+                follow = fc is not None and r.x - 0.05 <= fc <= r.x + r.w + 0.05
+                clip.masks.append(Mask(x=r.x, y=r.y, w=r.w, h=r.h, kind=kind,
+                                       follow_dx=round(r.x - fc, 4) if follow else None))
+                if follow:
+                    region_done.append("elle suit le visage")
+            label = {"flou": "zone floutée", "pixel": "zone pixelisée", "noir": "zone cachée en noir",
+                     "cadre": "zone entourée en jaune"}[kind]
+            region_done.insert(0, ("zone libérée" if neg else label) + " sur ce plan")
+        if _has(text, "zoom", "rapproche", "gros plan", "plus près", "plus pres"):
+            clip.zoom = 1.0 if neg else round(min(2.5, max(1.15, 0.75 / max(r.w, r.h))), 2)
+            clip.focus_x, clip.focus_y = (None, None) if neg else (round(cx, 4), round(cy, 4))
+            region_done.append("zoom retiré" if neg else f"zoom ×{clip.zoom} sur la zone")
+        elif _has(text, "suis", "suivre", "cadre sur", "centre", "recadre", "garde-le", "garde la", "focus"):
+            clip.focus_x, clip.focus_y = round(cx, 4), round(cy, 4)
+            region_done.append("cadrage centré sur la zone")
+        if region_done:
+            return "; ".join(done + region_done)
 
     # Supprimer / couper
     removal = _has(text, "supprime", "enlève", "enleve", "retire", "vire", "inutile", "pas intéressant",
@@ -184,19 +228,24 @@ def context_line(tl: Timeline, c: Comment, segments: list[Segment], n: int) -> s
     """Description d'un commentaire pour Claude : où il est, sur quel plan, ce qui s'y dit."""
     if c.media_id is None:
         return f"{n}. Commentaire général : « {c.text} »"
+    zone = ""
+    if c.region is not None:
+        r = c.region
+        zone = (f" [zone sélectionnée sur l'image : x {r.x:.2f}-{r.x + r.w:.2f}, y {r.y:.2f}-{r.y + r.h:.2f} "
+                f"(fractions de la largeur et de la hauteur), visible en jaune sur l'image n°{n}]")
     hit = locate(tl, c)
     seg = next((s for s in segments if s.media_id == c.media_id and s.start <= c.src_t < s.end), None)
     where = (f"à {_fmt(hit[1])} de la timeline, plan n°{hit[0] + 1}" if hit else "sur un passage absent du montage")
     said = f", segment {seg.id} « {seg.text[:160]} »" if seg else ""
-    return f"{n}. {where} (rush {c.media_id} à {c.src_t:.2f} s{said}) : « {c.text} »"
+    return f"{n}. {where} (rush {c.media_id} à {c.src_t:.2f} s{said}){zone} : « {c.text} »"
 
 
 def apply_all(tl: Timeline, segments: list[Segment], settings: EditSettings, media_duration: dict[str, float],
-              comments: list[Comment] | None = None) -> list[str]:
+              comments: list[Comment] | None = None, faces: dict[str, dict] | None = None) -> list[str]:
     """Interprète local : applique chaque commentaire ouvert, met à jour statut et réponse."""
     msgs = []
     todo = comments if comments is not None else [x for x in tl.comments if x.status == "ouvert"]
-    edits = {c.id: apply_local(tl, c, segments, media_duration, "edit") for c in todo}
+    edits = {c.id: apply_local(tl, c, segments, media_duration, "edit", faces) for c in todo}
     adds = {c.id: apply_local(tl, c, segments, media_duration, "add") for c in todo}
     for c in todo:
         r = "; ".join(x for x in (edits[c.id], adds[c.id]) if x)
@@ -209,3 +258,45 @@ def apply_all(tl: Timeline, segments: list[Segment], settings: EditSettings, med
                        "« raccourcis », « ralenti », « zoom », « texte \"Wow\" », « whoosh », « noir et blanc », "
                        "« fondu », « mets ce plan au début », « garde ce passage ».")
     return msgs
+
+
+REGION_ACTIONS = ("flou", "floute", "pixel", "cache", "masque", "anonym", "noir", "censure", "entoure", "cercle",
+                  "encadre", "surligne", "montre", "zoom", "rapproche", "gros plan", "suis", "cadre sur", "centre",
+                  "recadre", "focus", "plaque", "logo", "visage")
+
+
+def is_region_action(c: Comment) -> bool:
+    return c.region is not None and _has(re.sub(QUOTE, " ", c.text).lower(), *REGION_ACTIONS)
+
+
+def carry_overrides(old: Timeline, new: Timeline) -> None:
+    """Après une réécriture du montage par Claude, on garde les zones (flous, cadres, cadrages)
+    posées sur les mêmes passages des rushes."""
+    for n in new.clips:
+        if n.masks or n.focus_x is not None:
+            continue
+        for o in old.clips:
+            if o.media_id != n.media_id or not (o.masks or o.focus_x is not None):
+                continue
+            overlap = min(o.src_out, n.src_out) - max(o.src_in, n.src_in)
+            if overlap > 0.5 * min(o.source_duration, n.source_duration):
+                n.masks = [m.model_copy() for m in o.masks]
+                if o.focus_x is not None:
+                    n.focus_x, n.focus_y, n.zoom = o.focus_x, o.focus_y, o.zoom
+                break
+
+
+def frame_with_region(path: str, src_t: float, region) -> bytes:
+    """Image du rush à l'instant commenté, zone sélectionnée entourée en jaune (pour Claude)."""
+    import subprocess
+
+    from ..media.ffmpeg import FFMPEG
+
+    r = region.clamp()
+    vf = (f"scale=768:-2,drawbox=x=iw*{r.x:.4f}:y=ih*{r.y:.4f}:w=iw*{r.w:.4f}:h=ih*{r.h:.4f}"
+          ":color=yellow@1:t=4")
+    out = subprocess.run([FFMPEG, "-loglevel", "error", "-ss", f"{max(0.0, src_t):.3f}", "-i", path, "-frames:v", "1",
+                          "-vf", vf, "-f", "image2", "-c:v", "mjpeg", "-q:v", "4", "-"], capture_output=True)
+    if out.returncode != 0 or not out.stdout:
+        raise RuntimeError("image introuvable")
+    return out.stdout

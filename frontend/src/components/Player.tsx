@@ -25,15 +25,30 @@ function faceCx(f: Faces | "loading" | undefined, t: number): number | null {
   return f.cx[i] + (f.cx[j] - f.cx[i]) * Math.max(0, Math.min(1, x - i));
 }
 
-/** Position object-position (en %) qui centre le visage dans un cadre « cover », comme à l'export. */
-function framePos(el: HTMLVideoElement, cx: number | null): string {
-  if (cx == null || !el.videoWidth) return "50% 50%";
-  const fw = el.clientWidth, fh = el.clientHeight;
-  const s = Math.max(fw / el.videoWidth, fh / el.videoHeight);
-  const sw = el.videoWidth * s;
-  if (sw - fw < 1) return "50% 50%";
-  const off = Math.max(0, Math.min(sw - fw, cx * sw - fw / 2));
-  return `${((off / (sw - fw)) * 100).toFixed(2)}% 50%`;
+export type Geo = { fw: number; fh: number; sw: number; sh: number; offX: number; offY: number };
+
+/** Cadrage exact du plan, identique à l'export : image agrandie (cover × zoom) puis recadrée autour du point
+ * de cadrage (zone choisie, visage suivi ou centre). */
+function geometry(el: HTMLVideoElement, zoom: number, cx: number, cy: number): Geo | null {
+  const box = el.parentElement;
+  if (!box || !el.videoWidth) return null;
+  const fw = box.clientWidth, fh = box.clientHeight;
+  const s = Math.max(fw / el.videoWidth, fh / el.videoHeight) * Math.max(1, zoom);
+  const sw = el.videoWidth * s, sh = el.videoHeight * s;
+  const offX = Math.max(0, Math.min(sw - fw, cx * sw - fw / 2));
+  const offY = Math.max(0, Math.min(sh - fh, cy * sh - fh / 2));
+  return { fw, fh, sw, sh, offX, offY };
+}
+
+function applyGeo(el: HTMLVideoElement, g: Geo | null) {
+  if (!g) return;
+  Object.assign(el.style, { inset: "auto", left: `${-g.offX}px`, top: `${-g.offY}px`, width: `${g.sw}px`,
+    height: `${g.sh}px`, objectFit: "fill" });
+}
+
+/** Zone du rush (0..1) → rectangle en pixels dans le cadre affiché. */
+export function regionToFrame(g: Geo, r: { x: number; y: number; w: number; h: number }) {
+  return { left: r.x * g.sw - g.offX, top: r.y * g.sh - g.offY, width: r.w * g.sw, height: r.h * g.sh };
 }
 
 function overlayAt(tl: Timeline, t: number): OverlayItem | undefined {
@@ -61,6 +76,11 @@ export function Player() {
   const [shown, setShown] = useState(0);
   const [curIdx, setCurIdx] = useState(-1);
   const [, setFacesTick] = useState(0);
+  const [, setGeoTick] = useState(0);
+  const geo = useRef<(Geo & { mediaId: string; clip: string; srcT: number }) | null>(null);
+  const picking = useStore((s) => s.picking);
+  const pending = useStore((s) => s.pendingRegion);
+  const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
   // Trajectoires de visage (recadrage auto) chargées une fois par média.
   useEffect(() => {
@@ -88,7 +108,7 @@ export function Player() {
 
   function baseTransform(c: Clip, progress = 0) {
     const slow = c.effects.includes("zoom_lent") ? 1 + 0.12 * progress : 1;
-    return `scale(${c.zoom * slow})${c.effects.includes("miroir") ? " scaleX(-1)" : ""}`;
+    return `scale(${slow})${c.effects.includes("miroir") ? " scaleX(-1)" : ""}`;
   }
 
   function prepare(el: HTMLVideoElement, c: Clip, offset: number) {
@@ -109,8 +129,17 @@ export function Player() {
 
   function reframe(el: HTMLVideoElement, c: Clip, srcTime: number) {
     const f = tl?.reframe !== false && project ? facesCache[`${project.id}/${c.media_id}`] : null;
-    el.style.objectPosition = framePos(el, faceCx(f, srcTime));
-    if (!el.videoWidth) el.onloadedmetadata = () => (el.style.objectPosition = framePos(el, faceCx(f, el.currentTime)));
+    const run = (t: number) => {
+      const cx = c.focus_x ?? faceCx(f, t) ?? 0.5;
+      const g = geometry(el, c.zoom, cx, c.focus_y ?? 0.5);
+      applyGeo(el, g);
+      if (el === vids()[active.current] && g) {
+        geo.current = { ...g, mediaId: c.media_id, clip: c.id, srcT: t };
+        setGeoTick((x) => x + 1);
+      }
+    };
+    run(srcTime);
+    if (!el.videoWidth) el.onloadedmetadata = () => run(el.currentTime);
   }
 
   function animateTransition(el: HTMLVideoElement, c: Clip) {
@@ -298,6 +327,7 @@ export function Player() {
   const cc = tl?.clips[curIdx];
   const fxEff = cc ? cc.effects : [];
   const layers = overlaysFor(fxEff, look);
+  const g = geo.current && cc && geo.current.clip === cc.id ? geo.current : null;
 
   return (
     <div className="player">
@@ -317,9 +347,52 @@ export function Player() {
               Importe tes rushes puis clique sur <b>Monter avec l'IA</b>
             </div>
           )}
+          {g && cc && cc.masks?.map((m, k) => {
+            const fc = m.follow_dx != null && project ? faceCx(facesCache[`${project.id}/${cc.media_id}`], g.srcT) : null;
+            const x = fc != null ? Math.max(0, Math.min(1 - m.w, fc + (m.follow_dx ?? 0))) : m.x;
+            return <div key={k} className={`mask mask-${m.kind}`} style={regionToFrame(g, { ...m, x })} />;
+          })}
+          {g && bubbles.filter((c) => c.region && c.media_id === g.mediaId).map((c) => (
+            <div key={"r" + c.id} className={`region-box s-${c.status}`} style={regionToFrame(g, c.region!)} />
+          ))}
+          {g && pending && pending.media_id === g.mediaId && (
+            <div className="region-box pending" style={regionToFrame(g, pending.region)} />
+          )}
           {bubbles.map((c) => (
             <div key={c.id} className={`cm-bubble s-${c.status}`}>💬 {c.text}</div>
           ))}
+          {picking && (
+            <div className="pick-layer"
+              onMouseDown={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                setDrag({ x0: e.clientX - r.left, y0: e.clientY - r.top, x1: e.clientX - r.left, y1: e.clientY - r.top });
+              }}
+              onMouseMove={(e) => {
+                if (!drag) return;
+                const r = e.currentTarget.getBoundingClientRect();
+                setDrag({ ...drag, x1: e.clientX - r.left, y1: e.clientY - r.top });
+              }}
+              onMouseUp={() => {
+                const gg = geo.current;
+                if (!drag || !gg) return setDrag(null);
+                let x = Math.min(drag.x0, drag.x1), y = Math.min(drag.y0, drag.y1);
+                let w = Math.abs(drag.x1 - drag.x0), h = Math.abs(drag.y1 - drag.y0);
+                if (w < 8 || h < 8) { // simple clic : zone par défaut autour du point
+                  w = gg.fw * 0.22; h = gg.fh * 0.22; x = drag.x0 - w / 2; y = drag.y0 - h / 2;
+                }
+                const toSrc = (px: number, sz: number, off: number) => (px + off) / sz;
+                const rx = Math.max(0, toSrc(x, gg.sw, gg.offX)), ry = Math.max(0, toSrc(y, gg.sh, gg.offY));
+                useStore.getState().setPendingRegion({
+                  media_id: gg.mediaId, src_t: +gg.srcT.toFixed(3),
+                  region: { x: +rx.toFixed(4), y: +ry.toFixed(4), w: +Math.min(1 - rx, w / gg.sw).toFixed(4), h: +Math.min(1 - ry, h / gg.sh).toFixed(4) },
+                });
+                setDrag(null);
+                document.getElementById("comment-box")?.focus();
+              }}>
+              {drag && <div className="region-box drawing" style={{ left: Math.min(drag.x0, drag.x1), top: Math.min(drag.y0, drag.y1), width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0) }} />}
+              {!drag && <div className="pick-hint">Trace un rectangle (ou clique) sur l'élément à commenter · Échap pour annuler</div>}
+            </div>
+          )}
           {texts.map((x) => (
             <div key={x.id} className={`ti ti-${x.style} pos-${x.position}`}>
               {x.style === "titre" || x.style === "gros_texte" ? x.text.toUpperCase() : x.text}

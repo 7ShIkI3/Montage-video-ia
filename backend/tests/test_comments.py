@@ -67,3 +67,35 @@ def test_quoted_text_is_content_and_added_after_reorder():
     assert all(x.volume == 1.0 for x in tl.clips)  # « trop fort » entre guillemets n'est pas une consigne
     assert tl.clips[0].src_in == 12
     assert abs(tl.texts[-1].start - (4.0 + 1.0 - 0.1)) < 0.01  # posé après le déplacement du plan
+
+
+def test_region_actions():
+    from app.models import Region
+
+    tl = _tl()
+    r = Region(x=0.6, y=0.2, w=0.2, h=0.3)
+    c = Comment(media_id="m", src_t=7, text="Floute ce visage", region=r)
+    tl.comments = [c]
+    cm.apply_all(tl, [], EditSettings(), {"m": 20.0})
+    assert c.status == "applique" and tl.clips[1].masks[0].kind == "flou"
+    assert tl.clips[1].effects == []  # pas de flou sur toute l'image
+    c2 = Comment(media_id="m", src_t=13, text="zoom sur lui", region=r)
+    tl.comments.append(c2)
+    cm.apply_all(tl, [], EditSettings(), {"m": 20.0})
+    assert tl.clips[2].focus_x == 0.7 and tl.clips[2].zoom > 1.5
+    c3 = Comment(media_id="m", src_t=1, text="entoure ça", region=r)
+    tl.comments.append(c3)
+    cm.apply_all(tl, [], EditSettings(), {"m": 20.0})
+    assert tl.clips[0].masks[0].kind == "cadre"
+    assert cm.is_region_action(c3) and not cm.is_region_action(Comment(media_id="m", text="zoom"))
+    # Une réécriture du montage garde les zones posées sur les mêmes passages.
+    new = _tl()
+    cm.carry_overrides(tl, new)
+    assert new.clips[1].masks and new.clips[2].focus_x == 0.7
+
+
+def test_region_frame_for_claude(rush):
+    from app.models import Region
+
+    data = cm.frame_with_region(str(rush), 2.0, Region(x=0.1, y=0.1, w=0.3, h=0.3))
+    assert data[:2] == b"\xff\xd8"

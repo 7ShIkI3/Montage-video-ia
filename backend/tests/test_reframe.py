@@ -64,3 +64,32 @@ def test_vertical_render_keeps_face_in_frame(moving_face, tmp_path):
     tl.reframe = False
     render.build_command(p, tl, {}, tmp_path / "c.mp4", tmp_path, "720p")
     assert "clip((" not in (tmp_path / "filtergraph.txt").read_text()
+
+
+def test_blur_follows_face(moving_face, tmp_path):
+    """« Floute ce visage » sur une zone : le flou suit le visage qui se déplace."""
+    from app.ai import comments as cm
+    from app.models import Comment, EditSettings, Region
+
+    fr = ffmpeg.decode_gray_small(moving_face, faces.FACE_FPS)
+    track = faces.analyze(fr, [])
+    raw0 = faces.detect(fr[3:4])[0]  # visage réel à t = 1 s
+    tl = Timeline(format="16:9", captions="aucun", clips=[Clip(media_id="m", src_in=0.5, src_out=9.5)])
+    c = Comment(media_id="m", src_t=1.0, text="Floute ce visage",
+                region=Region(x=raw0[0] - 0.08, y=raw0[1] - 0.15, w=0.16, h=0.3))
+    tl.comments = [c]
+    cm.apply_all(tl, [], EditSettings(), {"m": 10.0}, faces={"m": track})
+    mk = tl.clips[0].masks[0]
+    assert mk.kind == "flou" and mk.follow_dx is not None and "suit le visage" in c.reply
+
+    p = Project(name="flou")
+    m = Media(id="m", filename="face.mp4", path=str(moving_face), **ffmpeg.probe(moving_face))
+    p.media.append(m)
+    storage.save_project(p)
+    storage.save_signals(p.id, m.id, {"faces": track})
+    out = tmp_path / "flou.mp4"
+    render.render(p, tl, {}, out, tmp_path, "720p")
+    # Le visage flouté ne doit plus être détecté, ni au début ni à la fin (il a bougé de ~0,5 largeur).
+    frames = ffmpeg.decode_gray_small(out, 1.0, width=480)
+    seen = [faces.detect(f[None])[0] for f in frames]
+    assert sum(s is not None for s in seen) <= 1, seen

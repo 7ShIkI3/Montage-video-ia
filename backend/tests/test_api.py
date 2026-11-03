@@ -82,6 +82,9 @@ def test_every_effect_renders(rush, tmp_path):
         clips.append(Clip(media_id=m.id, src_in=a, src_out=a + 0.8, speed=[1.0, 0.5, 2.0][i % 3],
                           effects=[vfx[i % len(vfx)]], audio_effects=[afx[i % len(afx)]],
                           transition=trs[i % len(trs)], zoom=1.0 + 0.05 * (i % 3)))
+    from app.models import Mask
+    clips[0].masks = [Mask(x=0.1, y=0.1, w=0.3, h=0.3, kind=k) for k in ("flou", "pixel", "noir", "cadre")]
+    clips[1].focus_x, clips[1].focus_y, clips[1].zoom = 0.8, 0.3, 1.8
     tl = Timeline(clips=clips, look="cinema", captions="aucun", format="9:16",
                   texts=[TextItem(start=0.2, text="Titre", style=s) for s in
                          ["titre", "bandeau", "legende", "gros_texte", "emoji"]],

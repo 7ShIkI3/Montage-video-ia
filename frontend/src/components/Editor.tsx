@@ -46,7 +46,7 @@ function useShortcuts() {
       }
       else if (e.key === "ArrowLeft") { s.setPlayhead(s.playhead - (e.shiftKey ? 1 : 1 / 30)); }
       else if (e.key === "ArrowRight") { s.setPlayhead(s.playhead + (e.shiftKey ? 1 : 1 / 30)); }
-      else if (e.key === "Escape") { s.selectItem(null); }
+      else if (e.key === "Escape") { s.selectItem(null); s.setPicking(false); s.setPendingRegion(null); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -224,6 +224,7 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
     <div className="editor">
       <header className="topbar">
         <button className="icon-btn" onClick={onBack} title="Projets">←</button>
+        <span className="brand-mark" aria-hidden>▶</span>
         <input className="project-name" value={name} onChange={(e) => setName(e.target.value)}
           onBlur={() => name !== project.name && api.patchProject(project.id, { name }).then(useStore.getState().setProject)} />
         <span className="muted small">{dirty ? "Enregistrement…" : "Enregistré"}</span>

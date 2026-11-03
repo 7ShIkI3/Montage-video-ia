@@ -47,6 +47,38 @@ def _cover_tracked(W: int, H: int, zoom: float, kf: list[tuple[float, float]]) -
             f"crop={W}:{H}:x='clip(({cx})*iw-{W}/2,0,iw-{W})':y='(ih-{H})/2'")
 
 
+def _cover_focus(W: int, H: int, zoom: float, fx_: float, fy: float) -> str:
+    """Cadre centré sur un point choisi (zone sélectionnée dans le lecteur)."""
+    zw, zh = _even(W * zoom), _even(H * zoom)
+    return (f"scale={zw}:{zh}:force_original_aspect_ratio=increase:flags=bicubic,"
+            f"crop={W}:{H}:x='clip({fx_:.4f}*iw-{W}/2,0,iw-{W})':y='clip({fy:.4f}*ih-{H}/2,0,ih-{H})'")
+
+
+def mask_filters(masks, tag: str, face_kf: list[tuple[float, float]] | None = None) -> list[str]:
+    """Flou, pixelisation, cache ou cadre sur des zones de l'image source (avant recadrage).
+    Une zone posée sur un visage le suit dans le temps (face_kf : trajectoire du visage dans le plan)."""
+    out: list[str] = []
+    for k, mk in enumerate(masks):
+        r = mk.clamp()
+        fx_ = f"{r.x:.4f}"
+        if mk.follow_dx is not None and face_kf:
+            fx_ = f"clip(({faces_an.ffmpeg_expr(face_kf)})+({mk.follow_dx:.4f}),0,{1 - r.w:.4f})"
+        x, y, w, h = (f"'iw*{fx_}'", f"ih*{r.y:.4f}", f"iw*{r.w:.4f}", f"ih*{r.h:.4f}")
+        if mk.kind == "noir":
+            out.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color=black:t=fill")
+        elif mk.kind == "cadre":
+            out.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color=0xFFE500@0.95:t='max(4,ih/120)'")
+        else:
+            a, b, bb = f"{tag}m{k}a", f"{tag}m{k}b", f"{tag}m{k}c"
+            if mk.kind == "pixel":
+                proc = "scale='max(2,iw/18)':'max(2,ih/18)':flags=area,scale='iw*18':'ih*18':flags=neighbor"
+            else:
+                proc = "boxblur=luma_radius='min(w,h)/6':luma_power=3:chroma_radius='min(cw,ch)/6':chroma_power=3"
+            out.append(f"split[{a}][{b}];[{b}]crop=w={w}:h={h}:x={x}:y={y}:exact=1,{proc}[{bb}];"
+                       f"[{a}][{bb}]overlay=x='main_w*{fx_}':y=main_h*{r.y:.4f}")
+    return out
+
+
 def build_command(project: Project, timeline: Timeline, transcripts: dict[str, Transcript],
                   out_path: Path, work_dir: Path, quality: str = "1080p",
                   music_path: str | None = None, use_proxy: bool = False,
@@ -86,11 +118,19 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
                               f"minterpolate=fps={FPS}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1")
             else:
                 vchain.append(f"[{vin}:v:0]setpts=(PTS-STARTPTS)/{speed:.4f},fps={FPS}")
+            face_kf = None
+            if any(mk.follow_dx is not None for mk in c.masks):
+                face_kf = faces_an.keyframes((storage.load_signals(project.id, m.id) or {}).get("faces"),
+                                             c.src_in, c.src_out, speed)
+            vchain += mask_filters(c.masks, f"c{i}", face_kf)
             kf: list[tuple[float, float]] = []
-            if timeline.reframe and m.width / max(1, m.height) > W / H + 0.01:
-                sig = storage.load_signals(project.id, m.id) or {}
-                kf = faces_an.keyframes(sig.get("faces"), c.src_in, c.src_out, speed)
-            vchain.append(_cover_tracked(W, H, c.zoom, kf) if kf else _cover(W, H, c.zoom))
+            if c.focus_x is not None:
+                vchain.append(_cover_focus(W, H, c.zoom, c.focus_x, c.focus_y if c.focus_y is not None else 0.5))
+            else:
+                if timeline.reframe and m.width / max(1, m.height) > W / H + 0.01:
+                    sig = storage.load_signals(project.id, m.id) or {}
+                    kf = faces_an.keyframes(sig.get("faces"), c.src_in, c.src_out, speed)
+                vchain.append(_cover_tracked(W, H, c.zoom, kf) if kf else _cover(W, H, c.zoom))
         else:
             inputs += ["-f", "lavfi", "-t", f"{d:.3f}", "-i", f"color=c=black:s={W}x{H}:r={FPS}"]
             vin = n_in
