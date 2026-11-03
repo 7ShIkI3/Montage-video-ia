@@ -376,16 +376,16 @@ class ClaudeDirector:
 
         self.client = anthropic.Anthropic()
 
-    def _call(self, user_content: str) -> dict:
+    def _call(self, user_content: str, system: str | None = None, schema: dict | None = None) -> dict:
         response = self.client.beta.messages.create(
             model=config.CLAUDE_MODEL,
             max_tokens=16000,
-            system=SYSTEM_PROMPT,
+            system=system or SYSTEM_PROMPT,
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
             output_config={
                 "effort": config.CLAUDE_EFFORT,
-                "format": {"type": "json_schema", "schema": PLAN_SCHEMA},
+                "format": {"type": "json_schema", "schema": schema or PLAN_SCHEMA},
             },
             messages=[{"role": "user", "content": user_content}],
         )

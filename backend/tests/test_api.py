@@ -93,3 +93,29 @@ def test_every_effect_renders(rush, tmp_path):
     info = ffmpeg.probe(out)
     assert (info["width"], info["height"]) == (720, 1280)
     assert abs(info["duration"] - tl.duration) < 0.5, (info["duration"], tl.duration)
+
+
+def test_xml_and_srt_export(rush):
+    """L'export XML (Premiere / Resolve / Final Cut) se relit et couvre toute la timeline."""
+    import xml.dom.minidom as md
+    c = client
+    pid = c.post("/api/projects", json={"name": "XML"}).json()["id"]
+    with rush.open("rb") as f:
+        c.post(f"/api/projects/{pid}/media", files=[("files", ("rush.mp4", f, "video/mp4"))])
+    assert _wait(c.post(f"/api/projects/{pid}/auto-edit", json={"style": "vlog"}).json())["status"] == "termine"
+    r = c.get(f"/api/projects/{pid}/export.xml")
+    assert r.status_code == 200
+    doc = md.parseString(r.text)
+    tl = c.get(f"/api/projects/{pid}").json()["timeline"]
+    vitems = doc.getElementsByTagName("video")[0].getElementsByTagName("clipitem")
+    assert len(vitems) == len(tl["clips"])
+    end = int(vitems[-1].getElementsByTagName("end")[0].firstChild.data)
+    total = sum((x["src_out"] - x["src_in"]) / x["speed"] for x in tl["clips"])
+    assert abs(end - round(total * 30)) <= 1
+    assert c.get(f"/api/projects/{pid}/captions.srt").status_code == 200
+    j = _wait(c.post(f"/api/projects/{pid}/publish-kit").json())
+    assert j["status"] == "termine", j
+    kit = c.get(f"/api/projects/{pid}").json()["publish_kit"]
+    assert kit["titles"] and kit["description"]
+    r = c.get(f"/api/projects/{pid}/exports/{kit['thumbnail']}")
+    assert r.status_code == 200 and r.content[:2] == b"\xff\xd8"

@@ -120,6 +120,22 @@ def decode_gray_frames(src: str | Path, fps: float = config.ANALYSIS_FPS, w: int
     return frames[: n * w * h].reshape(n, h, w).astype(np.float32)
 
 
+def decode_gray_small(src: str | Path, fps: float, width: int = 480) -> np.ndarray:
+    """Images en niveaux de gris de largeur fixe (hauteur proportionnelle), pour la détection de visages."""
+    info = probe(src)
+    h = max(2, int(round(width * info["height"] / max(1, info["width"]) / 2)) * 2)
+    proc = subprocess.run(
+        [FFMPEG, "-nostdin", "-loglevel", "error", "-i", str(src), "-an",
+         "-vf", f"fps={fps},scale={width}:{h}:flags=area,format=gray", "-f", "rawvideo", "-"],
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        raise FFmpegError(proc.stderr.decode(errors="ignore")[-500:])
+    frames = np.frombuffer(proc.stdout, dtype=np.uint8)
+    n = frames.size // (width * h)
+    return frames[: n * width * h].reshape(n, h, width)
+
+
 def thumbnail(src: str | Path, dst: str | Path, at: float) -> None:
     run(["-ss", f"{max(0.0, at):.3f}", "-i", str(src), "-frames:v", "1",
          "-vf", "scale=320:-2", "-q:v", "4", str(dst)])

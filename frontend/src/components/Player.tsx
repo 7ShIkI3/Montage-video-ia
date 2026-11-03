@@ -14,6 +14,28 @@ function playSfx(kind: string, volume: number) {
   a.play().catch(() => undefined);
 }
 
+type Faces = { hop: number; cx: number[] } | null;
+const facesCache: Record<string, Faces | "loading"> = {};
+
+function faceCx(f: Faces | "loading" | undefined, t: number): number | null {
+  if (!f || f === "loading" || !f.cx.length) return null;
+  const x = t / f.hop;
+  const i = Math.max(0, Math.min(f.cx.length - 1, Math.floor(x)));
+  const j = Math.min(f.cx.length - 1, i + 1);
+  return f.cx[i] + (f.cx[j] - f.cx[i]) * Math.max(0, Math.min(1, x - i));
+}
+
+/** Position object-position (en %) qui centre le visage dans un cadre « cover », comme à l'export. */
+function framePos(el: HTMLVideoElement, cx: number | null): string {
+  if (cx == null || !el.videoWidth) return "50% 50%";
+  const fw = el.clientWidth, fh = el.clientHeight;
+  const s = Math.max(fw / el.videoWidth, fh / el.videoHeight);
+  const sw = el.videoWidth * s;
+  if (sw - fw < 1) return "50% 50%";
+  const off = Math.max(0, Math.min(sw - fw, cx * sw - fw / 2));
+  return `${((off / (sw - fw)) * 100).toFixed(2)}% 50%`;
+}
+
 function overlayAt(tl: Timeline, t: number): OverlayItem | undefined {
   return (tl.overlays || []).find((o) => t >= o.start && t < o.start + (o.src_out - o.src_in));
 }
@@ -38,6 +60,24 @@ export function Player() {
   const raf = useRef(0);
   const [shown, setShown] = useState(0);
   const [curIdx, setCurIdx] = useState(-1);
+  const [, setFacesTick] = useState(0);
+
+  // Trajectoires de visage (recadrage auto) chargées une fois par média.
+  useEffect(() => {
+    if (!project) return;
+    for (const m of project.media) {
+      const key = `${project.id}/${m.id}`;
+      if (facesCache[key]) continue;
+      facesCache[key] = "loading";
+      fetch(`/api/projects/${project.id}/media/${m.id}/signals`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          facesCache[key] = d?.faces ?? null;
+          setFacesTick((x) => x + 1);
+        })
+        .catch(() => delete facesCache[key]);
+    }
+  }, [project]);
 
   const vids = () => [v0.current!, v1.current!];
   const tl = timeline;
@@ -61,9 +101,16 @@ export function Player() {
     if (Math.abs(el.currentTime - target) > 0.04) el.currentTime = target;
     el.style.transform = baseTransform(c, offset / Math.max(0.1, (c.src_out - c.src_in) / (c.speed || 1)));
     el.style.filter = cssFilter(c.effects, look);
+    reframe(el, c, target);
     el.playbackRate = c.speed || 1;
     el.muted = c.audio_effects.includes("muet");
     el.volume = Math.min(1, Math.max(0, c.volume));
+  }
+
+  function reframe(el: HTMLVideoElement, c: Clip, srcTime: number) {
+    const f = tl?.reframe !== false && project ? facesCache[`${project.id}/${c.media_id}`] : null;
+    el.style.objectPosition = framePos(el, faceCx(f, srcTime));
+    if (!el.videoWidth) el.onloadedmetadata = () => (el.style.objectPosition = framePos(el, faceCx(f, el.currentTime)));
   }
 
   function animateTransition(el: HTMLVideoElement, c: Clip) {
@@ -187,6 +234,7 @@ export function Player() {
       reported.current = t;
       setPlayhead(t);
       syncOverlay(t, true);
+      reframe(el, c, el.currentTime);
       if (c.effects.includes("zoom_lent")) {
         el.style.transform = baseTransform(c, (el.currentTime - c.src_in) / Math.max(0.1, c.src_out - c.src_in));
       }

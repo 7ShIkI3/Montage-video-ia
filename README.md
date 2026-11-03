@@ -18,8 +18,12 @@ Le plan détaillé et la stratégie sont dans [PLAN.md](PLAN.md).
    Chaque plan gardé ou écarté est justifié.
 6. **Habille** : sous-titres animés mot par mot, musique de fond qui baisse automatiquement sous la voix,
    volume normalisé à -14 LUFS.
-7. **Exporte** en 16:9, 9:16 ou 1:1 (1080p ou 720p) avec l'encodeur matériel de ta machine (NVENC,
-   QuickSync, VideoToolbox, AMF) ou x264, plus un fichier `.srt`.
+7. **Recadre** automatiquement sur le visage quand on passe du 16:9 au 9:16 ou au 1:1 (suivi OpenCV lissé
+   comme un cadreur, remis à zéro à chaque changement de plan).
+8. **Exporte** en 16:9, 9:16 ou 1:1 (1080p ou 720p) avec l'encodeur matériel de ta machine (NVENC,
+   QuickSync, VideoToolbox, AMF) ou x264, plus un fichier `.srt`, ou en **XML** pour finir dans Premiere Pro,
+   DaVinci Resolve ou Final Cut Pro.
+9. **Prépare la publication** : titres, description avec chapitres YouTube, hashtags et miniature.
 
 Avec une clé API Anthropic, le réalisateur est **Claude** : il comprend le sens du discours, choisit les
 meilleurs passages, écrit un titre et applique des consignes libres. Sans clé, un réalisateur local

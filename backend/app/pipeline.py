@@ -8,8 +8,10 @@ from pathlib import Path
 from . import config, storage
 from .ai import director as dir_mod
 from .ai.decorate import decorate
+from .ai import publish as publish_mod
 from .ai.segments import build_segments
 from .analysis import audio as audio_an
+from .analysis import faces as faces_an
 from .analysis import transcribe as tr_mod
 from .analysis import video as video_an
 from .jobs import JobContext
@@ -51,6 +53,14 @@ def analyze_media(project: Project, m: Media, ctx: JobContext, lo: float, hi: fl
         if m.has_video:
             signals["video"] = video_an.analyze(ffmpeg.decode_gray_frames(m.proxy or m.path))
         storage.save_signals(project.id, m.id, signals)
+    if m.has_video and "faces" not in signals and faces_an.AVAILABLE:
+        ctx.step(f"{m.filename} : suivi des visages (recadrage auto)", lo + span * 0.45)
+        try:
+            frames = ffmpeg.decode_gray_small(m.proxy or m.path, faces_an.FACE_FPS)
+            signals["faces"] = faces_an.analyze(frames, (signals.get("video") or {}).get("cuts", []))
+            storage.save_signals(project.id, m.id, signals)
+        except Exception as e:  # le recadrage centré reste possible
+            log.warning("Suivi des visages impossible pour %s : %s", m.filename, e)
     if m.has_audio and storage.load_transcript(project.id, m.id) is None:
         ctx.step(f"{m.filename} : transcription (Whisper {config.WHISPER_MODEL})", lo + span * 0.5)
         try:
@@ -183,3 +193,16 @@ def export(project_id: str, quality: str, ctx: JobContext) -> str:
     storage.save_project(project)
     ctx.step("Export terminé", 1.0)
     return out.name
+
+
+def publish_kit(project_id: str, ctx: JobContext) -> dict:
+    project = storage.load_project(project_id)
+    segments = storage.load_segments(project.id) or all_segments(project, project.settings)
+    ctx.step("Titres, description et chapitres" + (" (Claude)" if config.claude_available() else ""), 0.2)
+    work = storage.cache_dir(project.id) / "publish"
+    work.mkdir(parents=True, exist_ok=True)
+    kit = publish_mod.build_kit(project, segments, storage.exports_dir(project.id), work.resolve())
+    project.publish_kit = kit
+    storage.save_project(project)
+    ctx.step("Kit de publication prêt", 1.0)
+    return kit

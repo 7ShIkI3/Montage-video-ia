@@ -5,3 +5,4 @@ pydantic>=2.7
 numpy>=1.26
 anthropic>=0.70
 faster-whisper>=1.1
+opencv-python-headless>=4.8,<5

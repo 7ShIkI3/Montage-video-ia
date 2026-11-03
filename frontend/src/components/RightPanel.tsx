@@ -117,6 +117,10 @@ export function Inspector() {
               </select>
             </label>
           </div>
+          {tl.format !== "16:9" && (
+            <label className="inline"><input type="checkbox" checked={tl.reframe !== false}
+              onChange={(e) => setTimelineProps({ reframe: e.target.checked })} /> Recadrage auto sur le visage</label>
+          )}
           {catalog && <GlobalFx tl={tl} catalog={catalog} />}
           <div className="music-row">
             <span>Musique : {tl.music.track ? tl.music.track.split(/[\\/]/).pop() : "aucune"}</span>

@@ -157,6 +157,7 @@ class Timeline(BaseModel):
     texts: list[TextItem] = Field(default_factory=list)
     sfx: list[SfxItem] = Field(default_factory=list)
     overlays: list[OverlayItem] = Field(default_factory=list)
+    reframe: bool = True  # recadrage automatique sur le visage quand le format est plus étroit que la source
 
     @property
     def duration(self) -> float:
@@ -173,6 +174,7 @@ class Project(BaseModel):
     timeline: Timeline = Field(default_factory=Timeline)
     warnings: list[str] = Field(default_factory=list)
     exports: list[str] = Field(default_factory=list)
+    publish_kit: dict | None = None  # titres, description, chapitres, hashtags, miniature
 
     def media_by_id(self, media_id: str) -> Media:
         for m in self.media:

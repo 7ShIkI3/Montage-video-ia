@@ -52,6 +52,48 @@ function useShortcuts() {
   }, []);
 }
 
+function PublishKitPanel() {
+  const project = useStore((s) => s.project);
+  const job = useStore((s) => s.job);
+  const { setJob, notify } = useStore.getState();
+  if (!project) return null;
+  const kit = project.publish_kit;
+  const busy = job?.kind === "publication" && job.status !== "termine" && job.status !== "erreur";
+  const copy = (t: string) => navigator.clipboard?.writeText(t).then(() => notify("Copié !"), () => undefined);
+  const gen = async () => {
+    try {
+      const st = useStore.getState();
+      if (st.dirty && st.timeline) { await api.saveTimeline(project.id, st.timeline); st.markSaved(); }
+      await waitJob(await api.publishKit(project.id), setJob);
+      await useStore.getState().refreshProject();
+    } catch (e) {
+      notify(`Kit impossible : ${(e as Error).message}`);
+    } finally {
+      setJob(null);
+    }
+  };
+  return (
+    <div className="export-alt kit">
+      <h4>Kit de publication</h4>
+      <p className="muted small">Titres, description avec chapitres, hashtags et miniature, prêts à coller sur YouTube ou TikTok.</p>
+      <button disabled={busy} onClick={gen}>{busy ? "L'IA rédige…" : kit ? "↻ Régénérer" : "✨ Générer le kit"}</button>
+      {kit && (
+        <>
+          <a href={api.exportUrl(project.id, kit.thumbnail)} download>
+            <img className="kit-thumb" src={`${api.exportUrl(project.id, kit.thumbnail)}?v=${project.updated_at}`} alt="Miniature" />
+          </a>
+          <ul className="kit-titles">
+            {kit.titles.map((t) => <li key={t}><span>{t}</span><button className="small-btn" onClick={() => copy(t)}>Copier</button></li>)}
+          </ul>
+          <textarea rows={6} readOnly value={kit.description} />
+          <button className="small-btn" onClick={() => copy(kit.description)}>Copier la description</button>
+          <p className="muted small">Rédigé par : {kit.by === "claude" ? "Claude (IA)" : "moteur local"}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ExportButton() {
   const project = useStore((s) => s.project);
   const job = useStore((s) => s.job);
@@ -61,6 +103,17 @@ function ExportButton() {
   const [last, setLast] = useState<string | null>(null);
   if (!project) return null;
   const busy = job?.kind === "export" && job.status !== "termine" && job.status !== "erreur";
+
+  // Les téléchargements lisent la timeline enregistrée : on sauvegarde d'abord les retouches.
+  const saveFirst = async (e: React.MouseEvent<HTMLAnchorElement>) => {
+    const st = useStore.getState();
+    if (!st.dirty || !st.timeline) return;
+    e.preventDefault();
+    const href = e.currentTarget.href;
+    await api.saveTimeline(project.id, st.timeline);
+    st.markSaved();
+    window.location.href = href;
+  };
 
   const go = async () => {
     try {
@@ -93,11 +146,20 @@ function ExportButton() {
           <button className="primary" disabled={busy} onClick={go}>{busy ? "Rendu en cours…" : "Lancer le rendu"}</button>
           {busy && job && <div className="progress"><div style={{ width: `${job.progress * 100}%` }} /><span>{Math.round(job.progress * 100)} %</span></div>}
           {last && <p><a href={api.exportUrl(project.id, last)} download>Télécharger « {last} »</a></p>}
-          {project.exports.length > 0 && (
+          <div className="export-alt">
+            <h4>Finir dans un logiciel pro</h4>
+            <p className="muted small">Le montage de l'IA en XML, avec repères pour les textes, bruitages et B-roll.</p>
+            <div className="row-btns">
+              <a className="btn" href={api.xmlUrl(project.id)} download onClick={saveFirst}>XML Premiere · Resolve · Final Cut</a>
+              <a className="btn" href={api.srtUrl(project.id)} download onClick={saveFirst}>Sous-titres .srt</a>
+            </div>
+          </div>
+          <PublishKitPanel />
+          {project.exports.filter((x) => x.endsWith(".mp4")).length > 0 && (
             <details>
-              <summary className="small">Exports précédents ({project.exports.length})</summary>
+              <summary className="small">Exports précédents ({project.exports.filter((x) => x.endsWith(".mp4")).length})</summary>
               <ul className="small">
-                {project.exports.slice().reverse().map((x) => (
+                {project.exports.filter((x) => x.endsWith(".mp4")).reverse().map((x) => (
                   <li key={x}><a href={api.exportUrl(project.id, x)} download>{x}</a> · <a href={api.exportUrl(project.id, x.replace(/\.mp4$/, ".srt"))} download>.srt</a></li>
                 ))}
               </ul>

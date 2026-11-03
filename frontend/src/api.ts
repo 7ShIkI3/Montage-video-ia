@@ -99,6 +99,7 @@ export interface Timeline {
   texts: TextItem[];
   sfx: SfxItem[];
   overlays: OverlayItem[];
+  reframe: boolean;
 }
 
 export interface EditSettings {
@@ -124,6 +125,18 @@ export interface Project {
   timeline: Timeline;
   warnings: string[];
   exports: string[];
+  publish_kit: PublishKit | null;
+}
+
+export interface PublishKit {
+  titles: string[];
+  summary: string;
+  hashtags: string[];
+  thumbnail_text: string;
+  chapters: { t: number; title: string }[];
+  description: string;
+  thumbnail: string;
+  by: string;
 }
 
 export interface ProjectSummary {
@@ -254,6 +267,9 @@ export const api = {
     return req<MusicSettings>(`/api/projects/${id}/music`, { method: "POST", body: fd });
   },
   export: (id: string, quality: string) => req<Job>(`/api/projects/${id}/export`, json("POST", { quality })),
+  publishKit: (id: string) => req<Job>(`/api/projects/${id}/publish-kit`, { method: "POST" }),
+  xmlUrl: (id: string) => `/api/projects/${id}/export.xml`,
+  srtUrl: (id: string) => `/api/projects/${id}/captions.srt`,
   job: (jobId: string) => req<Job>(`/api/jobs/${jobId}`),
   activeJobs: (id: string) => req<Job[]>(`/api/projects/${id}/jobs`),
   proxyUrl: (id: string, mid: string) => `/api/projects/${id}/media/${mid}/proxy`,

@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
+from .. import storage
+from ..analysis import faces as faces_an
 from ..media import ffmpeg
 from ..models import Project, Timeline, Transcript
 from . import captions as cap
@@ -25,6 +27,14 @@ def _even(x: float) -> int:
 def _cover(W: int, H: int, zoom: float = 1.0) -> str:
     zw, zh = _even(W * zoom), _even(H * zoom)
     return f"scale={zw}:{zh}:force_original_aspect_ratio=increase:flags=bicubic,crop={W}:{H}"
+
+
+def _cover_tracked(W: int, H: int, zoom: float, kf: list[tuple[float, float]]) -> str:
+    """Comme _cover, mais le cadre suit le visage (x interpolé dans le temps)."""
+    zw, zh = _even(W * zoom), _even(H * zoom)
+    cx = faces_an.ffmpeg_expr(kf)
+    return (f"scale={zw}:{zh}:force_original_aspect_ratio=increase:flags=bicubic,"
+            f"crop={W}:{H}:x='clip(({cx})*iw-{W}/2,0,iw-{W})':y='(ih-{H})/2'")
 
 
 def build_command(project: Project, timeline: Timeline, transcripts: dict[str, Transcript],
@@ -58,7 +68,11 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
             vin = n_in
             n_in += 1
             vchain.append(f"[{vin}:v:0]setpts=(PTS-STARTPTS)/{speed:.4f},fps={FPS}")
-            vchain.append(_cover(W, H, c.zoom))
+            kf: list[tuple[float, float]] = []
+            if timeline.reframe and m.width / max(1, m.height) > W / H + 0.01:
+                sig = storage.load_signals(project.id, m.id) or {}
+                kf = faces_an.keyframes(sig.get("faces"), c.src_in, c.src_out, speed)
+            vchain.append(_cover_tracked(W, H, c.zoom, kf) if kf else _cover(W, H, c.zoom))
         else:
             inputs += ["-f", "lavfi", "-t", f"{d:.3f}", "-i", f"color=c=black:s={W}x{H}:r={FPS}"]
             vin = n_in

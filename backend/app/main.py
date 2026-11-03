@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -17,6 +17,7 @@ from .media import ffmpeg
 from .models import EditSettings, Project, Timeline
 from .render import captions as cap
 from .render import effects as fx
+from .render import xml_export
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -172,7 +173,7 @@ def media_signals(pid: str, mid: str):
         raise HTTPException(404, "Analyse pas encore faite")
     a = s.get("audio") or {}
     return {"hop": a.get("hop", 0.05), "envelope": a.get("envelope", []), "silences": a.get("silences", []),
-            "cuts": (s.get("video") or {}).get("cuts", [])}
+            "cuts": (s.get("video") or {}).get("cuts", []), "faces": s.get("faces") or None}
 
 
 # --- Montage IA -----------------------------------------------------------------
@@ -310,6 +311,37 @@ def export(pid: str, body: ExportReq):
     if body.quality not in ("1080p", "720p"):
         raise HTTPException(400, "Qualité inconnue")
     return manager.submit(pid, "export", lambda ctx: pipeline.export(pid, body.quality, ctx))
+
+
+@app.post("/api/projects/{pid}/publish-kit")
+def publish_kit(pid: str):
+    p = _project(pid)
+    if not p.timeline.clips:
+        raise HTTPException(400, "La timeline est vide.")
+    return manager.submit(pid, "publication", lambda ctx: pipeline.publish_kit(pid, ctx))
+
+
+def _download_name(p: Project, ext: str) -> str:
+    safe = "".join(ch for ch in (p.timeline.title or p.name) if ch.isalnum() or ch in " -_").strip()[:50] or "montage"
+    return f"{safe}.{ext}"
+
+
+@app.get("/api/projects/{pid}/export.xml")
+def export_xml(pid: str):
+    """Montage au format XML (Premiere Pro, DaVinci Resolve, Final Cut Pro) pour finir à la main."""
+    p = _project(pid)
+    if not p.timeline.clips:
+        raise HTTPException(400, "La timeline est vide.")
+    return Response(xml_export.to_xmeml(p, p.timeline), media_type="application/xml",
+                    headers={"Content-Disposition": f'attachment; filename="{_download_name(p, "xml")}"'})
+
+
+@app.get("/api/projects/{pid}/captions.srt")
+def captions_srt(pid: str):
+    p = _project(pid)
+    srt = cap.to_srt(cap.build_lines(p.timeline, pipeline.transcripts_for(p)))
+    return Response(srt, media_type="application/x-subrip",
+                    headers={"Content-Disposition": f'attachment; filename="{_download_name(p, "srt")}"'})
 
 
 @app.get("/api/projects/{pid}/exports/{name}")
