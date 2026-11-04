@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import re
 import shutil
+import uuid
 from pathlib import Path
 
 import anyio
@@ -28,7 +29,7 @@ app = FastAPI(title="Monteur IA", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _PROJECT_ROUTE = re.compile(r"^/api/projects/([A-Za-z0-9_]+)(/.*)?$")
-_UPLOADS = re.compile(r"^/(media|music|assets|audio)$")  # envois de fichiers : verrou pris seulement à l'écriture
+_UPLOADS = re.compile(r"^/(media|music|assets|audio|luts)$")  # envois de fichiers : verrou pris seulement à l'écriture
 
 
 @app.middleware("http")
@@ -307,6 +308,28 @@ def translate_captions(pid: str, body: TranslateReq):
     if body.language and body.language not in LANGUAGES:
         raise HTTPException(400, "Langue inconnue")
     return manager.submit(pid, "traduction", lambda ctx: pipeline.translate_captions(pid, body.language, ctx))
+
+
+class DubReq(BaseModel):
+    language: str | None = None
+    original_volume: float = 0.12
+
+
+@app.get("/api/tts")
+def tts_status():
+    """Moteur de voix de synthèse disponible par langue (piper, espeak ou rien)."""
+    from .ai import tts
+    return tts.status()
+
+
+@app.post("/api/projects/{pid}/dub")
+def dub(pid: str, body: DubReq):
+    from .ai.translate import LANGUAGES
+    _project(pid)
+    if body.language and body.language not in LANGUAGES:
+        raise HTTPException(400, "Langue inconnue")
+    vol = max(0.0, min(1.0, body.original_volume))
+    return manager.submit(pid, "doublage", lambda ctx: pipeline.dub_voice(pid, body.language, ctx, vol))
 
 
 # --- Pistes audio (voix off, sons) ------------------------------------------------------
@@ -595,6 +618,81 @@ def get_asset(pid: str, name: str):
     if not path.exists():
         raise HTTPException(404, "Image introuvable")
     return FileResponse(path)
+
+
+# --- Étalonnage (LUT) et aperçu image ---------------------------------------------------------
+
+@app.get("/api/projects/{pid}/luts")
+def list_luts(pid: str):
+    from .render import luts
+    _project(pid)
+    return luts.listing(pid)
+
+
+@app.post("/api/projects/{pid}/luts")
+async def upload_lut(pid: str, file: UploadFile = File(...)):
+    """Importe une LUT 3D .cube (exportée de DaVinci Resolve, Premiere, Lightroom…)."""
+    from .render import luts
+    _project(pid)
+    name = _safe_name(file.filename or "lut.cube")
+    if Path(name).suffix.lower() != ".cube":
+        raise HTTPException(400, "Fichier .cube attendu.")
+    data = await file.read(64 * 1024 * 1024 + 1)
+    if len(data) > 64 * 1024 * 1024:
+        raise HTTPException(400, "LUT trop lourde (64 Mo maximum).")
+    try:
+        luts.validate_cube(data.decode("utf-8", errors="replace"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    (luts.project_dir(pid) / name).write_bytes(data)
+    return {"id": f"projet:{name}", "label": Path(name).stem, "builtin": False}
+
+
+@app.get("/api/projects/{pid}/preview-frame")
+def preview_frame(pid: str, media: str, t: float = 0.0, lut: str | None = None, strength: float = 1.0,
+                  effect: str | None = None, background: str | None = None):
+    """Image fixe d'un rush avec l'étalonnage et/ou le détourage, pour juger le rendu sans exporter."""
+    import subprocess
+
+    import cv2
+    import numpy as np
+
+    from .analysis import segment
+    from .render import luts
+    p = _project(pid)
+    m = next((x for x in p.media if x.id == media), None)
+    if not m or not m.has_video:
+        raise HTTPException(404, "Rush introuvable")
+    W = 640
+    H = max(2, int(round(W * (m.height or 360) / max(1, m.width or 640) / 2)) * 2)
+    vf = f"scale={W}:{H}"
+    work = storage.project_dir(pid) / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    lut_path = luts.resolve(pid, lut)
+    cube = work / f"preview_{uuid.uuid4().hex[:8]}.cube"
+    if lut_path:
+        shutil.copyfile(lut_path, cube)
+        k = max(0.0, min(1.0, strength))
+        vf += (f",lut3d=file={cube.name}:interp=tetrahedral" if k >= 0.999 else
+               f",split[a][b];[b]lut3d=file={cube.name}:interp=tetrahedral[c];[a][c]blend=all_expr='A*(1-{k:.3f})+B*{k:.3f}'")
+    try:
+        proc = subprocess.run([ffmpeg.FFMPEG, "-nostdin", "-loglevel", "error", "-ss", f"{max(0.0, t):.3f}",
+                               "-i", m.path, "-frames:v", "1", "-vf", vf, "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
+                              capture_output=True, cwd=work)
+    finally:
+        cube.unlink(missing_ok=True)
+    if proc.returncode != 0 or len(proc.stdout) < W * H * 3:
+        raise HTTPException(400, "Image illisible à cet instant.")
+    frame = np.frombuffer(proc.stdout[:W * H * 3], np.uint8).reshape(H, W, 3).copy()
+    if effect and effect.startswith("detourage_"):
+        try:
+            seg = segment.Segmenter()
+        except segment.SegmenterUnavailable as e:
+            raise HTTPException(503, str(e))
+        bg = segment.cover_image(storage.assets_dir(pid) / Path(background).name, W, H) if background else None
+        frame = segment.composite(frame, seg.mask(frame), effect, bg)
+    ok, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return Response(jpg.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 # --- Modèles de style ---------------------------------------------------------------------

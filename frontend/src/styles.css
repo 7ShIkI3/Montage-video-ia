@@ -216,6 +216,13 @@ a { color: var(--accent-2); }
 .frame video.ov { opacity: 0; z-index: 2; pointer-events: none; }
 .frame video.ov.on { opacity: 1; }
 .frame video.ov-incrustation { inset: auto; top: 4%; right: 3%; width: 34%; height: auto; aspect-ratio: inherit; border: 2px solid #fff; border-radius: 3px; box-shadow: 0 4px 14px #0008; }
+.frame.split-h video:not(.ov) { translate: -25% 0; clip-path: inset(0 25% 0 25%); }
+.frame.split-v video:not(.ov) { translate: 0 -25%; clip-path: inset(25% 0 25% 0); }
+.frame video.ov-split-h { left: 50%; width: 50%; border-left: 3px solid #fff; }
+.frame video.ov-split-v { top: 50%; height: 50%; border-top: 3px solid #fff; }
+.still-preview { margin-top: 8px; display: grid; gap: 6px; }
+.still-preview img { width: 100%; border-radius: 6px; border: 1px solid var(--line, #333); }
+.cutout-box { display: grid; gap: 6px; margin: 4px 0 10px; }
 .layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
 .vignette { background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.6) 100%); }
 .grain { opacity: 0.16; mix-blend-mode: overlay; animation: grain 0.4s steps(3) infinite;

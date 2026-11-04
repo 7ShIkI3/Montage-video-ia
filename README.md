@@ -52,6 +52,14 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
   des musiques, avec volume et fondus ; la musique de fond baisse sous la voix off.
 - Sous-titres traduits : choisis une langue, Claude traduit chaque ligne en gardant son minutage
   (traductions gardées en cache, sous-titres .srt et vidéo dans la langue choisie).
+- Doublage IA : Claude traduit chaque phrase, une voix de synthèse la lit à l'instant où elle est dite
+  (accélérée au besoin pour tenir dans le temps), sur la piste audio 4, et la voix d'origine baisse.
+  Voix Piper (naturelles) si installées, sinon espeak-ng.
+- Écran partagé : un plan de coupe peut occuper une moitié de l'image (droite en paysage, bas en vertical)
+  pendant que le plan principal reste sur l'autre.
+- Détourage IA sans fond vert : fond flouté, studio, noir, blanc ou image, avec aperçu image fixe.
+- Étalonnage par LUT : 5 LUT intégrées (teal & orange, film chaud…) ou import d'un fichier `.cube`,
+  avec intensité réglable et aperçu.
 
 ## Installation
 
@@ -78,6 +86,17 @@ uvicorn app.main:app --port 8000
 
 Ou en développement avec rechargement à chaud : `./scripts/dev.sh` puis http://localhost:5173.
 
+**Application de bureau** : `python desktop/launcher.py` ouvre le Monteur dans sa propre fenêtre
+(pywebview, sinon le navigateur), avec les projets dans `Documents/Monteur IA`. Pour en faire une appli
+autonome : `pip install -r desktop/requirements.txt` puis `python desktop/build.py --ffmpeg <dossier de ffmpeg>`
+(sur la machine cible : Windows, macOS ou Linux), résultat dans `dist/`.
+
+**Doublage** : `espeak-ng` (Linux : `apt install espeak-ng`, macOS : `brew install espeak-ng`) suffit. Pour des
+voix naturelles, `pip install piper-tts` et dépose une voix Piper (`fr_FR-siwis-medium.onnx` et son `.json`)
+dans `data/voices/`.
+
+Au premier détourage, le modèle de segmentation (250 Ko) est téléchargé depuis storage.googleapis.com.
+
 Au premier montage, Whisper télécharge son modèle (« small » ≈ 480 Mo) depuis Hugging Face.
 
 ## Réglages (variables d'environnement)
@@ -93,6 +112,9 @@ Au premier montage, Whisper télécharge son modèle (« small » ≈ 480 Mo) de
 | `MONTEUR_DATA_DIR` | `./data` | Projets, caches et exports |
 | `MONTEUR_MUSIC_DIR` | `./data/music` | Bibliothèque de musiques libres de droits |
 | `MONTEUR_WORKERS` | `2` | Tâches en parallèle |
+| `MONTEUR_PIPER_VOICES` | `./data/voices` | Voix Piper du doublage (`<langue>*.onnx`) |
+| `MONTEUR_SEGMENTER_MODEL` | téléchargé | Modèle de détourage `selfie_segmenter.tflite` |
+| `MONTEUR_FFMPEG`, `MONTEUR_FFPROBE` | PATH | Chemin de FFmpeg (appli de bureau) |
 
 **Musique** : dépose des fichiers audio libres de droits dans `data/music/`. Un fichier dont le nom contient
 le style (`vlog`, `short`…) est choisi en priorité. Tu peux aussi choisir une musique par projet dans l'éditeur.

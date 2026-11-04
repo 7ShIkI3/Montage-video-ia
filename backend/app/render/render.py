@@ -2,6 +2,7 @@
 sous-titres, bruitages, musique et normalisation du volume."""
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Callable
 
@@ -13,6 +14,7 @@ from ..media import ffmpeg
 from ..models import Project, Timeline, Transcript
 from . import captions as cap
 from . import effects as fx
+from . import luts as luts_mod
 from . import scene3d
 
 FPS = 30  # cadence par défaut
@@ -278,7 +280,22 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
         n_in += 1
         key = {"vert": "0x00FF00", "bleu": "0x0047FF"}.get(o.chroma)
         chroma = f"format=yuva420p,chromakey={key}:0.17:0.08," if key else ""
-        if o.mode == "incrustation":
+        if o.mode == "partage":
+            # Écran partagé : le plan principal garde la moitié gauche (ou haute), centrée, et le plan de coupe
+            # remplit l'autre moitié.
+            side = W >= H
+            hw, hh = (_even(W / 2), H) if side else (W, _even(H / 2))
+            filters.append(f"[{vlabel}]split[sb{j}][ss{j}]")
+            filters.append(f"[ss{j}]crop={hw}:{hh}:{(W - hw) // 2 if side else 0}:{0 if side else (H - hh) // 2}[sc{j}]")
+            filters.append(f"[sb{j}][sc{j}]overlay=0:0:enable='between(t,{o.start:.3f},{o.start + od:.3f})'[sm{j}]")
+            vlabel = f"sm{j}"
+            fx_ = f"{o.focus_x:.4f}" if o.focus_x is not None else "0.5"
+            prep = (f"scale={hw}:{hh}:force_original_aspect_ratio=increase:flags=bicubic,"
+                    f"crop={hw}:{hh}:x='clip({fx_}*iw-{hw}/2,0,iw-{hw})':y='(ih-{hh})/2',"
+                    + (f"drawbox=x=0:y=0:w=4:h=ih:color=white@0.9:t=fill" if side
+                       else f"drawbox=x=0:y=0:w=iw:h=4:color=white@0.9:t=fill"))
+            x, y = (f"{W - hw}", "0") if side else ("0", f"{H - hh}")
+        elif o.mode == "incrustation":
             pw = _even(W * 0.34)
             ph = _even(pw * H / W)
             prep = (f"scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph}"
@@ -304,6 +321,18 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
         if f:
             filters.append(f"[{vlabel}]{f}[vlook]")
             vlabel = "vlook"
+
+    # --- LUT d'étalonnage (.cube), dosée par lut_strength ---
+    lut = luts_mod.resolve(project.id, timeline.lut)
+    if lut:
+        shutil.copyfile(lut, work_dir / "lut.cube")  # chemin relatif : le filtre lit depuis work_dir
+        s = max(0.0, min(1.0, timeline.lut_strength))
+        if s >= 0.999:
+            filters.append(f"[{vlabel}]lut3d=file=lut.cube:interp=tetrahedral[vlut]")
+        else:
+            filters.append(f"[{vlabel}]split[lo][lb];[lb]lut3d=file=lut.cube:interp=tetrahedral[ll];"
+                           f"[lo][ll]blend=all_expr='A*(1-{s:.3f})+B*{s:.3f}'[vlut]")
+        vlabel = "vlut"
 
     # --- piste Images : logos, filigranes, stickers ---
     for k, g in enumerate(timeline.images):
@@ -474,7 +503,11 @@ def render_3d(project: Project, timeline: Timeline, transcripts: dict[str, Trans
     errs: dict[str, bytes] = {}
     threading.Thread(target=lambda: errs.__setitem__("dec", dec.stderr.read()), daemon=True).start()
     threading.Thread(target=lambda: errs.__setitem__("enc", encp.stderr.read()), daemon=True).start()
-    scene = scene3d.Scene3D(timeline, W, H, FPS)
+    bg = None
+    if timeline.background:
+        from ..analysis import segment
+        bg = segment.cover_image(storage.assets_dir(project.id) / Path(timeline.background).name, W, H)
+    scene = scene3d.Scene3D(timeline, W, H, FPS, background=bg, assets_dir=storage.assets_dir(project.id))
     size = W * H * 3
     n_total = max(1, int(round(total * FPS)))
     n = 0

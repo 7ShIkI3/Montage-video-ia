@@ -4,6 +4,7 @@ import { clipAt, clipStarts, commentTime, ItemKind, srcToLocal, useStore } from 
 import { ImageButtons } from "./Studio";
 import { CaptionLanguage } from "./AudioTools";
 import { MotionEditor } from "./Motion";
+import { CUTOUTS, CutoutTools, DubPanel, LutPicker } from "./Lot3";
 
 export function CommandBar() {
   const project = useStore((s) => s.project);
@@ -217,6 +218,8 @@ export function Inspector() {
             </label>
           </div>
           <CaptionLanguage />
+          <LutPicker />
+          <DubPanel />
           {tl.format !== "16:9" && (
             <label className="inline"><input type="checkbox" checked={tl.reframe !== false}
               onChange={(e) => setTimelineProps({ reframe: e.target.checked })} /> Recadrage auto sur le visage</label>
@@ -304,9 +307,14 @@ function ClipEffects({ c, catalog }: { c: Clip; catalog: EffectsCatalog }) {
       )}
       {groups.map((g) => (
         <div key={g}>
-          <div className="fx-title">{g}</div>
+          <div className="fx-title">{GROUP_LABELS[g] ?? g}</div>
           <Chips opts={catalog.video_effects.filter((o) => (o.group || "Effets") === g)} value={c.effects}
-            onToggle={(id) => updateClip(c.id, { effects: toggle(c.effects, id) })} />
+            onToggle={(id) => updateClip(c.id, {
+              // Un seul fond de détourage à la fois sur un plan.
+              effects: CUTOUTS.includes(id) && !c.effects.includes(id)
+                ? [...c.effects.filter((e) => !CUTOUTS.includes(e)), id] : toggle(c.effects, id),
+            })} />
+          {g === "ia" && <CutoutTools c={c} />}
         </div>
       ))}
       <div className="fx-title">Effets sur la voix</div>
@@ -315,6 +323,10 @@ function ClipEffects({ c, catalog }: { c: Clip; catalog: EffectsCatalog }) {
     </div>
   );
 }
+
+const GROUP_LABELS: Record<string, string> = {
+  couleur: "Couleur", style: "Style", mouvement: "Mouvement", "3d": "3D", ia: "Détourage IA (sans fond vert)",
+};
 
 function GlobalFx({ tl, catalog }: { tl: Timeline; catalog: EffectsCatalog }) {
   const { setTimelineProps, addText, addSfx, addImpact } = useStore.getState();
@@ -540,8 +552,14 @@ function ItemEditor() {
       <label>Affichage
         <select value={x.mode} onChange={(e) => up({ mode: e.target.value })}>
           <option value="plein">Plein écran</option><option value="incrustation">Incrustation (coin)</option>
+          <option value="partage">Écran partagé (moitié-moitié)</option>
         </select>
       </label>
+      {x.mode === "partage" && (
+        <label>Cadrage du plan de coupe (gauche ↔ droite)
+          <input type="range" min={0} max={1} step={0.01} value={x.focus_x ?? 0.5} onChange={(e) => up({ focus_x: +e.target.value })} />
+        </label>
+      )}
       <div className="field-row">
         <label>Source début<input type="number" step={0.05} value={x.src_in.toFixed(2)} onChange={(e) => up({ src_in: Math.max(0, Math.min(+e.target.value, x.src_out - 0.2)) })} /></label>
         <label>Source fin<input type="number" step={0.05} value={x.src_out.toFixed(2)} onChange={(e) => up({ src_out: Math.min(m?.duration ?? 1e9, Math.max(+e.target.value, x.src_in + 0.2)) })} /></label>
