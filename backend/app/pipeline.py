@@ -160,8 +160,18 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         from .ai import reference as ref_mod
         hint = ref_mod.describe(project.reference) + " Reproduis ce rythme de montage (le look reste celui des rushes)."
         settings = settings.model_copy(update={"instructions": (settings.instructions + "\n" + hint).strip()})
+    if project.timeline.brand and project.timeline.brand.tone:
+        b = project.timeline.brand
+        settings = settings.model_copy(update={"instructions": (settings.instructions + f"\nTon de la marque {b.name} : "
+                                                                f"{b.tone}.").strip()})
+    from .ai import roles
+    ctx.step("Stratège et directeur créatif : objectif, public, accroche, moment fort", 0.88)
+    brief, brief_by = roles.brief(project, segments, settings)
+    if settings.style != "pvp":
+        settings = settings.model_copy(update={"instructions": (settings.instructions + "\n" +
+                                                                roles.brief_instructions(brief)).strip()})
     director = dir_mod.get_director()
-    ctx.step("Réalisation du montage par l'IA" + (" (Claude)" if director.name == "claude" else ""), 0.9)
+    ctx.step("Monteur : réalisation du montage" + (" (Claude)" if director.name == "claude" else ""), 0.9)
     order = [m.id for m in project.media]
     # Les commentaires survivent au re-montage et le guident (sauf ceux que l'IA n'a pas compris).
     notes = [c for c in project.timeline.comments if c.status != "incompris"]
@@ -192,6 +202,7 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         ctx.step("Habillage : transitions, effets, bruitages, titres", 0.97)
         tl = decorate(tl, segments, settings, project.name)
     tl.comments = old_comments
+    tl.brand = project.timeline.brand  # l'identité de marque survit au re-montage
     if tl.director == "claude":
         comments_mod.carry_overrides(project.timeline, tl)
         zone = [c for c in notes if comments_mod.is_region_action(c)]
@@ -209,9 +220,15 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         tl, tl.reference_match = ref_mod.match(tl, project.reference, transcripts_for(project))
     project.timeline = tl
     tl = polish(project, tl, segments, settings, music, ctx, director, 0.985)
+    ctx.step("Storyboard, montage et publication : vérification rôle par rôle", 0.995)
+    try:
+        tl.plan = roles.before_steps(brief, brief_by) + roles.after_steps(project, tl, segments, settings, brief)
+    except Exception as e:  # le plan affiché ne doit jamais faire échouer le montage
+        log.warning("Plan de réalisation incomplet : %s", e)
+    saved = settings.model_copy(update={"instructions": project.settings.instructions})
 
     def apply(p: Project) -> None:
-        p.settings, p.warnings, p.timeline = settings, project.warnings, tl
+        p.settings, p.warnings, p.timeline = saved, project.warnings, tl
     storage.update_project(project_id, apply)
     rv = f", note du relecteur {tl.review.score:.1f}/10" if tl.review else ""
     ctx.step(f"Montage prêt : {len(tl.clips)} plans, {tl.duration:.0f} s{rv}", 1.0)
@@ -642,7 +659,8 @@ def save_template(project: Project, name: str) -> dict:
     t = {"id": new_id("tpl_"), "name": name.strip()[:60] or "Mon modèle", "style": project.settings.style,
          "instructions": project.settings.instructions, "format": tl.format, "captions": tl.captions,
          "look": tl.look, "reframe": tl.reframe, "music_volume": tl.music.volume, "ducking": tl.music.ducking,
-         "music_track": tl.music.track, "images": images}
+         "music_track": tl.music.track, "images": images,
+         "brand": tl.brand.model_dump() if tl.brand else None}
     items = [x for x in list_templates() if x["name"] != t["name"]] + [t]
     _save_templates(items)
     return t
@@ -671,6 +689,9 @@ def apply_template(project: Project, tid: str) -> Project:
             shutil.copy2(src, storage.assets_dir(project.id) / src.name)
             keep.append(ImageItem(**{**g, "id": new_id("g_")}))
     tl.images = keep
+    if t.get("brand"):
+        from .models import Brand
+        tl.brand = Brand(**t["brand"])
     project.settings = project.settings.model_copy(update={
         "style": t["style"], "instructions": t["instructions"], "format": t["format"], "captions": t["captions"]})
     return project

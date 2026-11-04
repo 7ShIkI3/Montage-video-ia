@@ -5,7 +5,7 @@ import { AIPanel, MediaPanel } from "./LeftPanel";
 import { Player } from "./Player";
 import { CommandBar, CommentsPanel, Inspector, TranscriptPanel } from "./RightPanel";
 import { TimelineView } from "./Timeline";
-import { PresetExport, TemplatesPanel, VersionsPanel } from "./Studio";
+import { PresetExport, BrandPanel, TemplatesPanel, VersionsPanel } from "./Studio";
 
 function useAutosave() {
   const tl = useStore((s) => s.timeline);
@@ -252,6 +252,7 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
         <AIPanel />
         <VersionsPanel />
         <TemplatesPanel />
+        <BrandPanel />
       </aside>
       <main className="center">
         <Player />

@@ -156,7 +156,7 @@ def thumbnail(project: Project, tl: Timeline, text: str, out: Path, work: Path) 
         kf = faces_an.keyframes((storage.load_signals(project.id, m.id) or {}).get("faces"), at, at + 0.5)
     crop = _cover_tracked(W, H, 1.05, kf[:1]) if kf else _cover(W, H, 1.05)
     ass = cap.to_ass([], W, H, "aucun", tl.format,
-                     [TextItem(start=0, duration=5, text=text, style="gros_texte", position="bas")])
+                     [TextItem(start=0, duration=5, text=text, style="gros_texte", position="bas")], tl.brand)
     (work / "thumb.ass").write_text(ass.replace(r"\fad(80,150)", "").replace(r"\fscx130\fscy130\t(0,120,\fscx100\fscy100)", ""),
                                     encoding="utf-8")
     vf = f"{crop},eq=saturation=1.25:contrast=1.08,vignette=PI/5,ass=thumb.ass"

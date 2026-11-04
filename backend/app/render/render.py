@@ -483,7 +483,7 @@ def write_ass(timeline: Timeline, transcripts: dict[str, Transcript], W: int, H:
     texts = [t for t in timeline.texts if t.style != "texte_3d"]
     if not (lines or texts):
         return False
-    ass = cap.to_ass(lines, W, H, timeline.captions, timeline.format, texts)
+    ass = cap.to_ass(lines, W, H, timeline.captions, timeline.format, texts, timeline.brand)
     (work_dir / "captions.ass").write_text(ass, encoding="utf-8")
     return True
 
