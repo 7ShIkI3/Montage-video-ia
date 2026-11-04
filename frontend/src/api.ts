@@ -36,6 +36,30 @@ export interface Clip {
   focus_x: number | null;
   focus_y: number | null;
   masks: Mask[];
+  speed_end?: number | null;
+  keyframes?: Keyframe[];
+}
+
+export interface Keyframe {
+  t: number;
+  zoom: number;
+  x: number;
+  y: number;
+  ease: "lineaire" | "doux";
+}
+
+export interface AudioItem {
+  id: string;
+  asset: string;
+  start: number;
+  src_in: number;
+  src_out: number;
+  lane: number;
+  kind: "voix" | "musique" | "son";
+  volume: number;
+  fade_in: number;
+  fade_out: number;
+  label: string;
 }
 
 export type TextStyle = "titre" | "bandeau" | "legende" | "gros_texte" | "emoji" | "texte_3d";
@@ -188,6 +212,8 @@ export interface Timeline {
   overlays: OverlayItem[];
   impacts: ImpactItem[];
   images: ImageItem[];
+  audio?: AudioItem[];
+  caption_language?: string | null;
   reframe: boolean;
   comments: Comment[];
 }
@@ -377,6 +403,15 @@ export const api = {
     return req<{ asset: string }>(`/api/projects/${id}/assets`, { method: "POST", body: fd });
   },
   assetUrl: (id: string, name: string) => `/api/projects/${id}/assets/${encodeURIComponent(name)}`,
+  uploadAudio: async (id: string, file: Blob, filename: string) => {
+    const fd = new FormData();
+    fd.append("file", file, filename);
+    return req<{ asset: string; duration: number }>(`/api/projects/${id}/audio`, { method: "POST", body: fd });
+  },
+  audioUrl: (id: string, name: string) => `/api/projects/${id}/audio/${encodeURIComponent(name)}`,
+  languages: () => req<{ code: string; name: string }[]>(`/api/languages`),
+  translate: (id: string, language: string | null) =>
+    req<Job>(`/api/projects/${id}/translate`, json("POST", { language })),
   templates: () => req<StyleTemplate[]>(`/api/templates`),
   saveTemplate: (id: string, name: string) => req<StyleTemplate>(`/api/projects/${id}/templates`, json("POST", { name })),
   applyTemplate: (id: string, tid: string) => req<Project>(`/api/projects/${id}/templates/${tid}/apply`, { method: "POST" }),

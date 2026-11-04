@@ -20,6 +20,7 @@ from .analysis import video as video_an
 from .jobs import JobContext
 from .media import ffmpeg
 from .models import EditSettings, Media, Project, Segment, Timeline, Transcript
+from .render import captions as cap_mod
 from .render import render as render_mod
 
 log = logging.getLogger(__name__)
@@ -587,3 +588,27 @@ def apply_template(project: Project, tid: str) -> Project:
     project.settings = project.settings.model_copy(update={
         "style": t["style"], "instructions": t["instructions"], "format": t["format"], "captions": t["captions"]})
     return project
+
+
+# ---------------------------------------------------------------------------
+# Traduction des sous-titres
+# ---------------------------------------------------------------------------
+
+def translate_captions(project_id: str, lang: str | None, ctx: JobContext) -> dict:
+    """Traduit les lignes de sous-titres du montage (avec cache) et bascule les sous-titres dans cette langue.
+    lang=None remet les sous-titres dans la langue parlée."""
+    from .ai import translate as trl
+    project = storage.load_project(project_id)
+    if lang:
+        ctx.step(f"Traduction des sous-titres en {trl.LANGUAGES.get(lang, lang)}", 0.1)
+        lines = cap_mod.build_lines(project.timeline.model_copy(update={"caption_language": None}),
+                                    transcripts_for(project))
+        known = storage.load_translations(project_id, lang)
+        todo = list(dict.fromkeys(ln.text for ln in lines if ln.text not in known))
+        if not lines:
+            raise ValueError("Aucun sous-titre à traduire : il faut des paroles transcrites dans le montage.")
+        if todo:
+            storage.save_translations(project_id, lang, trl.translate_lines(todo, lang))
+    storage.update_project(project_id, lambda p: setattr(p.timeline, "caption_language", lang))
+    ctx.step("Sous-titres traduits" if lang else "Sous-titres dans la langue d'origine", 1.0)
+    return {"language": lang}

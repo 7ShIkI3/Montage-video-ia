@@ -83,6 +83,16 @@ class Mask(Region):
     follow_dx: float | None = None  # si défini, la zone suit le visage (x = position du visage + décalage)
 
 
+class Keyframe(BaseModel):
+    """Image clé d'un plan : à l'instant t (secondes depuis le début du plan, sur la timeline), le cadre vaut
+    ce zoom et est centré sur (x, y) du rush (0..1). Entre deux images clés, le cadre glisse."""
+    t: float = 0.0
+    zoom: float = Field(1.0, ge=1.0, le=4.0)
+    x: float = Field(0.5, ge=0.0, le=1.0)
+    y: float = Field(0.5, ge=0.0, le=1.0)
+    ease: Literal["lineaire", "doux"] = "doux"
+
+
 class Clip(BaseModel):
     id: str = Field(default_factory=lambda: new_id("c_"))
     media_id: str
@@ -93,7 +103,8 @@ class Clip(BaseModel):
     reason: str = ""
     zoom: float = 1.0
     volume: float = 1.0
-    speed: float = 1.0  # 0.25 à 4 : ralenti / accéléré
+    speed: float = 1.0  # 0.25 à 4 : ralenti / accéléré (vitesse au début du plan si rampe)
+    speed_end: float | None = None  # rampe de vitesse : vitesse à la fin du plan (variation progressive)
     transition: str = "aucune"  # transition d'entrée (voir render/effects.py)
     transition_duration: float = 0.35
     effects: list[str] = Field(default_factory=list)  # effets vidéo
@@ -101,15 +112,51 @@ class Clip(BaseModel):
     focus_x: float | None = None  # point de cadrage imposé (0..1 du rush), prioritaire sur le suivi du visage
     focus_y: float | None = None
     masks: list[Mask] = Field(default_factory=list)
+    keyframes: list[Keyframe] = Field(default_factory=list)  # zoom et cadrage animés
 
     @property
     def source_duration(self) -> float:
         return max(0.0, self.src_out - self.src_in)
 
     @property
+    def ramp(self) -> tuple[float, float] | None:
+        """(vitesse de début, vitesse de fin) quand le plan a une rampe de vitesse."""
+        if self.speed_end is None:
+            return None
+        s0, s1 = max(0.25, min(4.0, self.speed)), max(0.25, min(4.0, self.speed_end))
+        return None if abs(s1 - s0) < 1e-3 else (s0, s1)
+
+    @property
     def duration(self) -> float:
-        """Durée sur la timeline (tient compte de la vitesse)."""
+        """Durée sur la timeline (tient compte de la vitesse, et de la rampe : vitesse moyenne)."""
+        r = self.ramp
+        if r:
+            return 2 * self.source_duration / (r[0] + r[1])
         return self.source_duration / max(0.05, self.speed)
+
+    def local_to_src(self, t: float) -> float:
+        """Instant t du plan (timeline) -> secondes de rush consommées depuis src_in."""
+        r = self.ramp
+        if not r:
+            return t * max(0.05, self.speed)
+        s0, s1 = r
+        return s0 * t + (s1 - s0) * t * t / (2 * self.duration)
+
+    def src_to_local(self, tau: float) -> float:
+        """Secondes de rush depuis src_in -> instant du plan sur la timeline."""
+        r = self.ramp
+        if not r:
+            return tau / max(0.05, self.speed)
+        s0, s1 = r
+        a = (s1 - s0) / (2 * self.duration)
+        disc = max(0.0, s0 * s0 + 4 * a * tau)
+        return (-s0 + disc ** 0.5) / (2 * a)
+
+    def speed_at(self, t: float) -> float:
+        r = self.ramp
+        if not r:
+            return self.speed
+        return r[0] + (r[1] - r[0]) * max(0.0, min(1.0, t / max(1e-6, self.duration)))
 
 
 class TextItem(BaseModel):
@@ -212,6 +259,25 @@ class EditSettings(BaseModel):
     instructions: str = ""  # consignes libres données au réalisateur IA
 
 
+class AudioItem(BaseModel):
+    """Son posé sur une piste audio : voix off enregistrée, musique ou son importé."""
+    id: str = Field(default_factory=lambda: new_id("a_"))
+    asset: str  # nom du fichier dans le dossier audio du projet
+    start: float = 0.0  # position sur la timeline
+    src_in: float = 0.0
+    src_out: float  # fin dans le fichier
+    lane: int = Field(0, ge=0, le=3)  # piste audio 1 à 4
+    kind: Literal["voix", "musique", "son"] = "voix"
+    volume: float = Field(1.0, ge=0.0, le=2.0)
+    fade_in: float = 0.05
+    fade_out: float = 0.15
+    label: str = ""
+
+    @property
+    def duration(self) -> float:
+        return max(0.0, self.src_out - self.src_in)
+
+
 class Timeline(BaseModel):
     clips: list[Clip] = Field(default_factory=list)
     format: Format = "16:9"
@@ -227,6 +293,8 @@ class Timeline(BaseModel):
     overlays: list[OverlayItem] = Field(default_factory=list)
     impacts: list[ImpactItem] = Field(default_factory=list)
     images: list[ImageItem] = Field(default_factory=list)
+    audio: list[AudioItem] = Field(default_factory=list)  # pistes audio : voix off, sons, musiques en plus
+    caption_language: str | None = None  # langue des sous-titres traduits (None = langue parlée)
     comments: list[Comment] = Field(default_factory=list)
     reframe: bool = True  # recadrage automatique sur le visage quand le format est plus étroit que la source
 

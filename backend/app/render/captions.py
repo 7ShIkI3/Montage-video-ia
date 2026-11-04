@@ -19,9 +19,8 @@ def timeline_words(timeline: Timeline, transcripts: dict[str, Transcript]) -> li
             for w in tr.words:
                 mid = (w.start + w.end) / 2
                 if c.src_in <= mid < c.src_out:
-                    sp = max(0.05, c.speed)
-                    s = t0 + max(0.0, w.start - c.src_in) / sp
-                    e = t0 + min(c.duration, (w.end - c.src_in) / sp)
+                    s = t0 + c.src_to_local(max(0.0, w.start - c.src_in))
+                    e = t0 + min(c.duration, c.src_to_local(min(c.source_duration, w.end - c.src_in)))
                     if e > s:
                         out.append(Word(start=round(s, 3), end=round(e, 3), text=w.text, prob=w.prob))
         t0 += c.duration
@@ -48,11 +47,32 @@ def group_lines(words: list[Word], max_words: int, max_chars: int, max_gap: floa
     return lines
 
 
-def build_lines(timeline: Timeline, transcripts: dict[str, Transcript]) -> list[CaptionLine]:
+def build_lines(timeline: Timeline, transcripts: dict[str, Transcript],
+                translations: dict[str, str] | None = None) -> list[CaptionLine]:
+    """Lignes de sous-titres. Avec `translations` (phrase d'origine -> traduction), chaque ligne est
+    remplacée par sa traduction, aux mêmes instants (les mots se répartissent sur la durée de la ligne)."""
     vertical = timeline.format == "9:16"
     if timeline.captions == "karaoke":
-        return group_lines(timeline_words(timeline, transcripts), 3 if vertical else 6, 18 if vertical else 38)
-    return group_lines(timeline_words(timeline, transcripts), 7 if vertical else 12, 30 if vertical else 60)
+        lines = group_lines(timeline_words(timeline, transcripts), 3 if vertical else 6, 18 if vertical else 38)
+    else:
+        lines = group_lines(timeline_words(timeline, transcripts), 7 if vertical else 12, 30 if vertical else 60)
+    if timeline.caption_language and translations:
+        lines = [translate_line(ln, translations.get(ln.text)) for ln in lines]
+    return lines
+
+
+def translate_line(ln: CaptionLine, text: str | None) -> CaptionLine:
+    if not text or not text.strip():
+        return ln
+    toks = text.split()
+    # Chaque mot traduit reçoit une part de la ligne proportionnelle à sa longueur (karaoké lisible).
+    weights = [len(t) + 1 for t in toks]
+    tot, t, words = sum(weights), ln.start, []
+    for tok, w in zip(toks, weights):
+        d = (ln.end - ln.start) * w / tot
+        words.append(Word(start=round(t, 3), end=round(t + d, 3), text=tok))
+        t += d
+    return CaptionLine(start=ln.start, end=ln.end, words=words)
 
 
 def _srt_time(t: float) -> str:

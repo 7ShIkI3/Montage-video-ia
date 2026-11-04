@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtTime } from "../api";
-import { clipDur, clipStarts, commentTime, Sel, timelineDuration, useStore } from "../store";
+import { clipDur, clipStarts, commentTime, rampOf, Sel, timelineDuration, useStore } from "../store";
+import { AddSoundButton, VoiceOverButton } from "./AudioTools";
 
 type Env = { hop: number; envelope: number[] };
 const envCache: Record<string, Env | "loading"> = {};
@@ -96,7 +97,7 @@ export function TimelineView() {
     const base = side === "in" ? c.src_in : c.src_out;
     let first = true;
     const move = (ev: MouseEvent) => {
-      const v = base + ((ev.clientX - x0) / pps) * (c.speed || 1);
+      const v = base + ((ev.clientX - x0) / pps) * (side === "in" ? c.speed || 1 : c.speed_end ?? (c.speed || 1));
       if (first) {
         trimClip(id, side, v);
         first = false;
@@ -117,7 +118,7 @@ export function TimelineView() {
   };
 
   // Glisser un texte, un bruitage ou un plan de coupe sur sa piste (une seule étape d'annulation).
-  const startMoveItem = (e: React.MouseEvent, kind: "text" | "sfx" | "overlay" | "impact" | "image", id: string, start: number) => {
+  const startMoveItem = (e: React.MouseEvent, kind: "text" | "sfx" | "overlay" | "impact" | "image" | "audio", id: string, start: number) => {
     e.stopPropagation();
     e.preventDefault();
     selectItem({ kind, id });
@@ -157,6 +158,8 @@ export function TimelineView() {
       <div className="timeline-toolbar">
         <button onClick={splitAtPlayhead} title="Couper au curseur (S)">✂ Couper</button>
         <button onClick={() => addText()} title="Ajouter un texte au curseur">＋ Texte</button>
+        <VoiceOverButton />
+        <AddSoundButton />
         <button
           onClick={() => item && (item.kind === "clip" ? deleteClip(item.id) : deleteItem(item.kind, item.id))}
           disabled={!item}
@@ -230,7 +233,8 @@ export function TimelineView() {
                   {w > 30 && (
                     <div className="clip-label">
                       {c.zoom > 1.001 && <span className="badge">🔍</span>}
-                      {c.speed !== 1 && <span className="badge">×{c.speed}</span>}
+                      {rampOf(c) ? <span className="badge" title="Rampe de vitesse">×{c.speed}→{c.speed_end}</span>
+                        : c.speed !== 1 && <span className="badge">×{c.speed}</span>}
                       {(c.effects.length > 0 || c.audio_effects.length > 0) && (
                         <span className="badge" title={[...c.effects, ...c.audio_effects].join(", ")}>✨</span>
                       )}
@@ -238,6 +242,9 @@ export function TimelineView() {
                     </div>
                   )}
                   {w > 20 && <Waveform pid={project.id} mediaId={c.media_id} srcIn={c.src_in} srcOut={c.src_out} width={w} />}
+                  {(c.keyframes || []).map((k, j) => (
+                    <div key={j} className="kf-mark" style={{ left: k.t * pps }} title={`Image clé ${fmtTime(k.t, true)} · zoom ${Math.round(k.zoom * 100)} %`} />
+                  ))}
                   <div className="score" style={{ width: `${Math.round(c.score * 100)}%` }} />
                   <div className="handle right" onMouseDown={(e) => startTrim(e, c.id, "out")} />
                 </div>
@@ -296,6 +303,18 @@ export function TimelineView() {
               );
             })}
           </div>
+          {Array.from({ length: Math.min(4, Math.max(1, ...(tl.audio || []).map((a) => a.lane + 1))) }, (_, lane) => (
+            <div key={lane} className="track track-audio" data-label={`Audio ${lane + 1}`} onMouseDown={seekFromEvent}>
+              {(tl.audio || []).filter((a) => a.lane === lane).map((a) => (
+                <div key={a.id} className={`item-block audio k-${a.kind} ${isSel("audio", a.id) ? "sel" : ""}`}
+                  style={{ left: a.start * pps, width: Math.max(8, (a.src_out - a.src_in) * pps) }}
+                  onMouseDown={(e) => startMoveItem(e, "audio", a.id, a.start)}
+                  title={`${a.label || a.asset} · ${(a.src_out - a.src_in).toFixed(1)} s · ${Math.round(a.volume * 100)} %`}>
+                  {a.kind === "voix" ? "🎙" : a.kind === "musique" ? "♫" : "🔈"} {a.label || a.asset}
+                </div>
+              ))}
+            </div>
+          ))}
           <div className="track track-captions" onMouseDown={seekFromEvent}>
             {tl.captions !== "aucun" &&
               captions.map((l, i) => (

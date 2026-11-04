@@ -28,7 +28,7 @@ app = FastAPI(title="Monteur IA", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _PROJECT_ROUTE = re.compile(r"^/api/projects/([A-Za-z0-9_]+)(/.*)?$")
-_UPLOADS = re.compile(r"^/(media|music|assets)$")  # envois de fichiers : verrou pris seulement à l'écriture
+_UPLOADS = re.compile(r"^/(media|music|assets|audio)$")  # envois de fichiers : verrou pris seulement à l'écriture
 
 
 @app.middleware("http")
@@ -285,8 +285,74 @@ def get_captions(pid: str):
     p = _project(pid)
     if p.timeline.captions == "aucun":
         return []
+    tr = storage.load_translations(pid, p.timeline.caption_language)
     return [{"start": ln.start, "end": ln.end, "words": [w.model_dump() for w in ln.words]}
-            for ln in cap.build_lines(p.timeline, pipeline.transcripts_for(p))]
+            for ln in cap.build_lines(p.timeline, pipeline.transcripts_for(p), tr)]
+
+
+class TranslateReq(BaseModel):
+    language: str | None = None  # None = langue parlée
+
+
+@app.get("/api/languages")
+def languages():
+    from .ai.translate import LANGUAGES
+    return [{"code": k, "name": v} for k, v in LANGUAGES.items()]
+
+
+@app.post("/api/projects/{pid}/translate")
+def translate_captions(pid: str, body: TranslateReq):
+    from .ai.translate import LANGUAGES
+    _project(pid)
+    if body.language and body.language not in LANGUAGES:
+        raise HTTPException(400, "Langue inconnue")
+    return manager.submit(pid, "traduction", lambda ctx: pipeline.translate_captions(pid, body.language, ctx))
+
+
+# --- Pistes audio (voix off, sons) ------------------------------------------------------
+
+AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".webm"}
+
+
+@app.post("/api/projects/{pid}/audio")
+async def upload_audio(pid: str, file: UploadFile = File(...)):
+    """Envoie un son (voix off enregistrée dans le navigateur, bruitage, musique) pour les pistes audio."""
+    _project(pid)
+    name = _safe_name(file.filename or "voix.webm")
+    if Path(name).suffix.lower() not in AUDIO_EXT:
+        raise HTTPException(400, "Fichier audio attendu (MP3, WAV, M4A, OGG, WebM…).")
+    d = storage.audio_dir(pid)
+    dst = d / name
+    i = 1
+    while dst.exists():
+        dst = d / f"{Path(name).stem} ({i}){Path(name).suffix}"
+        i += 1
+    await _save_upload(file, dst)
+    if dst.suffix.lower() == ".webm":
+        # Les enregistrements du navigateur n'ont souvent pas de durée dans l'en-tête : on les convertit.
+        wav = dst.with_suffix(".wav")
+        try:
+            await anyio.to_thread.run_sync(lambda: ffmpeg.run(
+                ["-i", str(dst), "-vn", "-ac", "2", "-ar", "48000", str(wav)]))
+        except Exception as e:
+            dst.unlink(missing_ok=True)
+            raise HTTPException(400, f"Enregistrement illisible : {e}")
+        dst.unlink(missing_ok=True)
+        dst = wav
+    try:
+        dur = (await anyio.to_thread.run_sync(ffmpeg.probe, dst)).get("duration") or 0.0
+    except Exception:
+        dst.unlink(missing_ok=True)
+        raise HTTPException(400, "Fichier audio illisible.")
+    return {"asset": dst.name, "duration": round(float(dur), 3)}
+
+
+@app.get("/api/projects/{pid}/audio/{name}")
+def get_audio(pid: str, name: str):
+    path = storage.audio_dir(pid) / Path(name).name
+    if not path.exists():
+        raise HTTPException(404, "Son introuvable")
+    return FileResponse(path)
 
 
 # --- Effets ---------------------------------------------------------------------------
@@ -388,7 +454,8 @@ def export_xml(pid: str):
 @app.get("/api/projects/{pid}/captions.srt")
 def captions_srt(pid: str):
     p = _project(pid)
-    srt = cap.to_srt(cap.build_lines(p.timeline, pipeline.transcripts_for(p)))
+    tr = storage.load_translations(pid, p.timeline.caption_language)
+    srt = cap.to_srt(cap.build_lines(p.timeline, pipeline.transcripts_for(p), tr))
     return Response(srt, media_type="application/x-subrip",
                     headers={"Content-Disposition": f'attachment; filename="{_download_name(p, "srt")}"'})
 

@@ -344,6 +344,7 @@ L'ordre de la liste `clips` est l'ordre de la timeline.
 
 Habillage (tu es aussi le monteur truquiste, sauf si la consigne demande la sobriété) :
 - speed : 1.0 par défaut ; 0.5 pour un ralenti sur une action courte et spectaculaire, 1.5 à 2 pour accélérer.
+  (L'utilisateur peut ensuite ajouter des rampes de vitesse et des images clés de zoom/cadrage à la main.)
 - transition : transition d'entrée du plan. "aucune" pour les coupes franches dans une même prise ;
   fondu_noir / zoom_avant / glissement / glitch / flash quand on change de lieu, de sujet ou de fichier.
 - effects : effets vidéo du plan (souvent vide). zoom_lent sur les plans d'illustration, glitch ou

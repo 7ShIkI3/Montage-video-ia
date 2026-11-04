@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, Clip, fmtTime, ImpactItem, OverlayItem, Timeline } from "../api";
-import { clipAt, clipStarts, commentTime, timelineDuration, useStore } from "../store";
+import { clipAt, clipDur, clipStarts, commentTime, kfAt, localToSrc, rampOf, speedAt, srcToLocal, timelineDuration, useStore } from "../store";
 import { cssFilter, fxClasses, overlaysFor } from "../fxPreview";
 
 // Lecture de la timeline en direct, sans rendu : deux lecteurs vidéo alternent
@@ -119,12 +119,12 @@ export function Player() {
       el.src = url;
       el.dataset.src = url;
     }
-    const target = c.src_in + Math.max(0, offset) * (c.speed || 1);
+    const target = c.src_in + localToSrc(c, Math.max(0, offset));
     if (Math.abs(el.currentTime - target) > 0.04) el.currentTime = target;
-    el.style.transform = baseTransform(c, offset / Math.max(0.1, (c.src_out - c.src_in) / (c.speed || 1)));
+    el.style.transform = baseTransform(c, offset / Math.max(0.1, clipDur(c)));
     el.style.filter = cssFilter(c.effects, look);
     reframe(el, c, target);
-    el.playbackRate = c.speed || 1;
+    el.playbackRate = speedAt(c, Math.max(0, offset));
     el.muted = c.audio_effects.includes("muet");
     el.volume = Math.min(1, Math.max(0, c.volume));
   }
@@ -132,8 +132,10 @@ export function Player() {
   function reframe(el: HTMLVideoElement, c: Clip, srcTime: number) {
     const f = tl?.reframe !== false && project ? facesCache[`${project.id}/${c.media_id}`] : null;
     const run = (t: number) => {
-      const cx = c.focus_x ?? faceCx(f, t) ?? 0.5;
-      const g = geometry(el, c.zoom, cx, c.focus_y ?? 0.5);
+      // Images clés : zoom et cadre animés, comme au rendu.
+      const k = c.keyframes?.length ? kfAt(c, srcToLocal(c, Math.max(0, t - c.src_in))) : null;
+      const cx = k ? k.x : c.focus_x ?? faceCx(f, t) ?? 0.5;
+      const g = k ? geometry(el, k.zoom, k.x, k.y) : geometry(el, c.zoom, cx, c.focus_y ?? 0.5);
       applyGeo(el, g);
       if (el === vids()[active.current] && g) {
         geo.current = { ...g, mediaId: c.media_id, clip: c.id, srcT: t };
@@ -264,6 +266,33 @@ export function Player() {
     if (!play && !el.paused) el.pause();
   }
 
+  // Pistes audio (voix off, sons) : un lecteur par son, calé sur la position de lecture.
+  const audioEls = useRef<Record<string, HTMLAudioElement>>({});
+  function syncAudio(t: number, play: boolean) {
+    if (!tl || !project) return;
+    const live = new Set<string>();
+    for (const a of tl.audio || []) {
+      live.add(a.id);
+      const el = (audioEls.current[a.id] ||= Object.assign(new Audio(api.audioUrl(project.id, a.asset)), { preload: "auto" }));
+      const into = t - a.start;
+      const on = play && into >= 0 && into < a.src_out - a.src_in;
+      if (!on) {
+        if (!el.paused) el.pause();
+        continue;
+      }
+      const fadeIn = a.fade_in > 0 ? Math.min(1, into / a.fade_in) : 1;
+      const left = a.src_out - a.src_in - into;
+      const fadeOut = a.fade_out > 0 ? Math.min(1, left / a.fade_out) : 1;
+      el.volume = Math.max(0, Math.min(1, a.volume * fadeIn * fadeOut));
+      const want = a.src_in + into;
+      if (el.paused) {
+        el.currentTime = want;
+        el.play().catch(() => undefined);
+      } else if (Math.abs(el.currentTime - want) > 0.25) el.currentTime = want;
+    }
+    for (const [id, el] of Object.entries(audioEls.current)) if (!live.has(id)) { el.pause(); delete audioEls.current[id]; }
+  }
+
   function showAt(t: number) {
     if (!tl) return null;
     const hit = clipAt(tl, Math.min(t, Math.max(0, total - 1e-3)));
@@ -298,6 +327,7 @@ export function Player() {
       b.pause();
       vo.current?.pause();
       music.current?.pause();
+      syncAudio(playhead, false);
       cancelAnimationFrame(raf.current);
       return;
     }
@@ -330,8 +360,10 @@ export function Player() {
       const el = vs[active.current];
       const c = tl.clips[cur.current];
       if (!c) return;
-      const sp = c.speed || 1;
-      const t = starts[cur.current] + (el.currentTime - c.src_in) / sp;
+      const loc = srcToLocal(c, Math.max(0, el.currentTime - c.src_in));
+      const t = starts[cur.current] + loc;
+      if (rampOf(c)) el.playbackRate = speedAt(c, loc);
+      syncAudio(t, true);
       for (const s of sfx) if (s.start > reported.current && s.start <= t) playSfx(s.kind, s.volume);
       for (const im of impacts) if (im.start > reported.current && im.start <= t) fireImpact(im);
       reported.current = t;
@@ -352,6 +384,7 @@ export function Player() {
         const contiguous = n.media_id === c.media_id && Math.abs(n.src_in - c.src_out) < 0.08;
         const same =
           contiguous && Math.abs(n.zoom - c.zoom) < 1e-3 && n.speed === c.speed && n.transition === "aucune" &&
+          !rampOf(n) && !rampOf(c) && !n.keyframes?.length && !c.keyframes?.length &&
           n.effects.join() === c.effects.join() && n.audio_effects.join() === c.audio_effects.join();
         if (same) {
           cur.current = ni;

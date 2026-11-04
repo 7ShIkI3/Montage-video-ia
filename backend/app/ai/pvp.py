@@ -132,7 +132,7 @@ def _plan_combo(c: dict, media_id: str, duration: float, beat: float) -> list[Cl
 def _to_timeline_time(clips: list[Clip], starts: list[float], media_id: str, t: float) -> float | None:
     for c, s in zip(clips, starts):
         if c.media_id == media_id and c.src_in <= t < c.src_out:
-            return s + (t - c.src_in) / c.speed
+            return s + c.src_to_local(t - c.src_in)
     return None
 
 

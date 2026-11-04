@@ -484,3 +484,19 @@ label { color: var(--muted); font-weight: 500; }
 .popover { background: #12141c; }
 .popover .export-alt > .primary { margin-bottom: 10px; }
 .popover > h4 { margin-top: 12px; }
+
+/* Lot 2 : pistes audio, voix off, images clés */
+.track-audio { height: 26px; }
+.item-block.audio { background: linear-gradient(135deg, #2a7a4b, #3fbf73); border: 1px solid rgba(255,255,255,0.25); color: #fff; }
+.item-block.audio.k-son { background: linear-gradient(135deg, #6b5a1d, #c9a13a); }
+.item-block.audio.k-musique { background: linear-gradient(135deg, #4b2a7a, #8c5ad6); }
+.kf-mark { position: absolute; bottom: 3px; width: 9px; height: 9px; margin-left: -4px; transform: rotate(45deg);
+  background: #ffd84a; border: 1px solid #000; z-index: 3; pointer-events: none; }
+button.rec.on { background: #c8323c; color: #fff; animation: recpulse 1s infinite; }
+@keyframes recpulse { 50% { opacity: .65; } }
+@media (prefers-reduced-motion: reduce) { button.rec.on { animation: none; } }
+.kf-list { display: flex; flex-direction: column; gap: 6px; }
+.kf-row { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: 8px; }
+.kf-row.on { border-color: var(--accent); }
+.kf-row .kf-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.kf-row .kf-fields label { font-size: 10px; }
