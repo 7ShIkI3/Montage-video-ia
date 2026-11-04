@@ -317,7 +317,7 @@ export function Player() {
     preloadNext();
     const mu = music.current;
     if (mu && tl.music.track) {
-      if (mu.duration) mu.currentTime = t0 % mu.duration;
+      if (mu.duration) mu.currentTime = (t0 + (tl.music.start || 0)) % mu.duration;
       mu.volume = Math.min(1, tl.music.volume * 1.5);
       mu.play().catch(() => undefined);
     }

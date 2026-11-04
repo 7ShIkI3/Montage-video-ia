@@ -64,8 +64,9 @@ export function MediaPanel() {
             </div>
             <button className="icon-btn" title="Retirer" onClick={async () => {
               if (!confirm(`Retirer ${m.filename} du projet ?`)) return;
+              await useStore.getState().saveNow();
               await api.deleteMedia(project.id, m.id);
-              await useStore.getState().refreshProject();
+              await useStore.getState().refreshProject({ timeline: true });
             }}>✕</button>
           </li>
         ))}

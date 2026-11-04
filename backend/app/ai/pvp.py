@@ -143,6 +143,9 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
         music_path = str(beat_track())
     bpm, first_beat = music_grid(music_path)
     beat = 60 / bpm
+    # On saute le début du morceau jusqu'à un temps : la grille de la musique part alors de 0 dans le montage,
+    # et les durées de combo (des nombres entiers de temps) tombent pile sur ses temps.
+    skip = round(first_beat % beat, 3)
     durations = {m.id: m.duration for m in media}
     order = {m.id: i for i, m in enumerate(media)}
 
@@ -151,7 +154,7 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
         for c in hits_an.combos(hits or []):
             all_combos.append((mid, c))
     tl = Timeline(format=settings.format, captions="aucun",
-                  music=MusicSettings(track=music_path, volume=0.5, ducking=False))
+                  music=MusicSettings(track=music_path, volume=0.5, ducking=False, start=skip))
     tl.director = "pvp"
     if not all_combos:
         tl.summary = "Aucun combat détecté (pas de série de coups dans le son)."
@@ -226,7 +229,7 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
     # Pulsation au rythme : petit zoom sur chaque début de mesure loin des coups.
     hit_times = sorted(i.start for i in impacts)
     bar = 4 * beat
-    b = first_beat
+    b = 0.0  # la musique démarre sur un temps (voir `skip`)
     while b < total:
         j = int(np.searchsorted(hit_times, b))
         near = any(abs(b - hit_times[x]) < 0.3 for x in (j - 1, j) if 0 <= x < len(hit_times))
@@ -247,4 +250,10 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
     tl.rejected = [Clip(media_id=m, src_in=c["start"], src_out=c["end"], score=c["score"],
                         reason=f"Écarté : combo de {c['n']} coups moins impressionnant, durée cible atteinte.")
                    for m, c in rejected]
+    if not settings.auto_effects:
+        # « Habillage auto » décoché : on garde les combos, le ralenti et le calage sur le tempo, sans décor.
+        for c in tl.clips:
+            c.effects, c.transition = [], "aucune"
+        tl.impacts, tl.texts, tl.sfx, tl.look = [], [], [], "aucun"
+        tl.summary += " Habillage auto désactivé : aucun effet ajouté."
     return tl

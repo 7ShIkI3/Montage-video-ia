@@ -11,21 +11,28 @@ import numpy as np
 HOP = 0.01  # 10 ms
 
 
-def onset_envelope(pcm: np.ndarray, sr: int, hop: float = HOP) -> np.ndarray:
+def onset_envelope(pcm: np.ndarray, sr: int, hop: float = HOP, batch: int = 4096) -> np.ndarray:
     n_fft = 1024 if sr >= 32000 else 512
     h = max(1, int(sr * hop))
     if pcm.size < n_fft + h:
         return np.zeros(1, np.float32)
-    x = pcm.astype(np.float32)
+    x = pcm.astype(np.float32, copy=False)
     n = 1 + (x.size - n_fft) // h
-    idx = np.arange(n_fft)[None, :] + h * np.arange(n)[:, None]
-    frames = x[idx] * np.hanning(n_fft).astype(np.float32)
-    mag = np.abs(np.fft.rfft(frames, axis=1))
-    # Racine de l'amplitude : sensible au niveau (un pas discret pèse moins qu'un coup), sans écraser les détails.
-    cm = np.sqrt(mag)
-    w = np.linspace(0.6, 1.6, cm.shape[1], dtype=np.float32)  # les chocs ont beaucoup d'aigus
-    flux = np.maximum(0.0, np.diff(cm, axis=0)) @ w
-    flux = np.concatenate([[0.0], flux]).astype(np.float32)
+    win = np.hanning(n_fft).astype(np.float32)
+    # Les aigus pèsent plus : les chocs en ont beaucoup.
+    w = np.linspace(0.6, 1.6, n_fft // 2 + 1, dtype=np.float32)
+    flux = np.zeros(n, np.float32)
+    prev = None
+    # Par lots de trames : la mémoire reste bornée même sur un rush d'une heure.
+    for a in range(0, n, batch):
+        b = min(n, a + batch)
+        idx = np.arange(n_fft)[None, :] + h * np.arange(a, b)[:, None]
+        # Racine de l'amplitude : sensible au niveau (un pas discret pèse moins qu'un coup), sans écraser les détails.
+        cm = np.sqrt(np.abs(np.fft.rfft(x[idx] * win, axis=1))).astype(np.float32)
+        full = cm if prev is None else np.vstack([prev, cm])
+        d = np.maximum(0.0, np.diff(full, axis=0)) @ w
+        flux[b - d.size:b] = d
+        prev = cm[-1:]
     return flux / (np.percentile(flux, 99.5) + 1e-9)
 
 

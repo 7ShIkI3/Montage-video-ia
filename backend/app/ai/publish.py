@@ -59,6 +59,8 @@ def chapters(tl: Timeline, segments: list[Segment], project: Project) -> list[di
         t += c.duration
     out.append({"t": round(cur_start, 2), "title": cur_text})
     out = [x for k, x in enumerate(out) if k + 1 == len(out) or out[k + 1]["t"] - x["t"] >= 10]
+    while len(out) > 1 and total - out[-1]["t"] < 10:  # dernier chapitre trop court : fusionné avec le précédent
+        out.pop()
     if len(out) < 3:
         return []
     out[0]["t"] = 0.0

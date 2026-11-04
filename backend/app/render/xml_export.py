@@ -30,8 +30,9 @@ def to_xmeml(project: Project, tl: Timeline, name: str | None = None) -> str:
     for i, c in enumerate(tl.clips):
         m = project.media_by_id(c.media_id)
         fps = m.fps or SEQ_FPS
-        tb, _ = _rate(fps)
-        src_in, src_out = round(c.src_in * tb), round(c.src_out * tb)
+        tb, ntsc = _rate(fps)
+        real = tb * 1000 / 1001 if ntsc == "TRUE" else tb  # 29,97 i/s : la base est 30, les images comptées à 29,97
+        src_in, src_out = round(c.src_in * real), round(c.src_out * real)
         acc += c.duration
         start, end = t, max(t + 1, round(acc * SEQ_FPS))
         t = end
@@ -43,7 +44,7 @@ def to_xmeml(project: Project, tl: Timeline, name: str | None = None) -> str:
             url = Path(m.path).resolve().as_uri()
             file_xml = (
                 f'<file id="{fid}"><name>{escape(m.filename)}</name><pathurl>{escape(url)}</pathurl>'
-                f"{_rate_xml(fps)}<duration>{round(m.duration * tb)}</duration>"
+                f"{_rate_xml(fps)}<duration>{round(m.duration * real)}</duration>"
                 f"<media><video><samplecharacteristics><width>{m.width}</width><height>{m.height}</height>"
                 f"</samplecharacteristics></video>"
                 + ("<audio><channelcount>2</channelcount></audio>" if m.has_audio else "")
@@ -56,7 +57,7 @@ def to_xmeml(project: Project, tl: Timeline, name: str | None = None) -> str:
                      f"<parameter><parameterid>speed</parameterid><name>speed</name><value>{c.speed * 100:.1f}</value>"
                      "</parameter></effect></filter>")
         note = escape(c.reason[:200])
-        common = (f"<name>{escape(m.filename)}</name><duration>{round(m.duration * tb)}</duration>{_rate_xml(fps)}"
+        common = (f"<name>{escape(m.filename)}</name><duration>{round(m.duration * real)}</duration>{_rate_xml(fps)}"
                   f"<start>{start}</start><end>{end}</end><in>{src_in}</in><out>{src_out}</out>")
         if m.has_video:
             vitems.append(f'<clipitem id="v{i}">{common}{file_xml}{speed}'

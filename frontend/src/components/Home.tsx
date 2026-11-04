@@ -50,7 +50,8 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
       ) : (
         <div className="grid">
           {projects.map((p) => (
-            <div key={p.id} className="card" onClick={() => onOpen(p.id)}>
+            <div key={p.id} className="card">
+              <button className="card-open" onClick={() => onOpen(p.id)} aria-label={`Ouvrir ${p.name}`} />
               <div className="card-thumb">
                 {p.thumb ? <img src={api.thumbUrl(p.id, p.thumb)} alt="" onError={(e) => (e.currentTarget.style.display = "none")} /> : "🎬"}
               </div>
@@ -58,8 +59,7 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
                 <b>{p.name}</b>
                 <span className="muted small">{p.media} rush(es) · montage {fmtTime(p.duration)} · {new Date(p.updated_at * 1000).toLocaleDateString("fr-FR")}</span>
               </div>
-              <button className="icon-btn del" title="Supprimer" onClick={async (e) => {
-                e.stopPropagation();
+              <button className="icon-btn del" title="Supprimer" onClick={async () => {
                 if (confirm(`Supprimer « ${p.name} » et tous ses fichiers ?`)) { await api.deleteProject(p.id); refresh(); }
               }}>✕</button>
             </div>

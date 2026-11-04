@@ -294,7 +294,8 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
         alabel = "afx"
 
     if music_path:
-        inputs += ["-stream_loop", "-1", "-i", music_path]
+        skip = max(0.0, timeline.music.start or 0.0)
+        inputs += (["-ss", f"{skip:.3f}"] if skip > 0 else []) + ["-stream_loop", "-1", "-i", music_path]
         mi = n_in
         n_in += 1
         vol = timeline.music.volume

@@ -4,11 +4,7 @@ import { api, ExportPreset, Format, StyleTemplate, Versions, waitJob } from "../
 import { useStore } from "../store";
 
 async function saveIfDirty() {
-  const st = useStore.getState();
-  if (st.dirty && st.timeline && st.project) {
-    await api.saveTimeline(st.project.id, st.timeline);
-    st.markSaved();
-  }
+  await useStore.getState().saveNow();
 }
 
 export function VersionsPanel() {

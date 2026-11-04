@@ -63,7 +63,9 @@ a { color: var(--accent-2); }
 .card-thumb { aspect-ratio: 16/9; background: #000; display: grid; place-items: center; font-size: 32px; }
 .card-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .card-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
-.card .del { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,0.5); }
+.card .del { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,0.5); z-index: 2; }
+.card-open { position: absolute; inset: 0; z-index: 1; background: transparent; border: 0; padding: 0; cursor: pointer; border-radius: inherit; }
+.card-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---------- Éditeur ---------- */
 .editor {

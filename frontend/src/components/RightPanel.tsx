@@ -6,7 +6,6 @@ import { ImageButtons } from "./Studio";
 export function CommandBar() {
   const project = useStore((s) => s.project);
   const job = useStore((s) => s.job);
-  const dirty = useStore((s) => s.dirty);
   const { setJob, notify } = useStore.getState();
   const [text, setText] = useState("");
   const busy = !!job && (job.status === "en_cours" || job.status === "en_attente");
@@ -17,14 +16,11 @@ export function CommandBar() {
   const send = async (instruction: string) => {
     if (!instruction.trim()) return;
     try {
-      if (dirty) {
-        await api.saveTimeline(project.id, useStore.getState().timeline!);
-        useStore.getState().markSaved();
-      }
+      await useStore.getState().saveNow();
       const j = await api.command(project.id, instruction);
       const done = await waitJob(j, setJob);
       const before = useStore.getState().timeline;
-      await useStore.getState().refreshProject();
+      await useStore.getState().refreshProject({ timeline: true });
       // La consigne IA devient une étape annulable comme une retouche manuelle.
       if (before) useStore.setState((s) => ({ past: [...s.past, before], future: [] }));
       const r = done.result as { message?: string } | null;
@@ -62,7 +58,6 @@ export function CommentsPanel() {
   const playhead = useStore((s) => s.playhead);
   const job = useStore((s) => s.job);
   const item = useStore((s) => s.item);
-  const dirty = useStore((s) => s.dirty);
   const { addComment, deleteItem, setPlayhead, selectItem, setJob, notify, setPicking, setPendingRegion } = useStore.getState();
   const picking = useStore((s) => s.picking);
   const pending = useStore((s) => s.pendingRegion);
@@ -81,13 +76,10 @@ export function CommentsPanel() {
   };
   const apply = async () => {
     try {
-      if (dirty) {
-        await api.saveTimeline(project.id, useStore.getState().timeline!);
-        useStore.getState().markSaved();
-      }
+      await useStore.getState().saveNow();
       const before = useStore.getState().timeline;
       const done = await waitJob(await api.applyComments(project.id), setJob);
-      await useStore.getState().refreshProject();
+      await useStore.getState().refreshProject({ timeline: true });
       if (before) useStore.setState((s) => ({ past: [...s.past, before], future: [] }));
       notify(`IA : ${(done.result as { message?: string })?.message ?? "commentaires appliqués"}.`);
     } catch (e) {

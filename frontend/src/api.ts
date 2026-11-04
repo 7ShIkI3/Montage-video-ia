@@ -170,6 +170,7 @@ export interface MusicSettings {
   track: string | null;
   volume: number;
   ducking: boolean;
+  start?: number;
 }
 
 export interface Timeline {

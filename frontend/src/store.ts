@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, CaptionLine, Clip, Comment, EffectsCatalog, ImageItem, ImpactItem, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript } from "./api";
+import { api, CaptionLine, Clip, Comment, EffectsCatalog, ImageItem, ImpactItem, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript, waitJob } from "./api";
 
 const uid = () => "c_" + Math.random().toString(36).slice(2, 12);
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
@@ -69,7 +69,10 @@ interface State {
   setPendingRegion: (r: State["pendingRegion"]) => void;
 
   load: (id: string) => Promise<void>;
-  refreshProject: () => Promise<void>;
+  /** Recharge le projet. Garde les retouches locales non enregistrées, sauf si `timeline` (résultat d'une tâche IA). */
+  refreshProject: (opts?: { timeline?: boolean }) => Promise<void>;
+  /** Enregistre tout de suite les retouches en attente. */
+  saveNow: () => Promise<void>;
   refreshDerived: () => Promise<void>;
   setProject: (p: Project) => void;
   setJob: (j: Job | null) => void;
@@ -90,7 +93,8 @@ interface State {
   restoreRejected: (clip: Clip) => void;
   cutSourceRange: (mediaId: string, start: number, end: number) => void;
   setTimelineProps: (patch: Partial<Timeline>) => void;
-  markSaved: () => void;
+  /** Marque la timeline enregistrée, seulement si c'est encore celle qui a été envoyée. */
+  markSaved: (sent?: Timeline) => void;
   selectItem: (s: Sel | null) => void;
   addText: (patch?: Partial<TextItem>) => void;
   addSfx: (kind: string) => void;
@@ -134,15 +138,34 @@ export const useStore = create<State>((set, get) => ({
     const p = await api.getProject(id);
     set({ project: p, timeline: p.timeline, past: [], future: [], dirty: false, playhead: 0, selected: null });
     const jobs = await api.activeJobs(id).catch(() => []);
-    if (jobs.length) set({ job: jobs[0] });
+    set({ job: jobs[0] ?? null });
     await get().refreshDerived();
+    if (jobs.length) {
+      // Tâche lancée avant un rechargement de la page : on reprend son suivi jusqu'au bout.
+      waitJob(jobs[0], (j) => { if (get().project?.id === id) set({ job: j }); })
+        .then(() => { if (get().project?.id === id) return get().refreshProject({ timeline: true }); })
+        .catch((e) => get().notify((e as Error).message))
+        .finally(() => { if (get().project?.id === id) set({ job: null }); });
+    }
   },
-  refreshProject: async () => {
+  refreshProject: async (opts) => {
     const p = get().project;
     if (!p) return;
+    const before = get().timeline;
     const np = await api.getProject(p.id);
-    set({ project: np, timeline: np.timeline, dirty: false });
+    const st = get();
+    if (!opts?.timeline && st.timeline && (st.dirty || st.timeline !== before)) {
+      set({ project: { ...np, timeline: st.timeline } });  // retouches en cours : on ne les écrase pas
+    } else {
+      set({ project: np, timeline: np.timeline, dirty: false });
+    }
     await get().refreshDerived();
+  },
+  saveNow: async () => {
+    const { project, timeline, dirty } = get();
+    if (!project || !timeline || !dirty) return;
+    await api.saveTimeline(project.id, timeline);
+    get().markSaved(timeline);
   },
   refreshDerived: async () => {
     const p = get().project;
@@ -255,7 +278,7 @@ export const useStore = create<State>((set, get) => ({
       tl.clips = out;
     }),
   setTimelineProps: (patch) => get().edit((tl) => Object.assign(tl, patch)),
-  markSaved: () => set({ dirty: false }),
+  markSaved: (sent) => { if (!sent || get().timeline === sent) set({ dirty: false }); },
   selectItem: (it) => set({ item: it, selected: it?.kind === "clip" ? it.id : null }),
   addText: (patch) => {
     const id = rid("t_");
@@ -284,7 +307,10 @@ export const useStore = create<State>((set, get) => ({
     });
     get().selectItem({ kind: "image", id });
   },
-  setTimeline: (p) => set({ project: p, timeline: p.timeline, past: [], future: [], dirty: false, item: null, selected: null, playhead: 0 }),
+  setTimeline: (p) => {
+    set({ project: p, timeline: p.timeline, past: [], future: [], dirty: false, item: null, selected: null, playhead: 0, captions: [] });
+    get().refreshDerived();  // sous-titres de la nouvelle timeline
+  },
   addImpact: (kind) => {
     const id = rid("i_");
     const start = get().playhead;

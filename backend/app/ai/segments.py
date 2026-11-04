@@ -66,25 +66,37 @@ def build_segments(media: Media, transcript: Transcript | None, signals: dict,
     segs: list[Segment] = []
     idx = 0
 
-    def add(start, end, kind, text="", words=None):
+    def add(start, end, kind, text="", words=None, filler_after=False):
         nonlocal idx
         start = max(0.0, start)
         end = min(media.duration or end, end)
         if end - start < 0.35:
             return
+        f = {"_words": float(len(words or []))}
+        if filler_after:
+            f["filler_after"] = 1.0  # une hésitation coupée suit : ne pas recoller avec le segment suivant
         segs.append(Segment(id=f"{media.id}:{idx}", media_id=media.id, start=round(start, 3),
-                            end=round(end, 3), text=text, kind=kind,
-                            features={"_words": float(len(words or []))}))
+                            end=round(end, 3), text=text, kind=kind, features=f))
         idx += 1
 
     speech_spans: list[tuple[float, float]] = []
     if transcript and transcript.words:
         groups = speech_segments(media, transcript, split_fillers)
+        fillers = [(w.start, w.end) for w in transcript.words if w.filler] if split_fillers else []
         prev_end = 0.0
         for g in groups:
             s = max(prev_end, g[0].start - PAD_BEFORE)
             e = g[-1].end + PAD_AFTER
-            add(s, e, "speech", " ".join(w.text for w in g), g)
+            # La marge ne doit pas faire revenir une hésitation coupée (« euh » juste avant ou juste après).
+            before = [fe for fs, fe in fillers if fe <= g[0].start + 1e-3]
+            after = [fs for fs, fe in fillers if fs >= g[-1].end - 1e-3]
+            if before:
+                s = max(s, before[-1])
+            nxt = min(after) if after else None
+            if nxt is not None:
+                e = min(e, nxt)
+            add(s, e, "speech", " ".join(w.text for w in g), g,
+                filler_after=nxt is not None and nxt - g[-1].end < 0.7)
             speech_spans.append((s, e))
             prev_end = e
     elif media.has_audio:

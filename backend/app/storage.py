@@ -11,6 +11,21 @@ from . import config
 from .models import Project, Segment, Transcript
 
 _lock = threading.RLock()
+_plocks: dict[str, threading.Lock] = {}
+
+
+def project_lock(project_id: str) -> threading.Lock:
+    """Verrou d'un projet pour les lectures-modifications-écritures (API et tâches de fond)."""
+    with _lock:
+        return _plocks.setdefault(project_id, threading.Lock())
+
+
+def update_project(project_id: str, fn) -> Project:
+    """Relit le projet, applique `fn` dessus et l'enregistre, sans écraser ce qui a changé entre-temps."""
+    with project_lock(project_id):
+        p = load_project(project_id)
+        fn(p)
+        return save_project(p)
 
 
 def project_dir(project_id: str) -> Path:
@@ -29,6 +44,28 @@ def cache_dir(project_id: str) -> Path:
     d = project_dir(project_id) / "cache"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".mka"}
+
+
+def safe_music_path(track: str | None) -> str | None:
+    """Chemin de musique accepté seulement s'il est dans les données de l'app ou la bibliothèque.
+
+    Empêche une timeline envoyée par un client de pointer vers n'importe quel fichier du serveur.
+    """
+    if not track:
+        return None
+    try:
+        p = Path(track).resolve()
+    except (OSError, ValueError):
+        return None
+    if p.suffix.lower() not in AUDIO_EXT:
+        return None
+    for root in (config.DATA_DIR, config.MUSIC_DIR):
+        if p.is_relative_to(root):
+            return str(p)
+    return None
 
 
 def assets_dir(project_id: str) -> Path:

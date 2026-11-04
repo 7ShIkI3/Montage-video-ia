@@ -196,6 +196,7 @@ class MusicSettings(BaseModel):
     track: str | None = None  # chemin d'un fichier de la bibliothèque ou du projet
     volume: float = 0.18
     ducking: bool = True
+    start: float = 0.0  # secondes sautées au début du morceau (cale ses temps sur le début du montage)
 
 
 class EditSettings(BaseModel):

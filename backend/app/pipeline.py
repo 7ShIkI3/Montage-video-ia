@@ -126,6 +126,15 @@ def _has_effects(tl: Timeline) -> bool:
                 or any(c.effects or c.audio_effects or c.transition != "aucune" for c in tl.clips))
 
 
+def _save_media(project: Project) -> None:
+    """Enregistre seulement les médias analysés, sans toucher au reste du projet."""
+    done = {m.id: m for m in project.media}
+
+    def apply(p: Project) -> None:
+        p.media = [done.get(m.id, m) for m in p.media]
+    storage.update_project(project.id, apply)
+
+
 def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timeline:
     project = storage.load_project(project_id)
     if not project.media:
@@ -135,7 +144,7 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     n = len(project.media)
     for i, m in enumerate(project.media):
         analyze_media(project, m, ctx, 0.85 * i / n, 0.85 * (i + 1) / n)
-        storage.save_project(project)
+        _save_media(project)
 
     ctx.step("Repérage et notation des moments forts", 0.86)
     segments = all_segments(project, settings)
@@ -183,8 +192,9 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     if notes and tl.director != "claude":  # heuristique ou pvp
         ctx.step("Application de tes commentaires", 0.98)
         comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, notes, _faces(project))
-    project.timeline = tl
-    storage.save_project(project)
+    def apply(p: Project) -> None:
+        p.settings, p.warnings, p.timeline = settings, project.warnings, tl
+    storage.update_project(project_id, apply)
     ctx.step(f"Montage prêt : {len(tl.clips)} plans, {tl.duration:.0f} s", 1.0)
     return tl
 
@@ -212,8 +222,9 @@ def ai_command(project_id: str, instruction: str, ctx: JobContext) -> dict:
     tl.comments = project.timeline.comments
     if tl is not project.timeline:
         comments_mod.carry_overrides(project.timeline, tl)
-    project.timeline = tl
-    storage.save_project(project)
+    def apply(p: Project) -> None:
+        p.settings, p.timeline = project.settings, tl
+    storage.update_project(project_id, apply)
     ctx.step(msg or "Consigne appliquée", 1.0)
     return {"message": msg, "director": director.name}
 
@@ -238,9 +249,7 @@ def export(project_id: str, quality: str, ctx: JobContext, fps: int | None = Non
     render_mod.render(project, tl, transcripts_for(project), out.resolve(), work.resolve(), quality, music,
                       ctx.sub(0.01, 0.99, f"Rendu {quality} à {rate} i/s"), fps=rate, smooth=smooth,
                       container=container)
-    project = storage.load_project(project_id)
-    project.exports.append(out.name)
-    storage.save_project(project)
+    storage.update_project(project_id, lambda p: p.exports.append(out.name))
     ctx.step("Export terminé", 1.0)
     return out.name
 
@@ -252,8 +261,7 @@ def publish_kit(project_id: str, ctx: JobContext) -> dict:
     work = storage.cache_dir(project.id) / "publish"
     work.mkdir(parents=True, exist_ok=True)
     kit = publish_mod.build_kit(project, segments, storage.exports_dir(project.id), work.resolve())
-    project.publish_kit = kit
-    storage.save_project(project)
+    storage.update_project(project_id, lambda p: setattr(p, "publish_kit", kit))
     ctx.step("Kit de publication prêt", 1.0)
     return kit
 
@@ -302,8 +310,7 @@ def apply_comments(project_id: str, ctx: JobContext) -> dict:
             comments_mod.apply_all(tl, segments, project.settings, durations, None, _faces(project))
     else:
         comments_mod.apply_all(tl, segments, project.settings, {m.id: m.duration for m in project.media}, None, _faces(project))
-    project.timeline = tl
-    storage.save_project(project)
+    storage.update_project(project_id, lambda p: setattr(p, "timeline", tl))
     ok = sum(c.status == "applique" for c in open_c)
     msg = f"{ok} commentaire(s) appliqué(s)" + (f", {len(open_c) - ok} non compris" if ok < len(open_c) else "")
     ctx.step(msg, 1.0)
@@ -416,7 +423,7 @@ def make_shorts(project_id: str, ctx: JobContext, count: int = 3, target: float 
     for i, m in enumerate(project.media):
         if not m.analyzed:
             analyze_media(project, m, ctx, 0.6 * i / n, 0.6 * (i + 1) / n)
-            storage.save_project(project)
+            _save_media(project)
     ctx.step("Recherche des passages les plus partageables", 0.65)
     settings = project.settings.model_copy(update={"style": "short", "format": fmt, "target_duration": target})
     segments = all_segments(project, settings)
@@ -447,7 +454,12 @@ def make_shorts(project_id: str, ctx: JobContext, count: int = 3, target: float 
         v = Version(name=f"Short {k} · {score}/100", timeline=tl, score=score, note=", ".join(reasons).capitalize() + ".")
         project.versions.append(v)
         out.append({"id": v.id, "name": v.name, "score": score, "note": v.note, "duration": round(tl.duration, 1)})
-    storage.save_project(project)
+    new = [v for v in project.versions if v.id in {o["id"] for o in out}]
+
+    def apply(p: Project) -> None:
+        p.ensure_versions()
+        p.versions.extend(new)
+    storage.update_project(project_id, apply)
     ctx.step(f"{len(out)} short(s) prêt(s) dans les versions", 1.0)
     return out
 

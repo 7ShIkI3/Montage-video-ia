@@ -18,7 +18,7 @@ function useAutosave() {
     timer.current = window.setTimeout(async () => {
       try {
         await api.saveTimeline(project.id, tl);
-        if (useStore.getState().timeline === tl) useStore.getState().markSaved();
+        useStore.getState().markSaved(tl);
         const captions = await api.captions(project.id);
         useStore.setState({ captions });
       } catch (e) {
@@ -27,6 +27,8 @@ function useAutosave() {
     }, 500);
     return () => window.clearTimeout(timer.current);
   }, [tl, dirty, project]);
+  // En quittant l'éditeur, la sauvegarde en attente part tout de suite au lieu d'être annulée.
+  useEffect(() => () => { useStore.getState().saveNow().catch(() => undefined); }, []);
 }
 
 function useShortcuts() {
@@ -64,8 +66,7 @@ function PublishKitPanel() {
   const copy = (t: string) => navigator.clipboard?.writeText(t).then(() => notify("Copié !"), () => undefined);
   const gen = async () => {
     try {
-      const st = useStore.getState();
-      if (st.dirty && st.timeline) { await api.saveTimeline(project.id, st.timeline); st.markSaved(); }
+      await useStore.getState().saveNow();
       await waitJob(await api.publishKit(project.id), setJob);
       await useStore.getState().refreshProject();
     } catch (e) {
@@ -121,15 +122,13 @@ function ExportButton() {
     if (!st.dirty || !st.timeline) return;
     e.preventDefault();
     const href = e.currentTarget.href;
-    await api.saveTimeline(project.id, st.timeline);
-    st.markSaved();
+    await st.saveNow();
     window.location.href = href;
   };
 
   const go = async () => {
     try {
-      const st = useStore.getState();
-      if (st.dirty && st.timeline) { await api.saveTimeline(project.id, st.timeline); st.markSaved(); }
+      await useStore.getState().saveNow();
       const j = await api.export(project.id, quality, fps, smooth);
       const done = await waitJob(j, setJob);
       setLast(done.result as string);
@@ -231,7 +230,10 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
   return (
     <div className="editor">
       <header className="topbar">
-        <button className="icon-btn" onClick={onBack} title="Projets">←</button>
+        <button className="icon-btn" onClick={async () => {
+          try { await useStore.getState().saveNow(); } catch (e) { return useStore.getState().notify(`Sauvegarde impossible : ${(e as Error).message}`); }
+          onBack();
+        }} title="Projets">←</button>
         <span className="brand-mark" aria-hidden>▶</span>
         <input className="project-name" value={name} onChange={(e) => setName(e.target.value)}
           onBlur={() => name !== project.name && api.patchProject(project.id, { name }).then(useStore.getState().setProject)} />

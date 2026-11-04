@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import anyio
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +26,23 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 app = FastAPI(title="Monteur IA", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+_PROJECT_ROUTE = re.compile(r"^/api/projects/([A-Za-z0-9_]+)(/.*)?$")
+_UPLOADS = re.compile(r"^/(media|music|assets)$")  # envois de fichiers : verrou pris seulement à l'écriture
+
+
+@app.middleware("http")
+async def serialize_project_writes(request: Request, call_next):
+    """Une modification de projet à la fois : évite qu'une requête écrase ce qu'une autre vient d'écrire."""
+    m = _PROJECT_ROUTE.match(request.url.path)
+    if request.method in ("GET", "HEAD", "OPTIONS") or not m or (request.method == "POST" and _UPLOADS.match(m.group(2) or "")):
+        return await call_next(request)
+    lock = storage.project_lock(m.group(1))
+    await anyio.to_thread.run_sync(lock.acquire)
+    try:
+        return await call_next(request)
+    finally:
+        lock.release()
 
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".mts", ".m2ts", ".mp3", ".wav", ".m4a", ".flac"}
 
@@ -112,8 +131,8 @@ def delete_project(pid: str):
 
 @app.post("/api/projects/{pid}/media")
 async def upload_media(pid: str, files: list[UploadFile] = File(...)):
-    p = _project(pid)
-    added = []
+    _project(pid)
+    saved: list[Path] = []
     for f in files:
         name = _safe_name(f.filename or "video.mp4")
         if Path(name).suffix.lower() not in VIDEO_EXT:
@@ -124,13 +143,22 @@ async def upload_media(pid: str, files: list[UploadFile] = File(...)):
             dst = storage.media_dir(pid) / f"{Path(name).stem} ({i}){Path(name).suffix}"
             i += 1
         await _save_upload(f, dst)
-        try:
-            added.append(pipeline.ingest(p, dst, dst.name))
-        except Exception as e:
-            dst.unlink(missing_ok=True)
-            raise HTTPException(400, str(e))
-    storage.save_project(p)
-    return added
+        saved.append(dst)
+
+    def ingest_all() -> list:
+        added = []
+
+        def apply(p: Project) -> None:
+            for dst in saved:
+                try:
+                    added.append(pipeline.ingest(p, dst, dst.name))
+                except Exception as e:
+                    for d in saved:
+                        d.unlink(missing_ok=True)
+                    raise HTTPException(400, str(e))
+        storage.update_project(pid, apply)
+        return added
+    return await anyio.to_thread.run_sync(ingest_all)
 
 
 @app.delete("/api/projects/{pid}/media/{mid}")
@@ -218,6 +246,8 @@ def put_timeline(pid: str, timeline: Timeline):
         m = p.media_by_id(c.media_id)
         c.src_in = max(0.0, min(c.src_in, m.duration))
         c.src_out = max(c.src_in + 0.05, min(c.src_out, m.duration))
+    if timeline.music.track and not storage.safe_music_path(timeline.music.track):
+        raise HTTPException(400, "Musique refusée : choisis-la dans la bibliothèque ou importe-la.")
     p.timeline = timeline
     storage.save_project(p)
     return p.timeline
@@ -291,16 +321,18 @@ async def upload_music(pid: str, file: UploadFile = File(...)):
     d.mkdir(exist_ok=True)
     dst = d / name
     await _save_upload(file, dst)
-    p.timeline.music.track = str(dst.resolve())
-    p.settings.music = True
-    storage.save_project(p)
+
+    def apply(p: Project) -> None:
+        p.timeline.music.track = str(dst.resolve())
+        p.settings.music = True
+    p = await anyio.to_thread.run_sync(storage.update_project, pid, apply)
     return p.timeline.music
 
 
 @app.get("/api/projects/{pid}/music/current")
 def current_music(pid: str):
     p = _project(pid)
-    t = p.timeline.music.track
+    t = storage.safe_music_path(p.timeline.music.track)
     if not t or not Path(t).exists():
         raise HTTPException(404, "Pas de musique")
     return FileResponse(t)

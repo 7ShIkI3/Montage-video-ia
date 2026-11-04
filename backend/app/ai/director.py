@@ -49,19 +49,24 @@ def _fmt(t: float) -> str:
     return f"{int(m)}:{s:04.1f}"
 
 
-def merge_contiguous(clips: list[Clip], gap: float) -> list[Clip]:
+def merge_contiguous(clips: list[Clip], gap: float, no_bridge: set[str] | None = None) -> list[Clip]:
+    """Recolle les plans qui se suivent dans le rush. `no_bridge` : segments suivis d'une hésitation coupée."""
     out: list[Clip] = []
+    tail: str | None = None  # segment qui termine le dernier plan recollé
     for c in clips:
         if out:
             p = out[-1]
             if (p.media_id == c.media_id and 0 <= c.src_in - p.src_out <= gap
+                    and not (no_bridge and tail in no_bridge)
                     and abs(p.zoom - c.zoom) < 1e-3 and abs(p.speed - c.speed) < 1e-3
                     and p.effects == c.effects and p.audio_effects == c.audio_effects
                     and c.transition == "aucune"):
                 p.src_out = c.src_out
                 p.score = max(p.score, c.score)
+                tail = c.segment_id
                 continue
         out.append(c.model_copy())
+        tail = c.segment_id
     return out
 
 
@@ -219,7 +224,8 @@ class HeuristicDirector:
             clips.append(c)
 
         gap = prof.merge_gap if settings.remove_silences else 1.5
-        clips = merge_contiguous(clips, gap)
+        no_bridge = {s.id for s in chosen if s.features.get("filler_after")} if settings.remove_fillers else set()
+        clips = merge_contiguous(clips, gap, no_bridge)
         if settings.punch_zooms and settings.style != "podcast" and clips:
             top = float(np.quantile([c.score for c in clips], 0.85))
             apply_jump_cut_zooms(clips, top)

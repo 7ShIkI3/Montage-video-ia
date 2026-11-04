@@ -15,9 +15,8 @@ def timeline_words(timeline: Timeline, transcripts: dict[str, Transcript]) -> li
     for c in timeline.clips:
         tr = transcripts.get(c.media_id)
         if tr:
+            # Tous les mots audibles dans les plans gardés, « euh » compris s'ils n'ont pas été coupés.
             for w in tr.words:
-                if w.filler:
-                    continue
                 mid = (w.start + w.end) / 2
                 if c.src_in <= mid < c.src_out:
                     sp = max(0.05, c.speed)
