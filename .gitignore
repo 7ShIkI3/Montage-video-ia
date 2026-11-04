@@ -7,3 +7,5 @@ frontend/dist/
 .env
 .pytest_cache/
 *.tsbuildinfo
+/dist/
+/build/

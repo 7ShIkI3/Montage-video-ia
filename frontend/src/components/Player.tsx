@@ -244,6 +244,11 @@ export function Player() {
     const el = vo.current;
     if (!el || !tl) return;
     const o = overlayAt(tl, t);
+    // Écran partagé : le cadre principal passe sur une moitié (classe sur le cadre), le plan de coupe sur l'autre.
+    const frame = el.parentElement;
+    const split = o?.mode === "partage" ? (tl.format === "9:16" ? "split-v" : "split-h") : "";
+    frame?.classList.toggle("split-h", split === "split-h");
+    frame?.classList.toggle("split-v", split === "split-v");
     if (!o) {
       if (el.dataset.on) {
         el.pause();
@@ -261,7 +266,8 @@ export function Player() {
     if (!play || Math.abs(el.currentTime - target) > 0.3) el.currentTime = target;
     el.style.filter = cssFilter([], look);
     el.dataset.on = "1";
-    el.className = `ov on ov-${o.mode}`;
+    el.className = `ov on ov-${o.mode}${split ? ` ov-${split}` : ""}`;
+    el.style.objectPosition = o.mode === "partage" ? `${(o.focus_x ?? 0.5) * 100}% 50%` : "";
     if (play && el.paused) el.play().catch(() => undefined);
     if (!play && !el.paused) el.pause();
   }

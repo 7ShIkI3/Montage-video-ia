@@ -16,6 +16,14 @@ import numpy as np
 from ..models import Timeline
 from . import engine3d as e3
 
+CUTOUT = {
+    "detourage_flou": "Fond flouté (IA)",
+    "detourage_studio": "Fond studio (IA)",
+    "detourage_noir": "Fond noir (IA)",
+    "detourage_blanc": "Fond blanc (IA)",
+    "detourage_image": "Fond image (IA)",
+}
+
 EFFECTS_3D = {
     "3d_orbite": "Orbite 3D (caméra qui tourne)",
     "3d_bascule": "Bascule 3D d'entrée",
@@ -45,13 +53,17 @@ TEXT_PALETTES = [
 
 def needs_3d(tl: Timeline) -> bool:
     return bool(tl.impacts or any(t.style == "texte_3d" for t in tl.texts)
-                or any(c.transition in TRANSITIONS_3D or any(e in EFFECTS_3D for e in c.effects)
+                or any(c.transition in TRANSITIONS_3D or any(e in EFFECTS_3D or e in CUTOUT for e in c.effects)
                        for c in tl.clips))
 
 
 class Scene3D:
-    def __init__(self, tl: Timeline, W: int, H: int, fps: int):
+    def __init__(self, tl: Timeline, W: int, H: int, fps: int, background: np.ndarray | None = None,
+                 assets_dir=None):
         self.tl, self.W, self.H, self.fps = tl, W, H, fps
+        self.assets_dir = assets_dir
+        self.background = background  # image de fond du détourage, déjà à la taille W x H
+        self._seg = None
         self.cam = e3.Camera(W, H, 50.0)
         self.starts: list[float] = []
         t = 0.0
@@ -238,6 +250,58 @@ class Scene3D:
                            opacity=1 - out_u, glow_color=glow)
         return frame
 
+    def _cutout(self, frame, kind: str, t: float):
+        """Détoure le plan principal. Les calques posés par FFmpeg (plan de coupe, logo) sont déjà dans l'image :
+        on remet leurs pixels d'origine après le détourage pour ne pas les effacer."""
+        from ..analysis import segment
+        keep = self._protected(t)
+        if keep is None:
+            return frame  # plan de coupe plein écran : le plan principal n'est pas visible
+        if self._seg is None:
+            self._seg = segment.Segmenter()
+        out = segment.composite(frame, self._seg.mask(frame), kind, self.background)
+        for x0, y0, x1, y1 in keep:
+            out[y0:y1, x0:x1] = frame[y0:y1, x0:x1]
+        return out
+
+    def _protected(self, t: float):
+        """Rectangles (x0, y0, x1, y1) à ne pas détourer à l'instant t, ou None si rien du plan principal n'est visible."""
+        W, H = self.W, self.H
+        even = lambda x: max(2, int(round(x / 2)) * 2)  # noqa: E731 (même arrondi que render.py)
+        rects = []
+        for o in self.tl.overlays:
+            if not (o.start <= t < o.start + o.duration):
+                continue
+            if o.mode == "plein":
+                return None
+            if o.mode == "partage":
+                rects.append((W - even(W / 2), 0, W, H) if W >= H else (0, H - even(H / 2), W, H))
+            else:
+                pw = even(W * 0.34)
+                ph = even(pw * H / W)
+                if o.chroma == "aucun":
+                    pw, ph = pw + 8, ph + 8
+                mx, my = int(W * 0.04), int(H * 0.05)
+                x0 = W - pw - mx if o.corner.endswith("droite") else mx
+                y0 = my if o.corner.startswith("haut") else H - ph - my
+                rects.append((x0, y0, x0 + pw, y0 + ph))
+        for g in self.tl.images:
+            if not (g.start <= t < g.start + (g.duration or 1e9)):
+                continue
+            gw = even(W * max(0.02, min(1.0, g.scale))) * (1.2 if g.anim == "pop" else 1.0)
+            gh = gw * self._image_ratio(g.asset)
+            cx, cy = W * g.x, H * g.y
+            rects.append((max(0, int(cx - gw / 2) - 2), max(0, int(cy - gh / 2) - 2),
+                          min(W, int(cx + gw / 2) + 2), min(H, int(cy + gh / 2) + 2)))
+        return rects
+
+    def _image_ratio(self, asset: str) -> float:
+        cache = self.__dict__.setdefault("_ratios", {})
+        if asset not in cache:
+            img = cv2.imread(str(self.assets_dir / asset), cv2.IMREAD_UNCHANGED) if self.assets_dir else None
+            cache[asset] = img.shape[0] / img.shape[1] if img is not None else 1.0
+        return cache[asset]
+
     # -- image par image ---------------------------------------------------------
     def process(self, n: int, frame: np.ndarray) -> np.ndarray:
         t = n / self.fps
@@ -245,6 +309,12 @@ class Scene3D:
         if i != self.cur:
             self.prev_last = self.last_raw
             self.cur = i
+            if self._seg is not None:
+                self._seg.reset()  # nouveau plan : pas de lissage avec le masque du plan précédent
+        if self.tl.clips:
+            cut = next((e for e in self.tl.clips[i].effects if e in CUTOUT), None)
+            if cut:
+                frame = self._cutout(frame, cut, t)
         self.last_raw = frame
         out = frame
         if self.tl.clips:

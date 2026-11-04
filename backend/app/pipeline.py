@@ -612,3 +612,76 @@ def translate_captions(project_id: str, lang: str | None, ctx: JobContext) -> di
     storage.update_project(project_id, lambda p: setattr(p.timeline, "caption_language", lang))
     ctx.step("Sous-titres traduits" if lang else "Sous-titres dans la langue d'origine", 1.0)
     return {"language": lang}
+
+
+def dub_voice(project_id: str, lang: str | None, ctx: JobContext, original_volume: float = 0.12) -> dict:
+    """Doublage IA : traduit les phrases du montage, les fait lire par une voix de synthèse calée sur le
+    moment où elles sont dites, et baisse la voix d'origine. lang=None retire le doublage."""
+    from .ai import translate as trl
+    from .ai import tts
+    from .models import AudioItem
+    project = storage.load_project(project_id)
+
+    if not lang:
+        def undo(p: Project) -> None:
+            p.timeline.audio = [a for a in p.timeline.audio if not a.dub]
+            for c in p.timeline.clips:
+                c.volume = 1.0
+            p.timeline.dub_language = None
+        storage.update_project(project_id, undo)
+        ctx.step("Voix d'origine rétablie", 1.0)
+        return {"language": None, "lines": 0}
+
+    name = trl.LANGUAGES.get(lang, lang)
+    if not tts.engine_for(lang):
+        raise ValueError("Aucune voix de synthèse pour cette langue : installe espeak-ng, ou Piper avec une voix "
+                         f"dans {tts.voices_dir()}.")
+    tl = project.timeline.model_copy(update={"caption_language": None})
+    # Phrases plus longues que les sous-titres : la voix lit d'une traite et respire aux vraies pauses.
+    transcripts = transcripts_for(project)
+    lines = cap_mod.group_lines(cap_mod.timeline_words(tl, transcripts), 18, 120, max_gap=0.8)
+    if not lines:
+        raise ValueError("Rien à doubler : il faut des paroles transcrites dans le montage.")
+    ctx.step(f"Traduction des phrases en {name}", 0.05)
+    spoken = {transcripts[c.media_id].language for c in tl.clips if c.media_id in transcripts}
+    same = spoken == {lang}  # déjà dans cette langue : la voix relit simplement le texte d'origine
+    known = {} if same else storage.load_translations(project_id, lang)
+    todo = [] if same else list(dict.fromkeys(ln.text for ln in lines if ln.text not in known))
+    if todo:
+        known.update(trl.translate_lines(todo, lang))
+        storage.save_translations(project_id, lang, known)
+
+    d = storage.audio_dir(project_id)
+    for old in d.glob(f"dub_{lang}_*.wav"):
+        old.unlink(missing_ok=True)
+    total = tl.duration
+    items: list[AudioItem] = []
+    engine = None
+    for i, ln in enumerate(lines):
+        text = (known.get(ln.text) or ln.text).strip()
+        if not text:
+            continue
+        ctx.step(f"Voix {i + 1}/{len(lines)}", 0.1 + 0.85 * i / len(lines))
+        nxt = lines[i + 1].start if i + 1 < len(lines) else total
+        slot = max(0.4, min(nxt, total) - ln.start - 0.05)
+        raw = d / f"dub_{lang}_{i:04d}_raw.wav"
+        out = d / f"dub_{lang}_{i:04d}.wav"
+        engine = tts.synthesize(text, lang, raw)
+        dur = float(ffmpeg.probe(raw).get("duration") or 0.0)
+        tempo = min(1.6, dur / slot) if dur > slot else 1.0
+        # La phrase doublée doit tenir dans le temps de la phrase d'origine : on accélère un peu si besoin.
+        ffmpeg.run(["-i", str(raw), "-af", f"atempo={tempo:.4f},aresample=48000", "-ac", "2", str(out)])
+        raw.unlink(missing_ok=True)
+        dur = float(ffmpeg.probe(out).get("duration") or dur / tempo)
+        items.append(AudioItem(asset=out.name, start=round(ln.start, 3), src_in=0.0, src_out=round(dur, 3),
+                               lane=3, kind="voix", volume=1.0, fade_in=0.02, fade_out=0.08,
+                               label=f"Doublage {name} {i + 1}", dub=lang))
+
+    def apply(p: Project) -> None:
+        p.timeline.audio = [a for a in p.timeline.audio if not a.dub] + items
+        for c in p.timeline.clips:
+            c.volume = original_volume
+        p.timeline.dub_language = lang
+    storage.update_project(project_id, apply)
+    ctx.step(f"Doublage en {name} prêt ({engine})", 1.0)
+    return {"language": lang, "lines": len(items), "engine": engine}

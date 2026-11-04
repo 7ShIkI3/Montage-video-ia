@@ -229,8 +229,9 @@ class OverlayItem(BaseModel):
     src_in: float
     src_out: float
     start: float
-    mode: Literal["plein", "incrustation"] = "plein"
+    mode: Literal["plein", "incrustation", "partage"] = "plein"  # partage : écran partagé avec le plan principal
     reason: str = ""
+    focus_x: float | None = None  # cadrage du plan de coupe en écran partagé (0..1 du rush, centre par défaut)
     chroma: Literal["aucun", "vert", "bleu"] = "aucun"  # incrustation sur fond vert / bleu
     corner: Literal["haut_droite", "haut_gauche", "bas_droite", "bas_gauche"] = "haut_droite"
 
@@ -272,6 +273,7 @@ class AudioItem(BaseModel):
     fade_in: float = 0.05
     fade_out: float = 0.15
     label: str = ""
+    dub: str | None = None  # langue du doublage IA qui a créé ce son (remplacé quand on double à nouveau)
 
     @property
     def duration(self) -> float:
@@ -295,6 +297,10 @@ class Timeline(BaseModel):
     images: list[ImageItem] = Field(default_factory=list)
     audio: list[AudioItem] = Field(default_factory=list)  # pistes audio : voix off, sons, musiques en plus
     caption_language: str | None = None  # langue des sous-titres traduits (None = langue parlée)
+    lut: str | None = None  # LUT d'étalonnage : "integre:<nom>" ou "projet:<fichier.cube>"
+    lut_strength: float = Field(1.0, ge=0.0, le=1.0)
+    background: str | None = None  # image de fond du détourage IA (fichier du dossier images du projet)
+    dub_language: str | None = None  # langue du doublage IA en place (None = voix d'origine)
     comments: list[Comment] = Field(default_factory=list)
     reframe: bool = True  # recadrage automatique sur le visage quand le format est plus étroit que la source
 
