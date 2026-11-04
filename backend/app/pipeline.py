@@ -1,0 +1,589 @@
+"""Orchestration du pipeline : ingestion → analyse → transcription → réalisation → rendu."""
+from __future__ import annotations
+
+import logging
+import random
+from pathlib import Path
+
+from . import config, storage
+from .ai import director as dir_mod
+from .ai.decorate import decorate
+from .ai import publish as publish_mod
+from .ai import comments as comments_mod
+from .ai import pvp as pvp_mod
+from .ai.segments import build_segments
+from .analysis import audio as audio_an
+from .analysis import faces as faces_an
+from .analysis import hits as hits_an
+from .analysis import transcribe as tr_mod
+from .analysis import video as video_an
+from .jobs import JobContext
+from .media import ffmpeg
+from .models import EditSettings, Media, Project, Segment, Timeline, Transcript
+from .render import render as render_mod
+
+log = logging.getLogger(__name__)
+MUSIC_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
+
+
+def ingest(project: Project, src: Path, filename: str) -> Media:
+    info = ffmpeg.probe(src)
+    if not info["has_video"] and not info["has_audio"]:
+        raise ValueError("Ce fichier ne contient ni vidéo ni audio.")
+    m = Media(filename=filename, path=str(src.resolve()), **info)
+    project.media.append(m)
+    return m
+
+
+def analyze_media(project: Project, m: Media, ctx: JobContext, lo: float, hi: float) -> None:
+    """Proxy + signaux + transcription d'un média, avec cache."""
+    cache = storage.cache_dir(project.id)
+    span = hi - lo
+    if not m.proxy and m.has_video:
+        proxy = cache / f"{m.id}.proxy.mp4"
+        ffmpeg.make_proxy(m.path, proxy, m.duration,
+                          ctx.sub(lo, lo + span * 0.35, f"{m.filename} : création du proxy de lecture"))
+        m.proxy = str(proxy)
+        ffmpeg.thumbnail(proxy, cache / f"{m.id}.jpg", min(1.0, m.duration / 2))
+    signals = storage.load_signals(project.id, m.id)
+    pcm = None
+    if signals is None:
+        ctx.step(f"{m.filename} : analyse audio et vidéo", lo + span * 0.4)
+        signals = {}
+        if m.has_audio:
+            pcm = ffmpeg.decode_audio(m.path)
+            signals["audio"] = audio_an.analyze(pcm, m.duration)
+        if m.has_video:
+            signals["video"] = video_an.analyze(ffmpeg.decode_gray_frames(m.proxy or m.path))
+        storage.save_signals(project.id, m.id, signals)
+    if m.has_video and "faces" not in signals and faces_an.AVAILABLE:
+        ctx.step(f"{m.filename} : suivi des visages (recadrage auto)", lo + span * 0.45)
+        try:
+            frames = ffmpeg.decode_gray_small(m.proxy or m.path, faces_an.FACE_FPS)
+            signals["faces"] = faces_an.analyze(frames, (signals.get("video") or {}).get("cuts", []))
+            storage.save_signals(project.id, m.id, signals)
+        except Exception as e:  # le recadrage centré reste possible
+            log.warning("Suivi des visages impossible pour %s : %s", m.filename, e)
+    if m.has_audio and "hits" not in signals:
+        ctx.step(f"{m.filename} : détection des coups et des chocs", lo + span * 0.47)
+        if pcm is None:
+            pcm = ffmpeg.decode_audio(m.path)
+        signals["hits"] = hits_an.detect_hits(pcm, config.AUDIO_SR)
+        storage.save_signals(project.id, m.id, signals)
+    if m.has_audio and storage.load_transcript(project.id, m.id) is None:
+        ctx.step(f"{m.filename} : transcription (Whisper {config.WHISPER_MODEL})", lo + span * 0.5)
+        try:
+            if pcm is None:
+                pcm = ffmpeg.decode_audio(m.path)
+            t = tr_mod.transcribe(pcm, m.id, m.duration, ctx.sub(lo + span * 0.5, hi))
+            storage.save_transcript(project.id, t)
+        except tr_mod.TranscriptionUnavailable as e:
+            warn = f"Transcription indisponible ({e}). Montage basé sur l'audio et l'image seulement."
+            if warn not in project.warnings:
+                project.warnings.append(warn)
+    m.analyzed = True
+    ctx.step(f"{m.filename} : analysé", hi)
+
+
+def transcripts_for(project: Project) -> dict[str, Transcript]:
+    out = {}
+    for m in project.media:
+        t = storage.load_transcript(project.id, m.id)
+        if t:
+            out[m.id] = t
+    return out
+
+
+def all_segments(project: Project, settings: EditSettings) -> list[Segment]:
+    segs: list[Segment] = []
+    for m in project.media:
+        signals = storage.load_signals(project.id, m.id) or {}
+        segs += build_segments(m, storage.load_transcript(project.id, m.id), signals,
+                               split_fillers=settings.remove_fillers,
+                               include_action=settings.style != "podcast")
+    storage.save_segments(project.id, segs)
+    return segs
+
+
+def pick_music(project: Project, style: str) -> str | None:
+    pdir = storage.project_dir(project.id) / "music"
+    tracks = sorted(p for d in (pdir, config.MUSIC_DIR) if d.exists() for p in d.iterdir()
+                    if p.suffix.lower() in MUSIC_EXT)
+    if not tracks:
+        return None
+    # Choix stable par projet ; un nom de fichier contenant le style est prioritaire.
+    styled = [t for t in tracks if style in t.name.lower()]
+    rnd = random.Random(project.id)
+    return str(rnd.choice(styled or tracks))
+
+
+def _faces(project: Project) -> dict[str, dict]:
+    return {m.id: (storage.load_signals(project.id, m.id) or {}).get("faces") or {} for m in project.media}
+
+
+def _has_effects(tl: Timeline) -> bool:
+    return bool(tl.texts or tl.sfx or tl.overlays or (tl.look and tl.look != "aucun")
+                or any(c.effects or c.audio_effects or c.transition != "aucune" for c in tl.clips))
+
+
+def _save_media(project: Project) -> None:
+    """Enregistre seulement les médias analysés, sans toucher au reste du projet."""
+    done = {m.id: m for m in project.media}
+
+    def apply(p: Project) -> None:
+        p.media = [done.get(m.id, m) for m in p.media]
+    storage.update_project(project.id, apply)
+
+
+def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timeline:
+    project = storage.load_project(project_id)
+    if not project.media:
+        raise ValueError("Ajoute au moins une vidéo avant de lancer le montage.")
+    project.settings = settings
+    project.warnings = []
+    n = len(project.media)
+    for i, m in enumerate(project.media):
+        analyze_media(project, m, ctx, 0.85 * i / n, 0.85 * (i + 1) / n)
+        _save_media(project)
+
+    ctx.step("Repérage et notation des moments forts", 0.86)
+    segments = all_segments(project, settings)
+    music = pick_music(project, settings.style) if settings.music else None
+    if settings.music and not music:
+        project.warnings.append("Aucune musique trouvée : ajoute des fichiers audio libres de droits.")
+
+    director = dir_mod.get_director()
+    ctx.step("Réalisation du montage par l'IA" + (" (Claude)" if director.name == "claude" else ""), 0.9)
+    order = [m.id for m in project.media]
+    # Les commentaires survivent au re-montage et le guident (sauf ceux que l'IA n'a pas compris).
+    notes = [c for c in project.timeline.comments if c.status != "incompris"]
+    old_comments = project.timeline.comments
+    try:
+        if settings.style == "pvp":
+            # Edit PvP : calé sur les coups et le tempo, construit localement (calcul précis au centième).
+            tl = pvp_mod.build(project.media, {m.id: (storage.load_signals(project.id, m.id) or {}).get("hits") or []
+                                               for m in project.media}, settings, project.name, music)
+            if not tl.clips:
+                project.warnings.append(tl.summary + " Montage classique utilisé à la place.")
+                tl = dir_mod.HeuristicDirector().direct(segments, settings.model_copy(update={"style": "short"}),
+                                                        order, music)
+        elif director.name == "claude" and notes:
+            lines = [comments_mod.context_line(project.timeline, c, segments, k + 1) for k, c in enumerate(notes)]
+            tl = director.direct(segments, settings, order, music, comment_lines=lines)
+            for c, r in zip(notes, director.last_replies):
+                c.status, c.reply = "applique", r
+        else:
+            tl = director.direct(segments, settings, order, music)
+    except Exception as e:
+        if director.name != "claude":
+            raise
+        log.warning("Réalisateur Claude en échec, repli heuristique : %s", e)
+        project.warnings.append(f"Réalisateur Claude indisponible ({e}) : montage heuristique utilisé.")
+        tl = dir_mod.HeuristicDirector().direct(segments, settings, order, music)
+    if tl.director == "heuristique" or (tl.director == "claude" and not _has_effects(tl)):
+        ctx.step("Habillage : transitions, effets, bruitages, titres", 0.97)
+        tl = decorate(tl, segments, settings, project.name)
+    tl.comments = old_comments
+    if tl.director == "claude":
+        comments_mod.carry_overrides(project.timeline, tl)
+        zone = [c for c in notes if comments_mod.is_region_action(c)]
+        if zone:
+            comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, zone, _faces(project))
+    if notes and tl.director != "claude":  # heuristique ou pvp
+        ctx.step("Application de tes commentaires", 0.98)
+        comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, notes, _faces(project))
+    def apply(p: Project) -> None:
+        p.settings, p.warnings, p.timeline = settings, project.warnings, tl
+    storage.update_project(project_id, apply)
+    ctx.step(f"Montage prêt : {len(tl.clips)} plans, {tl.duration:.0f} s", 1.0)
+    return tl
+
+
+def ai_command(project_id: str, instruction: str, ctx: JobContext) -> dict:
+    project = storage.load_project(project_id)
+    segments = storage.load_segments(project.id) or all_segments(project, project.settings)
+    order = [m.id for m in project.media]
+    music = project.timeline.music.track or (pick_music(project, project.settings.style)
+                                              if project.settings.music else None)
+    ctx.step("L'IA applique ta consigne", 0.2)
+    director = dir_mod.get_director()
+    msg = ""
+    if director.name == "claude":
+        tl = director.command(instruction, project.timeline, segments, project.settings, music)
+        msg = tl.summary
+    else:
+        tl, msg, s2 = dir_mod.heuristic_command(instruction, project.timeline, segments,
+                                                project.settings, order, music)
+        if tl.director == "heuristique" and tl is not project.timeline and not _has_effects(tl):
+            tl = decorate(tl, segments, s2, project.name)
+        project.settings = s2
+        if s2.music and not tl.music.track:
+            tl.music.track = pick_music(project, s2.style)
+    tl.comments = project.timeline.comments
+    if tl is not project.timeline:
+        comments_mod.carry_overrides(project.timeline, tl)
+    def apply(p: Project) -> None:
+        p.settings, p.timeline = project.settings, tl
+    storage.update_project(project_id, apply)
+    ctx.step(msg or "Consigne appliquée", 1.0)
+    return {"message": msg, "director": director.name}
+
+
+def export(project_id: str, quality: str, ctx: JobContext, fps: int | None = None, smooth: bool = False,
+           container: str = "mp4", tl: Timeline | None = None, fmt: str | None = None, label: str | None = None) -> str:
+    project = storage.load_project(project_id)
+    tl = (tl or project.timeline).model_copy(deep=True)
+    if fmt and fmt != tl.format:
+        tl.format = fmt  # le recadrage automatique suit le visage dans le nouveau format
+    out_dir = storage.exports_dir(project.id)
+    idx = len([p for p in out_dir.iterdir() if p.suffix in (".mp4", ".webm", ".mov", ".gif")]) + 1
+    base = label or tl.title or project.name
+    safe = "".join(ch for ch in base if ch.isalnum() or ch in " -_·").strip()[:70] or "montage"
+    rate = fps or render_mod.source_fps(project, tl)
+    ext = "gif" if container == "gif" else render_mod.CONTAINERS.get(container, render_mod.CONTAINERS["mp4"])[0]
+    out = out_dir / f"{idx:02d} - {safe} ({tl.format.replace(':', 'x')} {quality} {rate}fps).{ext}"
+    work = storage.cache_dir(project.id) / f"render_{idx}"
+    work.mkdir(parents=True, exist_ok=True)
+    music = tl.music.track if tl.music.track and Path(tl.music.track).exists() else None
+    ctx.step(f"Rendu {quality} à {rate} i/s" + (" avec interpolation" if smooth else ""), 0.01)
+    render_mod.render(project, tl, transcripts_for(project), out.resolve(), work.resolve(), quality, music,
+                      ctx.sub(0.01, 0.99, f"Rendu {quality} à {rate} i/s"), fps=rate, smooth=smooth,
+                      container=container)
+    storage.update_project(project_id, lambda p: p.exports.append(out.name))
+    ctx.step("Export terminé", 1.0)
+    return out.name
+
+
+def publish_kit(project_id: str, ctx: JobContext) -> dict:
+    project = storage.load_project(project_id)
+    segments = storage.load_segments(project.id) or all_segments(project, project.settings)
+    ctx.step("Titres, description et chapitres" + (" (Claude)" if config.claude_available() else ""), 0.2)
+    work = storage.cache_dir(project.id) / "publish"
+    work.mkdir(parents=True, exist_ok=True)
+    kit = publish_mod.build_kit(project, segments, storage.exports_dir(project.id), work.resolve())
+    storage.update_project(project_id, lambda p: setattr(p, "publish_kit", kit))
+    ctx.step("Kit de publication prêt", 1.0)
+    return kit
+
+
+def apply_comments(project_id: str, ctx: JobContext) -> dict:
+    """L'IA lit les commentaires ouverts et modifie le montage en conséquence."""
+    project = storage.load_project(project_id)
+    tl = project.timeline
+    open_c = [c for c in tl.comments if c.status == "ouvert"]
+    if not open_c:
+        raise ValueError("Aucun commentaire en attente.")
+    segments = storage.load_segments(project.id) or all_segments(project, project.settings)
+    director = dir_mod.get_director()
+    ctx.step(f"L'IA lit tes {len(open_c)} commentaire(s)" + (" (Claude)" if director.name == "claude" else ""), 0.2)
+    durations = {m.id: m.duration for m in project.media}
+    if director.name == "claude":
+        # Les actions sur une zone de l'image (flou, cadre, zoom…) sont appliquées au pixel près en local ;
+        # le reste part à Claude, avec l'image de chaque zone sélectionnée.
+        zone = [c for c in open_c if comments_mod.is_region_action(c)]
+        if zone:
+            comments_mod.apply_all(tl, segments, project.settings, durations, zone, _faces(project))
+        rest = [c for c in open_c if c not in zone]
+        lines = [comments_mod.context_line(tl, c, segments, k + 1) for k, c in enumerate(rest)]
+        images = []
+        for k, c in enumerate(rest):
+            if c.region is not None and c.media_id:
+                try:
+                    m = project.media_by_id(c.media_id)
+                    images.append((k + 1, comments_mod.frame_with_region(m.proxy or m.path, c.src_t, c.region)))
+                except Exception as e:
+                    log.warning("Image de zone impossible : %s", e)
+        try:
+            if not rest:
+                raise StopIteration
+            new_tl, replies = director.apply_comments(tl, lines, segments, project.settings, tl.music.track, images)
+            comments_mod.carry_overrides(tl, new_tl)
+            new_tl.comments = tl.comments
+            new_tl.reframe = tl.reframe
+            for k, c in enumerate(rest):
+                c.status, c.reply = "applique", (replies[k] if k < len(replies) else "Pris en compte.")
+            tl = new_tl
+        except StopIteration:
+            pass
+        except Exception as e:
+            log.warning("Commentaires via Claude impossibles, interprète local : %s", e)
+            comments_mod.apply_all(tl, segments, project.settings, durations, None, _faces(project))
+    else:
+        comments_mod.apply_all(tl, segments, project.settings, {m.id: m.duration for m in project.media}, None, _faces(project))
+    storage.update_project(project_id, lambda p: setattr(p, "timeline", tl))
+    ok = sum(c.status == "applique" for c in open_c)
+    msg = f"{ok} commentaire(s) appliqué(s)" + (f", {len(open_c) - ok} non compris" if ok < len(open_c) else "")
+    ctx.step(msg, 1.0)
+    return {"message": msg}
+
+
+# ---------------------------------------------------------------------------
+# Versions du montage
+# ---------------------------------------------------------------------------
+
+def _version(project: Project, vid: str):
+    for v in project.versions:
+        if v.id == vid:
+            return v
+    raise KeyError(vid)
+
+
+def version_duplicate(project: Project, name: str | None = None):
+    """Copie la version active sous un nouveau nom et bascule dessus."""
+    from .models import Version
+    cur = project.ensure_versions()
+    cur.timeline = project.timeline.model_copy(deep=True)
+    v = Version(name=(name or f"{cur.name} (copie)").strip()[:60])
+    project.versions.append(v)
+    version_activate(project, v.id, v.timeline or cur.timeline)
+    return v
+
+
+def version_activate(project: Project, vid: str, timeline: Timeline | None = None) -> None:
+    cur = project.ensure_versions()
+    target = _version(project, vid)
+    if target.id == cur.id:
+        return
+    cur.timeline = project.timeline.model_copy(deep=True)
+    project.timeline = (timeline or target.timeline or Timeline()).model_copy(deep=True)
+    target.timeline = None
+    project.active_version = target.id
+
+
+def version_delete(project: Project, vid: str) -> None:
+    project.ensure_versions()
+    if len(project.versions) <= 1:
+        raise ValueError("Impossible de supprimer la dernière version.")
+    if vid == project.active_version:
+        other = next(v for v in project.versions if v.id != vid)
+        version_activate(project, other.id)
+    project.versions = [v for v in project.versions if v.id != vid]
+
+
+# ---------------------------------------------------------------------------
+# Shorts automatiques : plusieurs clips courts tirés des rushes, avec score viral
+# ---------------------------------------------------------------------------
+
+def _windows(segments: list[Segment], target: float, max_gap: float = 4.0):
+    """Fenêtres de segments consécutifs d'un même rush, de la durée d'un short."""
+    by_media: dict[str, list[Segment]] = {}
+    for s in sorted(segments, key=lambda s: (s.media_id, s.start)):
+        if not s.duplicate_of:
+            by_media.setdefault(s.media_id, []).append(s)
+    lo = max(6.0, target * 0.45)
+    for mid, segs in by_media.items():
+        for i in range(len(segs)):
+            win, dur = [], 0.0
+            for s in segs[i:]:
+                if win and s.start - win[-1].end > max_gap:
+                    break
+                if dur + s.duration > target * 1.15 and win:
+                    break
+                win.append(s)
+                dur += s.duration
+            if dur >= lo:
+                yield mid, win
+
+
+def virality(win: list[Segment]) -> tuple[int, list[str]]:
+    """Score 0-100 : accroche du début, intensité, réactions, rythme, fin nette."""
+    import numpy as np
+    first = win[0]
+    hook = max(first.features.get("hook", 0.0), win[1].features.get("hook", 0.0) if len(win) > 1 else 0.0)
+    mean = float(np.mean([s.score for s in win]))
+    energy = float(np.mean([s.features.get("energy", 0.0) for s in win]))
+    dur = sum(s.duration for s in win)
+    peaks = sum(s.features.get("peak", 0.0) for s in win) / max(1.0, dur / 15)
+    rate = float(np.mean([s.features.get("speech_rate", 0.0) for s in win if s.kind == "speech"] or [0.0]))
+    motion = float(np.mean([s.features.get("motion", 0.0) for s in win]))
+    ends = 1.0 if (win[-1].text.rstrip()[-1:] in ".!?…" or win[-1].kind == "action") else 0.4
+    v = (0.28 * min(1.0, hook + first.score) + 0.24 * mean + 0.14 * energy + 0.12 * min(1.0, peaks)
+         + 0.1 * min(1.0, rate / 3.2 + motion) + 0.12 * ends)
+    reasons = []
+    if hook >= 0.6:
+        reasons.append("accroche forte dès les premières secondes")
+    if energy > 0.55:
+        reasons.append("voix énergique")
+    if peaks >= 0.5:
+        reasons.append("réactions (rires, cris)")
+    if rate > 2.6 or motion > 0.45:
+        reasons.append("rythme soutenu")
+    if ends >= 1:
+        reasons.append("se termine sur une phrase complète")
+    return int(round(100 * min(1.0, v))), reasons or ["passage le plus solide disponible"]
+
+
+def make_shorts(project_id: str, ctx: JobContext, count: int = 3, target: float = 30.0,
+                fmt: str = "9:16") -> list[dict]:
+    from .models import Version
+    project = storage.load_project(project_id)
+    if not project.media:
+        raise ValueError("Ajoute au moins une vidéo.")
+    n = len(project.media)
+    for i, m in enumerate(project.media):
+        if not m.analyzed:
+            analyze_media(project, m, ctx, 0.6 * i / n, 0.6 * (i + 1) / n)
+            _save_media(project)
+    ctx.step("Recherche des passages les plus partageables", 0.65)
+    settings = project.settings.model_copy(update={"style": "short", "format": fmt, "target_duration": target})
+    segments = all_segments(project, settings)
+    cands = [(mid, win, *virality(win)) for mid, win in _windows(segments, target)]
+    cands.sort(key=lambda x: -x[2])
+    chosen: list[tuple] = []
+    for c in cands:
+        mid, win = c[0], c[1]
+        a, b = win[0].start, win[-1].end
+        if all(not (x[0] == mid and a < x[1][-1].end and b > x[1][0].start) for x in chosen):
+            chosen.append(c)
+        if len(chosen) >= count:
+            break
+    if not chosen:
+        raise ValueError("Pas assez de matière pour un short (il faut au moins 6 secondes de passage continu).")
+    project.ensure_versions()
+    out = []
+    names = {m.id: m.filename for m in project.media}
+    for k, (mid, win, score, reasons) in enumerate(chosen, 1):
+        ctx.step(f"Montage du short {k}/{len(chosen)}", 0.7 + 0.28 * (k - 1) / len(chosen))
+        ids = {s.id for s in win}
+        sub = [s for s in segments if s.id in ids]
+        tl = dir_mod.HeuristicDirector().direct(sub, settings, [mid], None)
+        tl = decorate(tl, sub, settings, project.name)
+        hook = next((s.text for s in win if s.text), "")
+        tl.title = " ".join(hook.split()[:6]) or f"{project.name} — short {k}"
+        tl.summary = f"Short tiré de {names.get(mid, 'la vidéo')} ({win[0].start:.0f}–{win[-1].end:.0f} s)."
+        v = Version(name=f"Short {k} · {score}/100", timeline=tl, score=score, note=", ".join(reasons).capitalize() + ".")
+        project.versions.append(v)
+        out.append({"id": v.id, "name": v.name, "score": score, "note": v.note, "duration": round(tl.duration, 1)})
+    new = [v for v in project.versions if v.id in {o["id"] for o in out}]
+
+    def apply(p: Project) -> None:
+        p.ensure_versions()
+        p.versions.extend(new)
+    storage.update_project(project_id, apply)
+    ctx.step(f"{len(out)} short(s) prêt(s) dans les versions", 1.0)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Préréglages d'export par réseau et file d'export
+# ---------------------------------------------------------------------------
+
+PRESETS: dict[str, dict] = {
+    "tiktok": {"label": "TikTok", "format": "9:16", "quality": "1080p", "container": "mp4"},
+    "reels": {"label": "Instagram Reels", "format": "9:16", "quality": "1080p", "container": "mp4"},
+    "shorts": {"label": "YouTube Shorts", "format": "9:16", "quality": "1080p", "container": "mp4"},
+    "youtube": {"label": "YouTube 1080p", "format": "16:9", "quality": "1080p", "container": "mp4"},
+    "youtube_4k": {"label": "YouTube 4K", "format": "16:9", "quality": "2160p", "container": "mp4"},
+    "instagram_carre": {"label": "Instagram (carré)", "format": "1:1", "quality": "1080p", "container": "mp4"},
+    "x": {"label": "X (Twitter)", "format": "16:9", "quality": "1080p", "fps": 30, "container": "mp4"},
+    "web": {"label": "Web (WebM)", "quality": "1080p", "container": "webm"},
+    "prores": {"label": "ProRes (montage pro, .mov)", "quality": "1080p", "container": "mov"},
+    "gif": {"label": "GIF animé", "quality": "720p", "fps": 15, "container": "gif"},
+}
+
+
+class _Scoped:
+    """Sous-tâche : ramène la progression 0..1 d'une étape sur une tranche de la tâche."""
+
+    def __init__(self, ctx: JobContext, lo: float, hi: float):
+        self.ctx, self.lo, self.hi = ctx, lo, hi
+
+    def _m(self, p: float) -> float:
+        return self.lo + (self.hi - self.lo) * p
+
+    def step(self, message: str, progress: float) -> None:
+        self.ctx.step(message, self._m(progress))
+
+    def sub(self, a: float, b: float, message: str | None = None):
+        return self.ctx.sub(self._m(a), self._m(b), message)
+
+
+def export_preset(project_id: str, preset: str, ctx: JobContext, version_ids: list[str] | None = None) -> list[str]:
+    """Exporte une ou plusieurs versions avec un préréglage (file d'export : les unes après les autres)."""
+    p = PRESETS[preset]
+    project = storage.load_project(project_id)
+    project.ensure_versions()
+    ids = version_ids or [project.active_version]
+    out = []
+    for k, vid in enumerate(ids):
+        project = storage.load_project(project_id)
+        v = _version(project, vid)
+        tl = project.timeline if vid == project.active_version else v.timeline
+        if not tl or not tl.clips:
+            continue
+        ctx.step(f"{v.name} : {p['label']}", k / len(ids))
+        sub = _Scoped(ctx, k / len(ids), (k + 1) / len(ids))
+        out.append(export(project_id, p["quality"], sub, p.get("fps"), False, p["container"], tl=tl,
+                          fmt=p.get("format"), label=f"{v.name} - {p['label']}" if len(project.versions) > 1 else p["label"]))
+    if not out:
+        raise ValueError("Aucune version à exporter (timelines vides).")
+    ctx.step(f"{len(out)} fichier(s) exporté(s)", 1.0)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Modèles de style réutilisables (look, sous-titres, musique, logo…)
+# ---------------------------------------------------------------------------
+
+def _templates_path() -> Path:
+    return config.DATA_DIR / "templates.json"
+
+
+def list_templates() -> list[dict]:
+    import json
+    p = _templates_path()
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
+
+
+def _save_templates(items: list[dict]) -> None:
+    import json
+    _templates_path().write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def save_template(project: Project, name: str) -> dict:
+    import shutil
+    from .models import new_id
+    tl = project.timeline
+    adir = config.DATA_DIR / "template_assets"
+    adir.mkdir(parents=True, exist_ok=True)
+    images = []
+    for g in tl.images:
+        src = storage.assets_dir(project.id) / Path(g.asset).name
+        if src.exists():
+            shutil.copy2(src, adir / src.name)
+            images.append(g.model_dump())
+    t = {"id": new_id("tpl_"), "name": name.strip()[:60] or "Mon modèle", "style": project.settings.style,
+         "instructions": project.settings.instructions, "format": tl.format, "captions": tl.captions,
+         "look": tl.look, "reframe": tl.reframe, "music_volume": tl.music.volume, "ducking": tl.music.ducking,
+         "music_track": tl.music.track, "images": images}
+    items = [x for x in list_templates() if x["name"] != t["name"]] + [t]
+    _save_templates(items)
+    return t
+
+
+def delete_template(tid: str) -> None:
+    _save_templates([x for x in list_templates() if x["id"] != tid])
+
+
+def apply_template(project: Project, tid: str) -> Project:
+    import shutil
+    from .models import ImageItem, new_id
+    t = next((x for x in list_templates() if x["id"] == tid), None)
+    if not t:
+        raise KeyError(tid)
+    tl = project.timeline
+    tl.format, tl.captions, tl.look, tl.reframe = t["format"], t["captions"], t["look"], t["reframe"]
+    tl.music.volume, tl.music.ducking = t["music_volume"], t["ducking"]
+    if t.get("music_track") and Path(t["music_track"]).exists():
+        tl.music.track = t["music_track"]
+    adir = config.DATA_DIR / "template_assets"
+    keep = [g for g in tl.images if g.duration is not None]  # les stickers ponctuels restent
+    for g in t.get("images", []):
+        src = adir / Path(g["asset"]).name
+        if src.exists():
+            shutil.copy2(src, storage.assets_dir(project.id) / src.name)
+            keep.append(ImageItem(**{**g, "id": new_id("g_")}))
+    tl.images = keep
+    project.settings = project.settings.model_copy(update={
+        "style": t["style"], "instructions": t["instructions"], "format": t["format"], "captions": t["captions"]})
+    return project
