@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -13,8 +14,8 @@ import numpy as np
 
 from .. import config
 
-FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
-FFPROBE = shutil.which("ffprobe") or "ffprobe"
+FFMPEG = os.environ.get("MONTEUR_FFMPEG") or shutil.which("ffmpeg") or "ffmpeg"
+FFPROBE = os.environ.get("MONTEUR_FFPROBE") or shutil.which("ffprobe") or "ffprobe"
 
 ProgressCb = Callable[[float], None]
 

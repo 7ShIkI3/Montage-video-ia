@@ -60,6 +60,7 @@ export interface AudioItem {
   fade_in: number;
   fade_out: number;
   label: string;
+  dub?: string | null;
 }
 
 export type TextStyle = "titre" | "bandeau" | "legende" | "gros_texte" | "emoji" | "texte_3d";
@@ -99,8 +100,9 @@ export interface OverlayItem {
   src_in: number;
   src_out: number;
   start: number;
-  mode: "plein" | "incrustation";
+  mode: "plein" | "incrustation" | "partage";
   reason: string;
+  focus_x?: number | null;
   chroma?: "aucun" | "vert" | "bleu";
   corner?: "haut_droite" | "haut_gauche" | "bas_droite" | "bas_gauche";
 }
@@ -214,6 +216,10 @@ export interface Timeline {
   images: ImageItem[];
   audio?: AudioItem[];
   caption_language?: string | null;
+  lut?: string | null;
+  lut_strength?: number;
+  background?: string | null;
+  dub_language?: string | null;
   reframe: boolean;
   comments: Comment[];
 }
@@ -409,6 +415,22 @@ export const api = {
     return req<{ asset: string; duration: number }>(`/api/projects/${id}/audio`, { method: "POST", body: fd });
   },
   audioUrl: (id: string, name: string) => `/api/projects/${id}/audio/${encodeURIComponent(name)}`,
+  luts: (id: string) => req<{ id: string; label: string; builtin: boolean }[]>(`/api/projects/${id}/luts`),
+  uploadLut: async (id: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return req<{ id: string; label: string; builtin: boolean }>(`/api/projects/${id}/luts`, { method: "POST", body: fd });
+  },
+  previewFrame: (id: string, p: { media: string; t: number; lut?: string | null; strength?: number; effect?: string | null; background?: string | null }) => {
+    const q = new URLSearchParams({ media: p.media, t: p.t.toFixed(3) });
+    if (p.lut) { q.set("lut", p.lut); q.set("strength", String(p.strength ?? 1)); }
+    if (p.effect) q.set("effect", p.effect);
+    if (p.background) q.set("background", p.background);
+    return `/api/projects/${id}/preview-frame?${q}`;
+  },
+  ttsStatus: () => req<Record<string, string | null>>(`/api/tts`),
+  dub: (id: string, language: string | null, original_volume = 0.12) =>
+    req<Job>(`/api/projects/${id}/dub`, json("POST", { language, original_volume })),
   languages: () => req<{ code: string; name: string }[]>(`/api/languages`),
   translate: (id: string, language: string | null) =>
     req<Job>(`/api/projects/${id}/translate`, json("POST", { language })),

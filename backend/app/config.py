@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.environ.get("MONTEUR_DATA_DIR", ROOT / "data")).resolve()
 PROJECTS_DIR = DATA_DIR / "projects"
 MUSIC_DIR = Path(os.environ.get("MONTEUR_MUSIC_DIR", DATA_DIR / "music")).resolve()
-FRONTEND_DIST = ROOT / "frontend" / "dist"
+FRONTEND_DIST = Path(os.environ.get("MONTEUR_FRONTEND_DIST", ROOT / "frontend" / "dist")).resolve()
 
 # Transcription (faster-whisper)
 WHISPER_MODEL = os.environ.get("MONTEUR_WHISPER_MODEL", "small")

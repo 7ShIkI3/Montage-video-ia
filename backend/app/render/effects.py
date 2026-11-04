@@ -42,6 +42,12 @@ VIDEO_EFFECTS: dict[str, dict] = {
     "3d_bascule": {"label": "Bascule 3D d'entrée", "group": "3d"},
     "3d_rotation": {"label": "Rotation 3D d'entrée", "group": "3d"},
     "3d_flottant": {"label": "Écran flottant 3D", "group": "3d"},
+    # Détourage IA sans fond vert (analysis/segment.py, appliqué par le moteur 3D)
+    "detourage_flou": {"label": "Fond flouté (détourage IA)", "group": "ia"},
+    "detourage_studio": {"label": "Fond studio (détourage IA)", "group": "ia"},
+    "detourage_noir": {"label": "Fond noir (détourage IA)", "group": "ia"},
+    "detourage_blanc": {"label": "Fond blanc (détourage IA)", "group": "ia"},
+    "detourage_image": {"label": "Fond image (détourage IA)", "group": "ia"},
 }
 
 LOOKS = ["aucun", "cinema", "vif", "vintage", "noir_et_blanc", "froid", "chaud", "sepia"]
