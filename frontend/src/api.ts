@@ -63,6 +63,33 @@ export interface AudioItem {
   dub?: string | null;
 }
 
+export interface QualityIssue {
+  check: string;
+  level: "erreur" | "alerte" | "ok";
+  message: string;
+  t?: number | null;
+  fix?: string | null;
+  target?: string | null;
+}
+
+export interface QualityReport {
+  score: number;
+  issues: QualityIssue[];
+  measured: Record<string, number | null>;
+  rendered: boolean;
+  fixed: string[];
+  at: number;
+}
+
+export interface Review {
+  score: number;
+  verdict: string;
+  remarks: { t?: number | null; problem: string; fix: string }[];
+  reviewer: "claude" | "local";
+  rounds: number;
+  history: number[];
+}
+
 export type TextStyle = "titre" | "bandeau" | "legende" | "gros_texte" | "emoji" | "texte_3d";
 export type TextPos = "haut" | "centre" | "bas";
 
@@ -220,6 +247,8 @@ export interface Timeline {
   lut_strength?: number;
   background?: string | null;
   dub_language?: string | null;
+  quality?: QualityReport | null;
+  review?: Review | null;
   reframe: boolean;
   comments: Comment[];
 }
@@ -428,6 +457,9 @@ export const api = {
     if (p.background) q.set("background", p.background);
     return `/api/projects/${id}/preview-frame?${q}`;
   },
+  quality: (id: string, fix: boolean) => req<Job>(`/api/projects/${id}/quality`, json("POST", { fix })),
+  review: (id: string) => req<Job>(`/api/projects/${id}/review`, { method: "POST" }),
+  soundsheetUrl: (id: string) => `/api/projects/${id}/soundsheet`,
   ttsStatus: () => req<Record<string, string | null>>(`/api/tts`),
   dub: (id: string, language: string | null, original_volume = 0.12) =>
     req<Job>(`/api/projects/${id}/dub`, json("POST", { language, original_volume })),

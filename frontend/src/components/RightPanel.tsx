@@ -5,6 +5,7 @@ import { ImageButtons } from "./Studio";
 import { CaptionLanguage } from "./AudioTools";
 import { MotionEditor } from "./Motion";
 import { CUTOUTS, CutoutTools, DubPanel, LutPicker } from "./Lot3";
+import { QualityPanel } from "./Quality";
 
 export function CommandBar() {
   const project = useStore((s) => s.project);
@@ -205,6 +206,7 @@ export function Inspector() {
             <p className="muted small">Réalisé par : {tl.director === "claude" ? "Claude (IA)" : "moteur local"}</p>
           )}
           <p className="muted small">Clique un plan dans la timeline pour voir pourquoi l'IA l'a choisi.</p>
+          <QualityPanel />
           <div className="field-row">
             <label>Format
               <select value={tl.format} onChange={(e) => setTimelineProps({ format: e.target.value as typeof tl.format })}>

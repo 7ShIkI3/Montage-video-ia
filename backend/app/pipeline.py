@@ -11,6 +11,9 @@ from .ai.decorate import decorate
 from .ai import publish as publish_mod
 from .ai import comments as comments_mod
 from .ai import pvp as pvp_mod
+from .ai import quality as quality_mod
+from .ai import review as review_mod
+from .ai import soundsheet
 from .ai.segments import build_segments
 from .analysis import audio as audio_an
 from .analysis import faces as faces_an
@@ -193,10 +196,63 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     if notes and tl.director != "claude":  # heuristique ou pvp
         ctx.step("Application de tes commentaires", 0.98)
         comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, notes, _faces(project))
+    project.timeline = tl
+    tl = polish(project, tl, segments, settings, music, ctx, director, 0.985)
+
     def apply(p: Project) -> None:
         p.settings, p.warnings, p.timeline = settings, project.warnings, tl
     storage.update_project(project_id, apply)
-    ctx.step(f"Montage prêt : {len(tl.clips)} plans, {tl.duration:.0f} s", 1.0)
+    rv = f", note du relecteur {tl.review.score:.1f}/10" if tl.review else ""
+    ctx.step(f"Montage prêt : {len(tl.clips)} plans, {tl.duration:.0f} s{rv}", 1.0)
+    return tl
+
+
+def polish(project: Project, tl: Timeline, segments: list[Segment], settings: EditSettings, music: str | None,
+           ctx: JobContext, director=None, at: float = 0.9, max_rounds: int = review_mod.MAX_ROUNDS) -> Timeline:
+    """Après le montage : pic musical calé, contrôle qualité avec corrections automatiques, puis relecture
+    indépendante. Sous la note de passage, le réalisateur reprend le montage avec les remarques (3 tours au plus)."""
+    transcripts = transcripts_for(project)
+    if tl.music.track and settings.style != "pvp":
+        msg = soundsheet.align_music_peak(tl, soundsheet.music_profile(tl.music.track))
+        if msg:
+            log.info(msg)
+    reviewer = review_mod.get_reviewer()
+    director = director or dir_mod.get_director()
+    history: list[float] = []
+    fixed: list[str] = list(tl.quality.fixed) if tl.quality else []
+    rev = None
+    for rnd in range(1, max_rounds + 1):
+        ctx.step(f"Contrôle qualité et relecture (tour {rnd})", min(0.995, at + 0.004 * rnd))
+        tl = quality_mod.check_and_fix(tl, transcripts, settings)
+        fixed += tl.quality.fixed
+        tl.quality.issues += soundsheet.sync_checks(project, tl, transcripts)
+        tl.quality.score = quality_mod.score_of(tl.quality.issues)
+        instructions = ""
+        rev = None
+        if reviewer:
+            try:
+                sheet = soundsheet.sheet(project, tl, transcripts)
+                rev, instructions = reviewer.review(project, tl, transcripts, tl.quality, sheet, settings.style)
+            except Exception as e:
+                log.warning("Relecture Claude impossible, relecteur local : %s", e)
+        rev = rev or review_mod.local_review(tl.quality)
+        history.append(rev.score)
+        if rev.score >= review_mod.PASS_SCORE or rnd == max_rounds or director.name != "claude" or not (
+                instructions or rev.remarks):
+            break
+        consigne = instructions or "; ".join(f"{r.problem} ({r.fix})" for r in rev.remarks[:8])
+        try:
+            keep = (tl.comments, tl.music)
+            new = director.command(f"Retouches demandées par le relecteur : {consigne}", tl, segments, settings, music)
+            new.comments, new.music = keep[0], keep[1]
+            comments_mod.carry_overrides(tl, new)
+            tl = new
+        except Exception as e:
+            log.warning("Retouche après relecture impossible : %s", e)
+            break
+    tl.quality.fixed = list(dict.fromkeys(fixed))
+    rev.rounds, rev.history = len(history), history
+    tl.review = rev
     return tl
 
 
@@ -233,6 +289,7 @@ def ai_command(project_id: str, instruction: str, ctx: JobContext) -> dict:
 def export(project_id: str, quality: str, ctx: JobContext, fps: int | None = None, smooth: bool = False,
            container: str = "mp4", tl: Timeline | None = None, fmt: str | None = None, label: str | None = None) -> str:
     project = storage.load_project(project_id)
+    tl_is_active = tl is None and not fmt
     tl = (tl or project.timeline).model_copy(deep=True)
     if fmt and fmt != tl.format:
         tl.format = fmt  # le recadrage automatique suit le visage dans le nouveau format
@@ -250,7 +307,25 @@ def export(project_id: str, quality: str, ctx: JobContext, fps: int | None = Non
     render_mod.render(project, tl, transcripts_for(project), out.resolve(), work.resolve(), quality, music,
                       ctx.sub(0.01, 0.99, f"Rendu {quality} à {rate} i/s"), fps=rate, smooth=smooth,
                       container=container)
-    storage.update_project(project_id, lambda p: p.exports.append(out.name))
+    if container != "gif" and tl_is_active:
+        ctx.step("Contrôle de la vidéo finie (volume, flashs, début)", 0.995)
+        try:
+            issues, measured = quality_mod.render_checks(out, tl, rate)
+        except Exception as e:  # le contrôle ne doit jamais faire échouer un export
+            log.warning("Contrôle du rendu impossible : %s", e)
+            issues, measured = [], {}
+
+        def save(p: Project) -> None:
+            p.exports.append(out.name)
+            rep = quality_mod.plan_checks(p.timeline, transcripts_for(p), p.settings)
+            rep.issues += issues
+            rep.measured, rep.rendered = measured, True
+            rep.fixed = list(p.timeline.quality.fixed) if p.timeline.quality else []
+            rep.score = quality_mod.score_of(rep.issues)
+            p.timeline.quality = rep
+        storage.update_project(project_id, save)
+    else:
+        storage.update_project(project_id, lambda p: p.exports.append(out.name))
     ctx.step("Export terminé", 1.0)
     return out.name
 
@@ -685,3 +760,43 @@ def dub_voice(project_id: str, lang: str | None, ctx: JobContext, original_volum
     storage.update_project(project_id, apply)
     ctx.step(f"Doublage en {name} prêt ({engine})", 1.0)
     return {"language": lang, "lines": len(items), "engine": engine}
+
+
+def review_job(project_id: str, ctx: JobContext) -> dict:
+    """Relance contrôle qualité et relecture sur le montage actuel (avec retouches si Claude est là)."""
+    project = storage.load_project(project_id)
+    if not project.timeline.clips:
+        raise ValueError("Pas encore de montage à relire.")
+    segments = storage.load_segments(project.id) or all_segments(project, project.settings)
+    music = project.timeline.music.track
+    tl = polish(project, project.timeline.model_copy(deep=True), segments, project.settings, music, ctx, at=0.1)
+
+    def apply(p: Project) -> None:
+        tl.comments = p.timeline.comments
+        p.timeline = tl
+    storage.update_project(project_id, apply)
+    ctx.step(f"Relecture : {tl.review.score:.1f}/10 en {tl.review.rounds} tour(s)", 1.0)
+    return {"score": tl.review.score, "rounds": tl.review.rounds, "quality": tl.quality.score}
+
+
+def quality_job(project_id: str, fix: bool, ctx: JobContext) -> dict:
+    """Contrôle du plan (et corrections automatiques si fix) sur le montage actuel."""
+    project = storage.load_project(project_id)
+    transcripts = transcripts_for(project)
+    ctx.step("Contrôle qualité du montage", 0.3)
+
+    def apply(p: Project) -> None:
+        if fix:
+            p.timeline = quality_mod.check_and_fix(p.timeline, transcripts, p.settings)
+        else:
+            old = p.timeline.quality
+            rep = quality_mod.plan_checks(p.timeline, transcripts, p.settings)
+            rep.fixed = old.fixed if old else []
+            p.timeline.quality = rep
+        p.timeline.quality.issues += soundsheet.sync_checks(p, p.timeline, transcripts)
+        p.timeline.quality.score = quality_mod.score_of(p.timeline.quality.issues)
+        p.timeline.review = None  # la note du relecteur portait sur l'état d'avant : à refaire
+    storage.update_project(project_id, apply)
+    q = storage.load_project(project_id).timeline.quality
+    ctx.step(f"Contrôle qualité : {q.score}/100", 1.0)
+    return {"score": q.score, "issues": len(q.issues), "fixed": q.fixed}

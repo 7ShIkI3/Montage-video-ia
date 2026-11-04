@@ -342,6 +342,15 @@ Règles de métier :
 - format / captions / music : "inchangé" sauf si la consigne de l'utilisateur demande un changement.
 L'ordre de la liste `clips` est l'ordre de la timeline.
 
+Règles de réalisation (un contrôle qualité et un relecteur indépendant vérifient ton montage) :
+- Accroche : la parole commence dans la première seconde, et les 3 premières secondes donnent envie de rester (le moment le plus fort en ouverture pour un short, sinon une promesse claire ou un gros_texte d'accroche).
+- Du mouvement au milieu : pas de plan fixe de plus de 12 s (6 s en short) sans zoom, plan de coupe ou effet.
+- Le moment le plus fort est préparé : une courte respiration juste avant, puis un appui (zoom, bruitage, impact).
+- Textes à l'écran : courts (gros_texte 18 caractères au plus en vertical, 28 en paysage), affichés assez longtemps pour être lus (0,6 s + 0,3 s par mot), sans affirmation exagérée.
+- Jamais plus de 3 flashs par seconde (risque pour les personnes photosensibles).
+- Chaque bruitage tombe sur une coupe, un texte, un impact ou un mot, pas à côté.
+- Évite le rendu « template » : des effets choisis pour un moment précis, pas plaqués partout.
+
 Habillage (tu es aussi le monteur truquiste, sauf si la consigne demande la sobriété) :
 - speed : 1.0 par défaut ; 0.5 pour un ralenti sur une action courte et spectaculaire, 1.5 à 2 pour accélérer.
   (L'utilisateur peut ensuite ajouter des rampes de vitesse et des images clés de zoom/cadrage à la main.)

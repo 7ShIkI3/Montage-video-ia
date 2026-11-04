@@ -620,6 +620,33 @@ def get_asset(pid: str, name: str):
     return FileResponse(path)
 
 
+# --- Contrôle qualité, relecture, feuille son/image ---------------------------------------------
+
+class QualityReq(BaseModel):
+    fix: bool = False
+
+
+@app.post("/api/projects/{pid}/quality")
+def run_quality(pid: str, body: QualityReq):
+    """Contrôle du plan de montage ; avec fix, applique les corrections automatiques."""
+    _project(pid)
+    return manager.submit(pid, "controle", lambda ctx: pipeline.quality_job(pid, body.fix, ctx))
+
+
+@app.post("/api/projects/{pid}/review")
+def run_review(pid: str):
+    """Relecteur indépendant : note la version, et la fait retoucher sous la note de passage (3 tours au plus)."""
+    _project(pid)
+    return manager.submit(pid, "relecture", lambda ctx: pipeline.review_job(pid, ctx))
+
+
+@app.get("/api/projects/{pid}/soundsheet")
+def get_soundsheet(pid: str):
+    from .ai import soundsheet
+    p = _project(pid)
+    return Response(soundsheet.sheet(p, p.timeline, pipeline.transcripts_for(p)), media_type="text/plain; charset=utf-8")
+
+
 # --- Étalonnage (LUT) et aperçu image ---------------------------------------------------------
 
 @app.get("/api/projects/{pid}/luts")

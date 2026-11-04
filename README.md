@@ -36,6 +36,20 @@ meilleurs passages, écrit un titre et applique des consignes libres. Sans clé,
 heuristique fait le travail et comprend les consignes courantes (durée, format, sous-titres, musique, zooms,
 « enlève "mot" »).
 
+### Contrôle qualité et relecteur
+
+- **Règles du réalisateur**, vérifiées à chaque montage : parole dès la première seconde et accroche avant 3 s,
+  moment fort préparé (courte pause avant, zoom ou bruitage dessus), pas de plan fixe trop long, textes courts
+  et affichés assez longtemps pour un téléphone, 3 flashs par seconde au plus, bruitages calés sur une coupe ou un mot.
+- **Deux contrôles** : sur le plan de montage (avec corrections automatiques), puis sur la vidéo finie après chaque
+  export (loudness mesurée à -14 LUFS, crête, flashs, début noir ou muet).
+- **Relecteur indépendant** : un second appel à Claude, qui n'a pas vu la construction, note la version sur 10 à
+  partir d'images clés, des paroles, de la feuille son/image et du rapport qualité. Sous 7/10, le réalisateur
+  retouche avec ses remarques et la version repasse en relecture, 3 tours au plus. Sans clé, un relecteur local
+  note à partir du contrôle.
+- **Feuille son/image** : chaque son (paroles, impacts des rushes, bruitages, temps forts et pic de la musique)
+  décrit en mots, à côté de ce qui est à l'écran au même instant. Le pic de la musique est calé sur le moment fort.
+
 ## L'éditeur
 
 - Lecture de la timeline en direct (sans rendu), sous-titres en surimpression, aperçu du format.

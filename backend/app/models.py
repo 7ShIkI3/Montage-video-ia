@@ -280,6 +280,42 @@ class AudioItem(BaseModel):
         return max(0.0, self.src_out - self.src_in)
 
 
+class QualityIssue(BaseModel):
+    """Un point du contrôle qualité : règle de réalisation non tenue ou mesure technique hors cible."""
+    check: str  # accroche, moment_fort, plan_long, texte, lecture, flashs, duree, bruitage, musique, son, image
+    level: Literal["erreur", "alerte", "ok"] = "alerte"
+    message: str
+    t: float | None = None  # instant concerné sur la timeline
+    fix: str | None = None  # correction automatique possible (clé), sinon None
+    target: str | None = None  # id de l'élément visé (plan, texte, bruitage…)
+
+
+class QualityReport(BaseModel):
+    score: int = 100  # 0..100
+    issues: list[QualityIssue] = Field(default_factory=list)
+    measured: dict = Field(default_factory=dict)  # mesures du rendu : loudness, crête, flashs…
+    rendered: bool = False  # True si le rapport inclut le contrôle de la vidéo finie
+    fixed: list[str] = Field(default_factory=list)  # corrections appliquées automatiquement
+    at: float = Field(default_factory=time.time)
+
+
+class ReviewRemark(BaseModel):
+    t: float | None = None
+    problem: str
+    fix: str = ""
+
+
+class Review(BaseModel):
+    """Note du relecteur indépendant (un second avis qui n'a pas vu la construction du montage)."""
+    score: float = 0.0  # 0..10
+    verdict: str = ""
+    remarks: list[ReviewRemark] = Field(default_factory=list)
+    reviewer: Literal["claude", "local"] = "local"
+    rounds: int = 1
+    history: list[float] = Field(default_factory=list)  # note à chaque tour
+    at: float = Field(default_factory=time.time)
+
+
 class Timeline(BaseModel):
     clips: list[Clip] = Field(default_factory=list)
     format: Format = "16:9"
@@ -301,6 +337,8 @@ class Timeline(BaseModel):
     lut_strength: float = Field(1.0, ge=0.0, le=1.0)
     background: str | None = None  # image de fond du détourage IA (fichier du dossier images du projet)
     dub_language: str | None = None  # langue du doublage IA en place (None = voix d'origine)
+    quality: QualityReport | None = None  # dernier contrôle qualité (plan, puis vidéo finie)
+    review: Review | None = None  # note du relecteur indépendant
     comments: list[Comment] = Field(default_factory=list)
     reframe: bool = True  # recadrage automatique sur le visage quand le format est plus étroit que la source
 
