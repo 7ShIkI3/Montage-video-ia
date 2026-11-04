@@ -4,7 +4,8 @@ import { clipAt, clipStarts, commentTime, ItemKind, srcToLocal, useStore } from 
 import { ImageButtons } from "./Studio";
 import { CaptionLanguage } from "./AudioTools";
 import { MotionEditor } from "./Motion";
-import { CUTOUTS, CutoutTools, DubPanel, LutPicker } from "./Lot3";
+import { CUTOUTS, CutoutTools, DubPanel, AIVoiceoverPanel, LutPicker } from "./Lot3";
+import { QualityPanel } from "./Quality";
 
 export function CommandBar() {
   const project = useStore((s) => s.project);
@@ -205,6 +206,7 @@ export function Inspector() {
             <p className="muted small">Réalisé par : {tl.director === "claude" ? "Claude (IA)" : "moteur local"}</p>
           )}
           <p className="muted small">Clique un plan dans la timeline pour voir pourquoi l'IA l'a choisi.</p>
+          <QualityPanel />
           <div className="field-row">
             <label>Format
               <select value={tl.format} onChange={(e) => setTimelineProps({ format: e.target.value as typeof tl.format })}>
@@ -220,6 +222,7 @@ export function Inspector() {
           <CaptionLanguage />
           <LutPicker />
           <DubPanel />
+          <AIVoiceoverPanel />
           {tl.format !== "16:9" && (
             <label className="inline"><input type="checkbox" checked={tl.reframe !== false}
               onChange={(e) => setTimelineProps({ reframe: e.target.checked })} /> Recadrage auto sur le visage</label>
@@ -440,6 +443,16 @@ function ItemEditor() {
       <>
         <header><h3>{a.kind === "voix" ? "Voix off" : a.kind === "musique" ? "Musique" : "Son"}</h3>{back}</header>
         <audio controls src={api.audioUrl(project.id, a.asset)} style={{ width: "100%" }} />
+        {a.text && <p className="small">« {a.text} »</p>}
+        {a.check && (
+          <p className={`small voice-check ${a.check.ok === false ? "bad" : a.check.ok ? "good" : ""}`}>
+            {a.check.method === "whisper"
+              ? a.check.ok ? `Réécoutée : bien comprise (${Math.round((1 - (a.check.wer ?? 0)) * 100)} % des mots).`
+                : `Réécoutée : mal comprise, entendu « ${a.check.heard} ». Reformule le texte ou change de voix.`
+              : a.check.ok === false ? "Réécoute : aucun son produit." : "Mots horodatés sur le son (Whisper absent : compréhension non vérifiée)."}
+            {a.words?.length ? ` ${a.words.length} mots calés.` : ""}
+          </p>
+        )}
         <label>Nom<input value={a.label} onChange={(e) => up({ label: e.target.value })} /></label>
         <div className="field-row">
           <label>Type

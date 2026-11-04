@@ -61,6 +61,36 @@ export interface AudioItem {
   fade_out: number;
   label: string;
   dub?: string | null;
+  text?: string; // texte lu par la voix de synthèse
+  words?: { start: number; end: number; text: string }[];
+  check?: { ok: boolean | null; wer: number | null; heard: string; method: "whisper" | "energie" } | null;
+}
+
+export interface QualityIssue {
+  check: string;
+  level: "erreur" | "alerte" | "ok";
+  message: string;
+  t?: number | null;
+  fix?: string | null;
+  target?: string | null;
+}
+
+export interface QualityReport {
+  score: number;
+  issues: QualityIssue[];
+  measured: Record<string, number | null>;
+  rendered: boolean;
+  fixed: string[];
+  at: number;
+}
+
+export interface Review {
+  score: number;
+  verdict: string;
+  remarks: { t?: number | null; problem: string; fix: string }[];
+  reviewer: "claude" | "local";
+  rounds: number;
+  history: number[];
 }
 
 export type TextStyle = "titre" | "bandeau" | "legende" | "gros_texte" | "emoji" | "texte_3d";
@@ -160,8 +190,13 @@ export interface Region {
 }
 
 export interface Mask extends Region {
-  kind: "flou" | "pixel" | "noir" | "cadre";
+  kind: "flou" | "pixel" | "noir" | "cadre" | "projecteur";
   follow_dx: number | null;
+  start?: number | null; // zone limitée dans le temps (secondes depuis le début du plan)
+  end?: number | null;
+  label?: string;
+  reason?: string;
+  push_in?: boolean;
 }
 
 export interface Comment {
@@ -220,6 +255,10 @@ export interface Timeline {
   lut_strength?: number;
   background?: string | null;
   dub_language?: string | null;
+  quality?: QualityReport | null;
+  review?: Review | null;
+  voice_focus?: string[];
+  reference_match?: { target_shot: number; result_shot: number; rounds: number; history: number[]; unmatched: string[]; summary: string } | null;
   reframe: boolean;
   comments: Comment[];
 }
@@ -249,6 +288,18 @@ export interface Project {
   exports: string[];
   publish_kit: PublishKit | null;
   active_version: string | null;
+  directions?: Direction[];
+  reference?: { filename: string; summary: string; mean_shot: number; shots: number; duration: number } | null;
+}
+
+export interface Direction {
+  id: string;
+  name: string;
+  pitch: string;
+  rhythm: string;
+  tone: string;
+  settings: Partial<EditSettings>;
+  recommended: boolean;
 }
 
 export interface PublishKit {
@@ -428,9 +479,23 @@ export const api = {
     if (p.background) q.set("background", p.background);
     return `/api/projects/${id}/preview-frame?${q}`;
   },
+  uploadReference: async (id: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return req<{ summary: string }>(`/api/projects/${id}/reference`, { method: "POST", body: fd });
+  },
+  deleteReference: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/reference`, { method: "DELETE" }),
+  directions: (id: string, body: { platform: string; tone: string; audience: string }) =>
+    req<Job>(`/api/projects/${id}/directions`, json("POST", body)),
+  quality: (id: string, fix: boolean) => req<Job>(`/api/projects/${id}/quality`, json("POST", { fix })),
+  review: (id: string) => req<Job>(`/api/projects/${id}/review`, { method: "POST" }),
+  voiceFocus: (id: string) => req<Job>(`/api/projects/${id}/voice-focus`, { method: "POST" }),
+  soundsheetUrl: (id: string) => `/api/projects/${id}/soundsheet`,
   ttsStatus: () => req<Record<string, string | null>>(`/api/tts`),
   dub: (id: string, language: string | null, original_volume = 0.12) =>
     req<Job>(`/api/projects/${id}/dub`, json("POST", { language, original_volume })),
+  voiceover: (id: string, text: string, start: number, language: string) =>
+    req<Job>(`/api/projects/${id}/voiceover`, json("POST", { text, start, language })),
   languages: () => req<{ code: string; name: string }[]>(`/api/languages`),
   translate: (id: string, language: string | null) =>
     req<Job>(`/api/projects/${id}/translate`, json("POST", { language })),

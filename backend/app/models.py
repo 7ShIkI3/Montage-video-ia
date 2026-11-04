@@ -77,10 +77,16 @@ class Region(BaseModel):
 
 
 class Mask(Region):
-    """Zone traitée sur un plan : flou (visage, plaque…), pixelisé, cache noir ou cadre de mise en avant."""
+    """Zone traitée sur un plan : flou (visage, plaque…), pixelisé, cache noir, cadre de mise en avant, ou
+    projecteur (le reste de l'image s'assombrit pour guider le regard vers ce dont parle la voix)."""
 
-    kind: Literal["flou", "pixel", "noir", "cadre"] = "flou"
+    kind: Literal["flou", "pixel", "noir", "cadre", "projecteur"] = "flou"
     follow_dx: float | None = None  # si défini, la zone suit le visage (x = position du visage + décalage)
+    start: float | None = None  # zone limitée dans le temps : secondes depuis le début du plan (timeline)
+    end: float | None = None
+    label: str = ""  # petit label posé à côté de la zone (projecteur)
+    push_in: bool = False  # le projecteur a ajouté un zoom animé vers la zone (images clés du plan)
+    reason: str = ""
 
 
 class Keyframe(BaseModel):
@@ -274,10 +280,49 @@ class AudioItem(BaseModel):
     fade_out: float = 0.15
     label: str = ""
     dub: str | None = None  # langue du doublage IA qui a créé ce son (remplacé quand on double à nouveau)
+    text: str = ""  # texte lu par la voix de synthèse (voix off IA, doublage)
+    words: list[Word] = Field(default_factory=list)  # mots prononcés, en secondes depuis le début du fichier
+    check: dict | None = None  # réécoute de la voix IA : {ok, wer, heard, method}
 
     @property
     def duration(self) -> float:
         return max(0.0, self.src_out - self.src_in)
+
+
+class QualityIssue(BaseModel):
+    """Un point du contrôle qualité : règle de réalisation non tenue ou mesure technique hors cible."""
+    check: str  # accroche, moment_fort, plan_long, texte, lecture, flashs, duree, bruitage, musique, son, image
+    level: Literal["erreur", "alerte", "ok"] = "alerte"
+    message: str
+    t: float | None = None  # instant concerné sur la timeline
+    fix: str | None = None  # correction automatique possible (clé), sinon None
+    target: str | None = None  # id de l'élément visé (plan, texte, bruitage…)
+
+
+class QualityReport(BaseModel):
+    score: int = 100  # 0..100
+    issues: list[QualityIssue] = Field(default_factory=list)
+    measured: dict = Field(default_factory=dict)  # mesures du rendu : loudness, crête, flashs…
+    rendered: bool = False  # True si le rapport inclut le contrôle de la vidéo finie
+    fixed: list[str] = Field(default_factory=list)  # corrections appliquées automatiquement
+    at: float = Field(default_factory=time.time)
+
+
+class ReviewRemark(BaseModel):
+    t: float | None = None
+    problem: str
+    fix: str = ""
+
+
+class Review(BaseModel):
+    """Note du relecteur indépendant (un second avis qui n'a pas vu la construction du montage)."""
+    score: float = 0.0  # 0..10
+    verdict: str = ""
+    remarks: list[ReviewRemark] = Field(default_factory=list)
+    reviewer: Literal["claude", "local"] = "local"
+    rounds: int = 1
+    history: list[float] = Field(default_factory=list)  # note à chaque tour
+    at: float = Field(default_factory=time.time)
 
 
 class Timeline(BaseModel):
@@ -301,6 +346,10 @@ class Timeline(BaseModel):
     lut_strength: float = Field(1.0, ge=0.0, le=1.0)
     background: str | None = None  # image de fond du détourage IA (fichier du dossier images du projet)
     dub_language: str | None = None  # langue du doublage IA en place (None = voix d'origine)
+    quality: QualityReport | None = None  # dernier contrôle qualité (plan, puis vidéo finie)
+    review: Review | None = None  # note du relecteur indépendant
+    voice_focus: list[str] = Field(default_factory=list)  # plans calés sur les phrases, projecteurs posés
+    reference_match: dict | None = None  # comparaison du rythme obtenu avec celui de la vidéo de référence
     comments: list[Comment] = Field(default_factory=list)
     reframe: bool = True  # recadrage automatique sur le visage quand le format est plus étroit que la source
 
@@ -320,6 +369,17 @@ class Version(BaseModel):
     note: str = ""
 
 
+class Direction(BaseModel):
+    """Une direction créative proposée avant le montage : l'utilisateur en choisit une, l'IA monte seule."""
+    id: str = Field(default_factory=lambda: new_id("d_"))
+    name: str
+    pitch: str = ""  # en une phrase : ce que la vidéo racontera et comment
+    rhythm: str = ""
+    tone: str = ""
+    settings: dict = Field(default_factory=dict)  # réglages EditSettings à appliquer (style, durée, format…)
+    recommended: bool = False
+
+
 class Project(BaseModel):
     id: str = Field(default_factory=lambda: new_id("p_"))
     name: str = "Nouveau projet"
@@ -331,6 +391,8 @@ class Project(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     exports: list[str] = Field(default_factory=list)
     publish_kit: dict | None = None  # titres, description, chapitres, hashtags, miniature
+    directions: list[Direction] = Field(default_factory=list)  # 3 directions proposées avant le montage
+    reference: dict | None = None  # profil de rythme d'une vidéo de référence (« monte comme ça »)
     versions: list[Version] = Field(default_factory=lambda: [Version()])
     active_version: str | None = None
 

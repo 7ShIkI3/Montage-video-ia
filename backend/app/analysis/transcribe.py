@@ -62,11 +62,11 @@ def _load_model():
 
 
 def transcribe(audio: np.ndarray, media_id: str, duration: float,
-               on_progress: Callable[[float], None] | None = None) -> Transcript:
+               on_progress: Callable[[float], None] | None = None, language: str | None = None) -> Transcript:
     model = _load_model()
     segments, info = model.transcribe(
         audio,
-        language=config.WHISPER_LANGUAGE,
+        language=language or config.WHISPER_LANGUAGE,
         word_timestamps=True,
         vad_filter=True,
         vad_parameters={"min_silence_duration_ms": 400},

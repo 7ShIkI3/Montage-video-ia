@@ -11,6 +11,9 @@ from .ai.decorate import decorate
 from .ai import publish as publish_mod
 from .ai import comments as comments_mod
 from .ai import pvp as pvp_mod
+from .ai import quality as quality_mod
+from .ai import review as review_mod
+from .ai import soundsheet
 from .ai.segments import build_segments
 from .analysis import audio as audio_an
 from .analysis import faces as faces_an
@@ -153,6 +156,10 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     if settings.music and not music:
         project.warnings.append("Aucune musique trouvée : ajoute des fichiers audio libres de droits.")
 
+    if project.reference:
+        from .ai import reference as ref_mod
+        hint = ref_mod.describe(project.reference) + " Reproduis ce rythme de montage (le look reste celui des rushes)."
+        settings = settings.model_copy(update={"instructions": (settings.instructions + "\n" + hint).strip()})
     director = dir_mod.get_director()
     ctx.step("Réalisation du montage par l'IA" + (" (Claude)" if director.name == "claude" else ""), 0.9)
     order = [m.id for m in project.media]
@@ -193,10 +200,70 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     if notes and tl.director != "claude":  # heuristique ou pvp
         ctx.step("Application de tes commentaires", 0.98)
         comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, notes, _faces(project))
+    if tl.clips and settings.style != "pvp":
+        ctx.step("Plans calés sur les phrases, projecteur sur ce que montre la voix", 0.981)
+        tl.voice_focus = voice_focus(project, tl, transcripts_for(project))
+    if project.reference and tl.clips and settings.style != "pvp":
+        from .ai import reference as ref_mod
+        ctx.step("Rythme calé sur la vidéo de référence", 0.982)
+        tl, tl.reference_match = ref_mod.match(tl, project.reference, transcripts_for(project))
+    project.timeline = tl
+    tl = polish(project, tl, segments, settings, music, ctx, director, 0.985)
+
     def apply(p: Project) -> None:
         p.settings, p.warnings, p.timeline = settings, project.warnings, tl
     storage.update_project(project_id, apply)
-    ctx.step(f"Montage prêt : {len(tl.clips)} plans, {tl.duration:.0f} s", 1.0)
+    rv = f", note du relecteur {tl.review.score:.1f}/10" if tl.review else ""
+    ctx.step(f"Montage prêt : {len(tl.clips)} plans, {tl.duration:.0f} s{rv}", 1.0)
+    return tl
+
+
+def polish(project: Project, tl: Timeline, segments: list[Segment], settings: EditSettings, music: str | None,
+           ctx: JobContext, director=None, at: float = 0.9, max_rounds: int = review_mod.MAX_ROUNDS) -> Timeline:
+    """Après le montage : pic musical calé, contrôle qualité avec corrections automatiques, puis relecture
+    indépendante. Sous la note de passage, le réalisateur reprend le montage avec les remarques (3 tours au plus)."""
+    transcripts = transcripts_for(project)
+    if tl.music.track and settings.style != "pvp":
+        msg = soundsheet.align_music_peak(tl, soundsheet.music_profile(tl.music.track))
+        if msg:
+            log.info(msg)
+    reviewer = review_mod.get_reviewer()
+    director = director or dir_mod.get_director()
+    history: list[float] = []
+    fixed: list[str] = list(tl.quality.fixed) if tl.quality else []
+    rev = None
+    for rnd in range(1, max_rounds + 1):
+        ctx.step(f"Contrôle qualité et relecture (tour {rnd})", min(0.995, at + 0.004 * rnd))
+        tl = quality_mod.check_and_fix(tl, transcripts, settings)
+        fixed += tl.quality.fixed
+        tl.quality.issues += soundsheet.sync_checks(project, tl, transcripts)
+        tl.quality.score = quality_mod.score_of(tl.quality.issues)
+        instructions = ""
+        rev = None
+        if reviewer:
+            try:
+                sheet = soundsheet.sheet(project, tl, transcripts)
+                rev, instructions = reviewer.review(project, tl, transcripts, tl.quality, sheet, settings.style)
+            except Exception as e:
+                log.warning("Relecture Claude impossible, relecteur local : %s", e)
+        rev = rev or review_mod.local_review(tl.quality)
+        history.append(rev.score)
+        if rev.score >= review_mod.PASS_SCORE or rnd == max_rounds or director.name != "claude" or not (
+                instructions or rev.remarks):
+            break
+        consigne = instructions or "; ".join(f"{r.problem} ({r.fix})" for r in rev.remarks[:8])
+        try:
+            keep = (tl.comments, tl.music)
+            new = director.command(f"Retouches demandées par le relecteur : {consigne}", tl, segments, settings, music)
+            new.comments, new.music = keep[0], keep[1]
+            comments_mod.carry_overrides(tl, new)
+            tl = new
+        except Exception as e:
+            log.warning("Retouche après relecture impossible : %s", e)
+            break
+    tl.quality.fixed = list(dict.fromkeys(fixed))
+    rev.rounds, rev.history = len(history), history
+    tl.review = rev
     return tl
 
 
@@ -233,6 +300,7 @@ def ai_command(project_id: str, instruction: str, ctx: JobContext) -> dict:
 def export(project_id: str, quality: str, ctx: JobContext, fps: int | None = None, smooth: bool = False,
            container: str = "mp4", tl: Timeline | None = None, fmt: str | None = None, label: str | None = None) -> str:
     project = storage.load_project(project_id)
+    tl_is_active = tl is None and not fmt
     tl = (tl or project.timeline).model_copy(deep=True)
     if fmt and fmt != tl.format:
         tl.format = fmt  # le recadrage automatique suit le visage dans le nouveau format
@@ -250,7 +318,25 @@ def export(project_id: str, quality: str, ctx: JobContext, fps: int | None = Non
     render_mod.render(project, tl, transcripts_for(project), out.resolve(), work.resolve(), quality, music,
                       ctx.sub(0.01, 0.99, f"Rendu {quality} à {rate} i/s"), fps=rate, smooth=smooth,
                       container=container)
-    storage.update_project(project_id, lambda p: p.exports.append(out.name))
+    if container != "gif" and tl_is_active:
+        ctx.step("Contrôle de la vidéo finie (volume, flashs, début)", 0.995)
+        try:
+            issues, measured = quality_mod.render_checks(out, tl, rate)
+        except Exception as e:  # le contrôle ne doit jamais faire échouer un export
+            log.warning("Contrôle du rendu impossible : %s", e)
+            issues, measured = [], {}
+
+        def save(p: Project) -> None:
+            p.exports.append(out.name)
+            rep = quality_mod.plan_checks(p.timeline, transcripts_for(p), p.settings)
+            rep.issues += issues
+            rep.measured, rep.rendered = measured, True
+            rep.fixed = list(p.timeline.quality.fixed) if p.timeline.quality else []
+            rep.score = quality_mod.score_of(rep.issues)
+            p.timeline.quality = rep
+        storage.update_project(project_id, save)
+    else:
+        storage.update_project(project_id, lambda p: p.exports.append(out.name))
     ctx.step("Export terminé", 1.0)
     return out.name
 
@@ -619,6 +705,7 @@ def dub_voice(project_id: str, lang: str | None, ctx: JobContext, original_volum
     moment où elles sont dites, et baisse la voix d'origine. lang=None retire le doublage."""
     from .ai import translate as trl
     from .ai import tts
+    from .ai import voicecheck as vcheck
     from .models import AudioItem
     project = storage.load_project(project_id)
 
@@ -673,9 +760,11 @@ def dub_voice(project_id: str, lang: str | None, ctx: JobContext, original_volum
         ffmpeg.run(["-i", str(raw), "-af", f"atempo={tempo:.4f},aresample=48000", "-ac", "2", str(out)])
         raw.unlink(missing_ok=True)
         dur = float(ffmpeg.probe(out).get("duration") or dur / tempo)
+        # Réécoute : la phrase doublée doit se comprendre, et chaque mot est horodaté pour les sous-titres.
+        words, check = vcheck.verify(out, text, lang)
         items.append(AudioItem(asset=out.name, start=round(ln.start, 3), src_in=0.0, src_out=round(dur, 3),
                                lane=3, kind="voix", volume=1.0, fade_in=0.02, fade_out=0.08,
-                               label=f"Doublage {name} {i + 1}", dub=lang))
+                               label=f"Doublage {name} {i + 1}", dub=lang, text=text, words=words, check=check))
 
     def apply(p: Project) -> None:
         p.timeline.audio = [a for a in p.timeline.audio if not a.dub] + items
@@ -683,5 +772,136 @@ def dub_voice(project_id: str, lang: str | None, ctx: JobContext, original_volum
             c.volume = original_volume
         p.timeline.dub_language = lang
     storage.update_project(project_id, apply)
-    ctx.step(f"Doublage en {name} prêt ({engine})", 1.0)
-    return {"language": lang, "lines": len(items), "engine": engine}
+    bad = sum(1 for a in items if a.check and a.check.get("ok") is False)
+    ctx.step(f"Doublage en {name} prêt ({engine})" + (f", {bad} phrase(s) mal comprise(s) à la réécoute" if bad else ""), 1.0)
+    return {"language": lang, "lines": len(items), "engine": engine, "misheard": bad}
+
+
+def ai_voiceover(project_id: str, text: str, start: float, lang: str, ctx: JobContext, lane: int = 2) -> dict:
+    """Voix off IA : lit un texte avec une voix de synthèse, la réécoute, et la pose sur une piste audio."""
+    from .ai import tts
+    from .ai import voicecheck as vcheck
+    from .models import AudioItem, new_id
+    text = text.strip()
+    if not text:
+        raise ValueError("Écris le texte que la voix off doit lire.")
+    if not tts.engine_for(lang):
+        raise ValueError("Aucune voix de synthèse pour cette langue : installe espeak-ng, ou Piper avec une voix "
+                         f"dans {tts.voices_dir()}.")
+    d = storage.audio_dir(project_id)
+    out = d / f"voix_ia_{new_id('')}.wav"
+    raw = out.with_name(out.stem + "_raw.wav")
+    ctx.step("Lecture du texte par la voix de synthèse", 0.2)
+    engine = tts.synthesize(text, lang, raw)
+    ffmpeg.run(["-i", str(raw), "-af", "aresample=48000", "-ac", "2", str(out)])
+    raw.unlink(missing_ok=True)
+    dur = float(ffmpeg.probe(out).get("duration") or 0.0)
+    ctx.step("Réécoute de la voix (compréhension et instant de chaque mot)", 0.6)
+    words, check = vcheck.verify(out, text, lang)
+    item = AudioItem(asset=out.name, start=round(max(0.0, start), 3), src_in=0.0, src_out=round(dur, 3), lane=lane,
+                     kind="voix", label="Voix off IA", text=text, words=words, check=check)
+
+    def apply(p: Project) -> None:
+        p.timeline.audio.append(item)
+    storage.update_project(project_id, apply)
+    verdict = ("comprise à la réécoute" if check.get("ok") else
+               "mal comprise à la réécoute" if check.get("ok") is False else "non réécoutée (Whisper absent)")
+    ctx.step(f"Voix off IA posée ({dur:.1f} s, {engine}), {verdict}", 1.0)
+    return {"id": item.id, "duration": dur, "engine": engine, "check": check}
+
+
+def review_job(project_id: str, ctx: JobContext) -> dict:
+    """Relance contrôle qualité et relecture sur le montage actuel (avec retouches si Claude est là)."""
+    project = storage.load_project(project_id)
+    if not project.timeline.clips:
+        raise ValueError("Pas encore de montage à relire.")
+    segments = storage.load_segments(project.id) or all_segments(project, project.settings)
+    music = project.timeline.music.track
+    tl = polish(project, project.timeline.model_copy(deep=True), segments, project.settings, music, ctx, at=0.1)
+
+    def apply(p: Project) -> None:
+        tl.comments = p.timeline.comments
+        p.timeline = tl
+    storage.update_project(project_id, apply)
+    ctx.step(f"Relecture : {tl.review.score:.1f}/10 en {tl.review.rounds} tour(s)", 1.0)
+    return {"score": tl.review.score, "rounds": tl.review.rounds, "quality": tl.quality.score}
+
+
+def _narrow(project: Project, tl: Timeline) -> set[str]:
+    """Rushes recadrés sur le visage (format plus étroit) : on n'y ajoute pas de zoom animé."""
+    a, b = (int(x) for x in tl.format.split(":"))
+    return {m.id for m in project.media if tl.reframe and m.height and m.width / m.height > a / b + 0.01}
+
+
+def voice_focus(project: Project, tl: Timeline, transcripts: dict) -> list[str]:
+    """Plans calés sur la durée des phrases, puis projecteur sur ce que la voix désigne (sur place)."""
+    from .ai import voicefocus as vf
+    notes = vf.fit_to_sentences(tl, transcripts)
+    try:
+        notes += vf.add_spotlights(project, tl, transcripts, _faces(project), vf.get_locator(), _narrow(project, tl))
+    except Exception as e:  # le projecteur est un plus : il ne doit jamais faire échouer le montage
+        log.warning("Projecteur impossible : %s", e)
+    return notes
+
+
+def voice_focus_job(project_id: str, ctx: JobContext) -> dict:
+    """Relance sur le montage actuel : retire les projecteurs posés par l'IA, puis recale et repose."""
+    project = storage.load_project(project_id)
+    transcripts = transcripts_for(project)
+    ctx.step("Recherche de ce que montre la voix", 0.3)
+    tl = project.timeline.model_copy(deep=True)
+    for c in tl.clips:
+        if any(m.kind == "projecteur" and m.push_in for m in c.masks):
+            c.keyframes = []  # le zoom vers la zone venait du projecteur
+        c.masks = [m for m in c.masks if m.kind != "projecteur"]
+    notes = voice_focus(project, tl, transcripts)
+    tl.voice_focus = notes
+
+    def apply(p: Project) -> None:
+        tl.comments = p.timeline.comments
+        p.timeline = tl
+    storage.update_project(project_id, apply)
+    n = sum(1 for x in notes if x.startswith("projecteur"))
+    ctx.step(f"{n} projecteur(s), {len(notes) - n} calage(s) sur les phrases", 1.0)
+    return {"notes": notes}
+
+
+def quality_job(project_id: str, fix: bool, ctx: JobContext) -> dict:
+    """Contrôle du plan (et corrections automatiques si fix) sur le montage actuel."""
+    project = storage.load_project(project_id)
+    transcripts = transcripts_for(project)
+    ctx.step("Contrôle qualité du montage", 0.3)
+
+    def apply(p: Project) -> None:
+        if fix:
+            p.timeline = quality_mod.check_and_fix(p.timeline, transcripts, p.settings)
+        else:
+            old = p.timeline.quality
+            rep = quality_mod.plan_checks(p.timeline, transcripts, p.settings)
+            rep.fixed = old.fixed if old else []
+            p.timeline.quality = rep
+        p.timeline.quality.issues += soundsheet.sync_checks(p, p.timeline, transcripts)
+        p.timeline.quality.score = quality_mod.score_of(p.timeline.quality.issues)
+        p.timeline.review = None  # la note du relecteur portait sur l'état d'avant : à refaire
+    storage.update_project(project_id, apply)
+    q = storage.load_project(project_id).timeline.quality
+    ctx.step(f"Contrôle qualité : {q.score}/100", 1.0)
+    return {"score": q.score, "issues": len(q.issues), "fixed": q.fixed}
+
+
+def propose_directions(project_id: str, platform: str, tone: str, audience: str, ctx: JobContext) -> dict:
+    """Analyse les rushes puis propose 3 directions créatives (rangées dans le projet)."""
+    from .ai import directions as dir_ai
+    project = storage.load_project(project_id)
+    if not project.media:
+        raise ValueError("Ajoute au moins une vidéo avant de demander des directions.")
+    n = len(project.media)
+    for i, m in enumerate(project.media):
+        analyze_media(project, m, ctx, 0.8 * i / n, 0.8 * (i + 1) / n)
+        _save_media(project)
+    ctx.step("Le directeur créatif prépare 3 directions" + (" (Claude)" if config.claude_available() else ""), 0.85)
+    segments = all_segments(project, project.settings)
+    found, who = dir_ai.propose(project, segments, platform, tone, audience)
+    storage.update_project(project_id, lambda p: setattr(p, "directions", found))
+    ctx.step("3 directions prêtes : choisis-en une", 1.0)
+    return {"directions": [d.model_dump() for d in found], "by": who}

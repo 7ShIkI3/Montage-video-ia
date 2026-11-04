@@ -29,7 +29,7 @@ app = FastAPI(title="Monteur IA", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _PROJECT_ROUTE = re.compile(r"^/api/projects/([A-Za-z0-9_]+)(/.*)?$")
-_UPLOADS = re.compile(r"^/(media|music|assets|audio|luts)$")  # envois de fichiers : verrou pris seulement à l'écriture
+_UPLOADS = re.compile(r"^/(media|music|assets|audio|luts|reference)$")  # envois de fichiers : verrou pris seulement à l'écriture
 
 
 @app.middleware("http")
@@ -215,6 +215,54 @@ def auto_edit(pid: str, settings: EditSettings):
     return job
 
 
+@app.post("/api/projects/{pid}/reference")
+async def upload_reference(pid: str, file: UploadFile = File(...)):
+    """Vidéo de référence : l'IA en copie le rythme (durée des plans, accélération, fondus) au prochain montage."""
+    from .ai import reference as ref_mod
+    _project(pid)
+    name = _safe_name(file.filename or "reference.mp4")
+    if Path(name).suffix.lower() not in VIDEO_EXT:
+        raise HTTPException(400, "Vidéo attendue (MP4, MOV, MKV, WebM…).")
+    d = storage.project_dir(pid) / "reference"
+    d.mkdir(parents=True, exist_ok=True)
+    for old in d.iterdir():
+        old.unlink(missing_ok=True)
+    dst = d / name
+    await _save_upload(file, dst)
+    try:
+        prof = await anyio.to_thread.run_sync(ref_mod.analyze, dst)
+    except Exception as e:
+        dst.unlink(missing_ok=True)
+        raise HTTPException(400, f"Vidéo de référence illisible : {e}")
+    prof["filename"] = name
+    prof["summary"] = ref_mod.describe(prof)
+    await anyio.to_thread.run_sync(lambda: storage.update_project(pid, lambda p: setattr(p, "reference", prof)))
+    return prof
+
+
+@app.delete("/api/projects/{pid}/reference")
+def delete_reference(pid: str):
+    p = _project(pid)  # requête déjà sous le verrou du projet (middleware)
+    shutil.rmtree(storage.project_dir(pid) / "reference", ignore_errors=True)
+    p.reference = None
+    storage.save_project(p)
+    return {"ok": True}
+
+
+class DirectionsReq(BaseModel):
+    platform: str = "auto"  # auto, youtube, tiktok, linkedin, instagram
+    tone: str = "auto"  # auto, fun, pro, emotion, pedago
+    audience: str = ""
+
+
+@app.post("/api/projects/{pid}/directions")
+def directions(pid: str, body: DirectionsReq):
+    """Propose 3 directions créatives avant le montage (questions facultatives : plateforme, ton, public)."""
+    _project(pid)
+    return manager.submit(pid, "directions", lambda ctx: pipeline.propose_directions(
+        pid, body.platform, body.tone, body.audience[:200], ctx))
+
+
 class Command(BaseModel):
     instruction: str
 
@@ -330,6 +378,27 @@ def dub(pid: str, body: DubReq):
         raise HTTPException(400, "Langue inconnue")
     vol = max(0.0, min(1.0, body.original_volume))
     return manager.submit(pid, "doublage", lambda ctx: pipeline.dub_voice(pid, body.language, ctx, vol))
+
+
+class VoiceoverReq(BaseModel):
+    text: str
+    start: float = 0.0
+    language: str = "fr"
+    lane: int = 2
+
+
+@app.post("/api/projects/{pid}/voiceover")
+def ai_voiceover(pid: str, body: VoiceoverReq):
+    """Voix off IA : un texte lu par une voix de synthèse, réécouté et calé au mot près."""
+    from .ai.translate import LANGUAGES
+    _project(pid)
+    if body.language not in LANGUAGES:
+        raise HTTPException(400, "Langue inconnue")
+    if not body.text.strip() or len(body.text) > 2000:
+        raise HTTPException(400, "Texte vide ou trop long (2000 caractères au plus)")
+    lane = max(0, min(3, body.lane))
+    return manager.submit(pid, "voix_ia", lambda ctx: pipeline.ai_voiceover(pid, body.text, body.start, body.language,
+                                                                           ctx, lane))
 
 
 # --- Pistes audio (voix off, sons) ------------------------------------------------------
@@ -618,6 +687,40 @@ def get_asset(pid: str, name: str):
     if not path.exists():
         raise HTTPException(404, "Image introuvable")
     return FileResponse(path)
+
+
+# --- Contrôle qualité, relecture, feuille son/image ---------------------------------------------
+
+class QualityReq(BaseModel):
+    fix: bool = False
+
+
+@app.post("/api/projects/{pid}/quality")
+def run_quality(pid: str, body: QualityReq):
+    """Contrôle du plan de montage ; avec fix, applique les corrections automatiques."""
+    _project(pid)
+    return manager.submit(pid, "controle", lambda ctx: pipeline.quality_job(pid, body.fix, ctx))
+
+
+@app.post("/api/projects/{pid}/voice-focus")
+def run_voice_focus(pid: str):
+    """Cale les plans sur les phrases et pose un projecteur sur ce que la voix désigne."""
+    _project(pid)
+    return manager.submit(pid, "projecteur", lambda ctx: pipeline.voice_focus_job(pid, ctx))
+
+
+@app.post("/api/projects/{pid}/review")
+def run_review(pid: str):
+    """Relecteur indépendant : note la version, et la fait retoucher sous la note de passage (3 tours au plus)."""
+    _project(pid)
+    return manager.submit(pid, "relecture", lambda ctx: pipeline.review_job(pid, ctx))
+
+
+@app.get("/api/projects/{pid}/soundsheet")
+def get_soundsheet(pid: str):
+    from .ai import soundsheet
+    p = _project(pid)
+    return Response(soundsheet.sheet(p, p.timeline, pipeline.transcripts_for(p)), media_type="text/plain; charset=utf-8")
 
 
 # --- Étalonnage (LUT) et aperçu image ---------------------------------------------------------

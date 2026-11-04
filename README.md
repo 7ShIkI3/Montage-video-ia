@@ -36,6 +36,42 @@ meilleurs passages, écrit un titre et applique des consignes libres. Sans clé,
 heuristique fait le travail et comprend les consignes courantes (durée, format, sous-titres, musique, zooms,
 « enlève "mot" »).
 
+### Contrôle qualité et relecteur
+
+- **Règles du réalisateur**, vérifiées à chaque montage : parole dès la première seconde et accroche avant 3 s,
+  moment fort préparé (courte pause avant, zoom ou bruitage dessus), pas de plan fixe trop long, textes courts
+  et affichés assez longtemps pour un téléphone, 3 flashs par seconde au plus, bruitages calés sur une coupe ou un mot.
+- **Deux contrôles** : sur le plan de montage (avec corrections automatiques), puis sur la vidéo finie après chaque
+  export (loudness mesurée à -14 LUFS, crête, flashs, début noir ou muet).
+- **Relecteur indépendant** : un second appel à Claude, qui n'a pas vu la construction, note la version sur 10 à
+  partir d'images clés, des paroles, de la feuille son/image et du rapport qualité. Sous 7/10, le réalisateur
+  retouche avec ses remarques et la version repasse en relecture, 3 tours au plus. Sans clé, un relecteur local
+  note à partir du contrôle.
+- **Feuille son/image** : chaque son (paroles, impacts des rushes, bruitages, temps forts et pic de la musique)
+  décrit en mots, à côté de ce qui est à l'écran au même instant. Le pic de la musique est calé sur le moment fort.
+
+### Avant de monter
+
+- **3 directions créatives** : l'IA regarde les rushes et propose trois façons différentes de raconter la vidéo
+  (récit complet, short qui accroche, edit gaming, vlog ou discussion selon le contenu), avec une recommandée.
+  Trois questions facultatives orientent les propositions : plateforme, ton, public. Un clic, et l'IA monte seule.
+- **Monter comme une vidéo de référence** : dépose un montage que tu aimes ; l'IA mesure son rythme (coupes,
+  durée des plans, fondus), puis rapproche le sien en 2 à 5 tours et dit ce qu'elle n'a pas pu égaler.
+  Seul le rythme est copié, pas le look.
+- **Projecteur sur ce que montre la voix** : quand la voix désigne quelque chose (« regardez ce bouton »,
+  « voici », « en haut à droite »), le reste de l'image s'assombrit, la zone est entourée et le cadre s'en
+  approche. Claude trouve la zone sur l'image ; sans clé, une carte de saillance locale le fait (seulement
+  pour les désignations explicites). Les plans sont aussi calés sur les phrases : un plan ne coupe plus une
+  phrase en plein milieu, et un plan de coupe finit avec la phrase qu'il illustre. Bouton « Projecteur sur la
+  voix » dans le contrôle qualité pour le relancer.
+- **Voix IA calée au mot près et réécoutée** : une voix off IA (un texte lu par la voix de synthèse, posé au
+  curseur) ou un doublage est réécouté par Whisper. Si ce qu'on entend ne ressemble pas au texte, le contrôle
+  qualité le signale. Chaque mot est horodaté, et les sous-titres animés suivent la voix IA (la voix doublée
+  quand la vidéo est doublée). Sans Whisper, les mots sont calés sur l'énergie du son.
+- **Affirmations vérifiées** : le contrôle qualité repère dans les textes et le titre ce qui promet trop
+  (« le meilleur », « garanti », « jamais vu », « 100 % ») et l'adoucit, et signale un chiffre affiché qui n'est
+  jamais dit dans la vidéo.
+
 ## L'éditeur
 
 - Lecture de la timeline en direct (sans rendu), sous-titres en surimpression, aperçu du format.

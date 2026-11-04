@@ -8,9 +8,29 @@ from ..models import CaptionLine, TextItem, Timeline, Transcript, Word
 SENT_END = re.compile(r"[.!?…,;:]$")
 
 
-def timeline_words(timeline: Timeline, transcripts: dict[str, Transcript]) -> list[Word]:
-    """Mots prononcés dans les clips gardés, en temps timeline."""
+def voice_words(timeline: Timeline, dubs: bool = True) -> list[Word]:
+    """Mots dits par les voix IA posées sur les pistes audio (doublage, voix off IA), en temps timeline."""
     out: list[Word] = []
+    for a in timeline.audio:
+        if a.kind != "voix" or not a.words or (a.dub and not dubs):
+            continue
+        for w in a.words:
+            if a.src_in <= (w.start + w.end) / 2 < a.src_out:
+                s = a.start + max(0.0, w.start - a.src_in)
+                e = a.start + min(a.src_out, w.end) - a.src_in
+                if e > s:
+                    out.append(Word(start=round(s, 3), end=round(e, 3), text=w.text, prob=w.prob))
+    return out
+
+
+def timeline_words(timeline: Timeline, transcripts: dict[str, Transcript]) -> list[Word]:
+    """Mots prononcés dans le montage, en temps timeline : paroles des clips gardés (ou leur doublage), plus
+    les voix off IA."""
+    dubbed = bool(timeline.dub_language) and any(a.dub and a.words for a in timeline.audio)
+    # Doublé : on suit la voix doublée (et les voix off IA) ; sinon les paroles des rushes plus les voix off IA.
+    out = voice_words(timeline, dubs=dubbed)
+    if dubbed:
+        return sorted(out, key=lambda w: w.start)
     t0 = 0.0
     for c in timeline.clips:
         tr = transcripts.get(c.media_id)
@@ -24,7 +44,7 @@ def timeline_words(timeline: Timeline, transcripts: dict[str, Transcript]) -> li
                     if e > s:
                         out.append(Word(start=round(s, 3), end=round(e, 3), text=w.text, prob=w.prob))
         t0 += c.duration
-    return out
+    return sorted(out, key=lambda w: w.start)
 
 
 def group_lines(words: list[Word], max_words: int, max_chars: int, max_gap: float = 0.6) -> list[CaptionLine]:

@@ -2,6 +2,7 @@
 sous-titres, bruitages, musique et normalisation du volume."""
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import Callable
@@ -128,20 +129,48 @@ def ramp_audio(c, src_label: str, tag: str, n: int | None = None) -> tuple[list[
     return parts, f"[{tag}r]"
 
 
+SPOT_DIM = 0.55  # assombrissement autour d'un projecteur
+
+
+def _label_text(t: str) -> str:
+    """Label sûr pour drawtext : lettres, chiffres, espaces et tirets seulement."""
+    return re.sub(r"[^\w \-]", "", t or "", flags=re.UNICODE).strip()[:24]
+
+
+def _label_font() -> str | None:
+    from .engine3d import FONT_CANDIDATES
+    return next((p for p in FONT_CANDIDATES if Path(p).exists() and ":" not in p), None)
+
+
 def mask_filters(masks, tag: str, face_kf: list[tuple[float, float]] | None = None) -> list[str]:
     """Flou, pixelisation, cache ou cadre sur des zones de l'image source (avant recadrage).
     Une zone posée sur un visage le suit dans le temps (face_kf : trajectoire du visage dans le plan)."""
     out: list[str] = []
     for k, mk in enumerate(masks):
         r = mk.clamp()
+        en = (f":enable='between(t,{mk.start:.3f},{mk.end:.3f})'"
+              if mk.start is not None and mk.end is not None else "")
         fx_ = f"{r.x:.4f}"
         if mk.follow_dx is not None and face_kf:
             fx_ = f"clip(({faces_an.ffmpeg_expr(face_kf)})+({mk.follow_dx:.4f}),0,{1 - r.w:.4f})"
         x, y, w, h = (f"'iw*{fx_}'", f"ih*{r.y:.4f}", f"iw*{r.w:.4f}", f"ih*{r.h:.4f}")
         if mk.kind == "noir":
-            out.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color=black:t=fill")
+            out.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color=black:t=fill{en}")
         elif mk.kind == "cadre":
-            out.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color=0xFFE500@0.95:t='max(4,ih/120)'")
+            out.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color=0xFFE500@0.95:t='max(4,ih/120)'{en}")
+        elif mk.kind == "projecteur":
+            # Le reste de l'image s'assombrit, la zone reste nette et entourée, avec son label.
+            a, b, bb = f"{tag}m{k}a", f"{tag}m{k}b", f"{tag}m{k}c"
+            out.append(f"split[{a}][{b}];[{b}]crop=w={w}:h={h}:x={x}:y={y}:exact=1[{bb}];"
+                       f"[{a}]drawbox=x=0:y=0:w=iw:h=ih:color=black@{SPOT_DIM}:t=fill{en}[{a}d];"
+                       f"[{a}d][{bb}]overlay=x='main_w*{fx_}':y=main_h*{r.y:.4f}{en},"
+                       f"drawbox=x={x}:y={y}:w={w}:h={h}:color=0xFFE500@0.95:t='max(3,ih/160)'{en}")
+            label = _label_text(mk.label)
+            font = _label_font()
+            if label and font:
+                ly = f"h*{r.y:.4f}-th-h/50" if r.y > 0.1 else f"h*{r.y + r.h:.4f}+h/50"
+                out.append(f"drawtext=fontfile='{font}':text='{label}':fontsize=h/22:fontcolor=black:"
+                           f"box=1:boxcolor=0xFFE500@0.95:boxborderw=8:x='w*{fx_}':y='{ly}'{en}")
         else:
             a, b, bb = f"{tag}m{k}a", f"{tag}m{k}b", f"{tag}m{k}c"
             if mk.kind == "pixel":
@@ -149,7 +178,7 @@ def mask_filters(masks, tag: str, face_kf: list[tuple[float, float]] | None = No
             else:
                 proc = "boxblur=luma_radius='min(w,h)/6':luma_power=3:chroma_radius='min(cw,ch)/6':chroma_power=3"
             out.append(f"split[{a}][{b}];[{b}]crop=w={w}:h={h}:x={x}:y={y}:exact=1,{proc}[{bb}];"
-                       f"[{a}][{bb}]overlay=x='main_w*{fx_}':y=main_h*{r.y:.4f}")
+                       f"[{a}][{bb}]overlay=x='main_w*{fx_}':y=main_h*{r.y:.4f}{en}")
     return out
 
 
