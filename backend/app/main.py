@@ -380,6 +380,27 @@ def dub(pid: str, body: DubReq):
     return manager.submit(pid, "doublage", lambda ctx: pipeline.dub_voice(pid, body.language, ctx, vol))
 
 
+class VoiceoverReq(BaseModel):
+    text: str
+    start: float = 0.0
+    language: str = "fr"
+    lane: int = 2
+
+
+@app.post("/api/projects/{pid}/voiceover")
+def ai_voiceover(pid: str, body: VoiceoverReq):
+    """Voix off IA : un texte lu par une voix de synthèse, réécouté et calé au mot près."""
+    from .ai.translate import LANGUAGES
+    _project(pid)
+    if body.language not in LANGUAGES:
+        raise HTTPException(400, "Langue inconnue")
+    if not body.text.strip() or len(body.text) > 2000:
+        raise HTTPException(400, "Texte vide ou trop long (2000 caractères au plus)")
+    lane = max(0, min(3, body.lane))
+    return manager.submit(pid, "voix_ia", lambda ctx: pipeline.ai_voiceover(pid, body.text, body.start, body.language,
+                                                                           ctx, lane))
+
+
 # --- Pistes audio (voix off, sons) ------------------------------------------------------
 
 AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".webm"}

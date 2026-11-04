@@ -175,3 +175,50 @@ export function DubPanel() {
     </div>
   );
 }
+
+/** Voix off IA : un texte lu par une voix de synthèse, réécouté, calé au mot près (sous-titres compris). */
+export function AIVoiceoverPanel() {
+  const project = useStore((s) => s.project);
+  const job = useStore((s) => s.job);
+  const playhead = useStore((s) => s.playhead);
+  const [text, setText] = useState("");
+  const [lang, setLang] = useState("fr");
+  const [langs, setLangs] = useState<{ code: string; name: string }[]>([]);
+  const [voices, setVoices] = useState<Record<string, string | null>>({});
+  useEffect(() => {
+    api.languages().then(setLangs).catch(() => undefined);
+    api.ttsStatus().then(setVoices).catch(() => undefined);
+  }, []);
+  if (!project) return null;
+  const busy = job?.kind === "voix_ia" && job.status !== "termine" && job.status !== "erreur";
+  const run = async () => {
+    const st = useStore.getState();
+    try {
+      await st.saveNow();
+      const done = await waitJob(await api.voiceover(project.id, text, playhead, lang), st.setJob);
+      await st.refreshProject({ timeline: true });
+      st.notify(done.message || "Voix off IA posée.");
+      setText("");
+    } catch (e) {
+      st.notify(`Voix off IA impossible : ${(e as Error).message}`);
+    } finally { st.setJob(null); }
+  };
+  return (
+    <div className="fx-section">
+      <div className="fx-title">Voix off IA</div>
+      <textarea rows={3} placeholder="Texte à lire, par exemple : Et maintenant, le moment que vous attendiez."
+        value={text} maxLength={2000} onChange={(e) => setText(e.target.value)} />
+      <div className="field-row">
+        <label>Langue
+          <select value={lang} onChange={(e) => setLang(e.target.value)}>
+            {langs.map((l) => <option key={l.code} value={l.code}>{l.name}{voices[l.code] ? "" : " (pas de voix)"}</option>)}
+          </select>
+        </label>
+        <button className="small-btn primary" disabled={busy || !text.trim() || !voices[lang]} onClick={run}>
+          {busy ? "Lecture…" : `Poser à ${playhead.toFixed(1)} s`}
+        </button>
+      </div>
+      <p className="muted small">La voix est réécoutée : si elle se comprend mal, le contrôle qualité le signale. Chaque mot est horodaté, les sous-titres animés la suivent.</p>
+    </div>
+  );
+}

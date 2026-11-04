@@ -280,6 +280,9 @@ class AudioItem(BaseModel):
     fade_out: float = 0.15
     label: str = ""
     dub: str | None = None  # langue du doublage IA qui a créé ce son (remplacé quand on double à nouveau)
+    text: str = ""  # texte lu par la voix de synthèse (voix off IA, doublage)
+    words: list[Word] = Field(default_factory=list)  # mots prononcés, en secondes depuis le début du fichier
+    check: dict | None = None  # réécoute de la voix IA : {ok, wer, heard, method}
 
     @property
     def duration(self) -> float:

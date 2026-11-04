@@ -144,6 +144,16 @@ def plan_checks(tl: Timeline, transcripts: dict[str, Transcript], settings: Edit
             issues.append(_issue("bruitage", "alerte", f"Bruitage {s.kind} à {s.start:.1f} s ne tombe sur rien "
                                  f"(décalé de {near:.2f} s).", s.start, "bruitage_caler" if near < 0.8 else None, s.id))
 
+    # 8. Voix IA réécoutées : une voix mal comprise fait décrocher.
+    for a in tl.audio:
+        ck = a.check or {}
+        if a.kind == "voix" and ck.get("ok") is False and a.start < total:
+            heard = ck.get("heard") or ""
+            issues.append(_issue("voix_ia", "alerte", f"{a.label or 'Voix IA'} mal comprise à la réécoute"
+                                 + (f" (entendu : « {heard[:60]} »)" if heard else "")
+                                 + (f", {ck['wer'] * 100:.0f} % de mots faux" if ck.get("wer") is not None else "")
+                                 + ". Reformule le texte ou change de voix.", a.start, None, a.id))
+
     return QualityReport(score=score_of(issues), issues=issues)
 
 

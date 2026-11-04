@@ -61,6 +61,9 @@ export interface AudioItem {
   fade_out: number;
   label: string;
   dub?: string | null;
+  text?: string; // texte lu par la voix de synthèse
+  words?: { start: number; end: number; text: string }[];
+  check?: { ok: boolean | null; wer: number | null; heard: string; method: "whisper" | "energie" } | null;
 }
 
 export interface QualityIssue {
@@ -491,6 +494,8 @@ export const api = {
   ttsStatus: () => req<Record<string, string | null>>(`/api/tts`),
   dub: (id: string, language: string | null, original_volume = 0.12) =>
     req<Job>(`/api/projects/${id}/dub`, json("POST", { language, original_volume })),
+  voiceover: (id: string, text: string, start: number, language: string) =>
+    req<Job>(`/api/projects/${id}/voiceover`, json("POST", { text, start, language })),
   languages: () => req<{ code: string; name: string }[]>(`/api/languages`),
   translate: (id: string, language: string | null) =>
     req<Job>(`/api/projects/${id}/translate`, json("POST", { language })),

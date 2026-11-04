@@ -64,6 +64,10 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
   pour les désignations explicites). Les plans sont aussi calés sur les phrases : un plan ne coupe plus une
   phrase en plein milieu, et un plan de coupe finit avec la phrase qu'il illustre. Bouton « Projecteur sur la
   voix » dans le contrôle qualité pour le relancer.
+- **Voix IA calée au mot près et réécoutée** : une voix off IA (un texte lu par la voix de synthèse, posé au
+  curseur) ou un doublage est réécouté par Whisper. Si ce qu'on entend ne ressemble pas au texte, le contrôle
+  qualité le signale. Chaque mot est horodaté, et les sous-titres animés suivent la voix IA (la voix doublée
+  quand la vidéo est doublée). Sans Whisper, les mots sont calés sur l'énergie du son.
 
 ## L'éditeur
 

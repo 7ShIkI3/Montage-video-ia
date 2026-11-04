@@ -705,6 +705,7 @@ def dub_voice(project_id: str, lang: str | None, ctx: JobContext, original_volum
     moment où elles sont dites, et baisse la voix d'origine. lang=None retire le doublage."""
     from .ai import translate as trl
     from .ai import tts
+    from .ai import voicecheck as vcheck
     from .models import AudioItem
     project = storage.load_project(project_id)
 
@@ -759,9 +760,11 @@ def dub_voice(project_id: str, lang: str | None, ctx: JobContext, original_volum
         ffmpeg.run(["-i", str(raw), "-af", f"atempo={tempo:.4f},aresample=48000", "-ac", "2", str(out)])
         raw.unlink(missing_ok=True)
         dur = float(ffmpeg.probe(out).get("duration") or dur / tempo)
+        # Réécoute : la phrase doublée doit se comprendre, et chaque mot est horodaté pour les sous-titres.
+        words, check = vcheck.verify(out, text, lang)
         items.append(AudioItem(asset=out.name, start=round(ln.start, 3), src_in=0.0, src_out=round(dur, 3),
                                lane=3, kind="voix", volume=1.0, fade_in=0.02, fade_out=0.08,
-                               label=f"Doublage {name} {i + 1}", dub=lang))
+                               label=f"Doublage {name} {i + 1}", dub=lang, text=text, words=words, check=check))
 
     def apply(p: Project) -> None:
         p.timeline.audio = [a for a in p.timeline.audio if not a.dub] + items
@@ -769,8 +772,42 @@ def dub_voice(project_id: str, lang: str | None, ctx: JobContext, original_volum
             c.volume = original_volume
         p.timeline.dub_language = lang
     storage.update_project(project_id, apply)
-    ctx.step(f"Doublage en {name} prêt ({engine})", 1.0)
-    return {"language": lang, "lines": len(items), "engine": engine}
+    bad = sum(1 for a in items if a.check and a.check.get("ok") is False)
+    ctx.step(f"Doublage en {name} prêt ({engine})" + (f", {bad} phrase(s) mal comprise(s) à la réécoute" if bad else ""), 1.0)
+    return {"language": lang, "lines": len(items), "engine": engine, "misheard": bad}
+
+
+def ai_voiceover(project_id: str, text: str, start: float, lang: str, ctx: JobContext, lane: int = 2) -> dict:
+    """Voix off IA : lit un texte avec une voix de synthèse, la réécoute, et la pose sur une piste audio."""
+    from .ai import tts
+    from .ai import voicecheck as vcheck
+    from .models import AudioItem, new_id
+    text = text.strip()
+    if not text:
+        raise ValueError("Écris le texte que la voix off doit lire.")
+    if not tts.engine_for(lang):
+        raise ValueError("Aucune voix de synthèse pour cette langue : installe espeak-ng, ou Piper avec une voix "
+                         f"dans {tts.voices_dir()}.")
+    d = storage.audio_dir(project_id)
+    out = d / f"voix_ia_{new_id('')}.wav"
+    raw = out.with_name(out.stem + "_raw.wav")
+    ctx.step("Lecture du texte par la voix de synthèse", 0.2)
+    engine = tts.synthesize(text, lang, raw)
+    ffmpeg.run(["-i", str(raw), "-af", "aresample=48000", "-ac", "2", str(out)])
+    raw.unlink(missing_ok=True)
+    dur = float(ffmpeg.probe(out).get("duration") or 0.0)
+    ctx.step("Réécoute de la voix (compréhension et instant de chaque mot)", 0.6)
+    words, check = vcheck.verify(out, text, lang)
+    item = AudioItem(asset=out.name, start=round(max(0.0, start), 3), src_in=0.0, src_out=round(dur, 3), lane=lane,
+                     kind="voix", label="Voix off IA", text=text, words=words, check=check)
+
+    def apply(p: Project) -> None:
+        p.timeline.audio.append(item)
+    storage.update_project(project_id, apply)
+    verdict = ("comprise à la réécoute" if check.get("ok") else
+               "mal comprise à la réécoute" if check.get("ok") is False else "non réécoutée (Whisper absent)")
+    ctx.step(f"Voix off IA posée ({dur:.1f} s, {engine}), {verdict}", 1.0)
+    return {"id": item.id, "duration": dur, "engine": engine, "check": check}
 
 
 def review_job(project_id: str, ctx: JobContext) -> dict:

@@ -540,3 +540,5 @@ button.link-like:disabled { color: var(--muted); cursor: default; }
 .direction-card:hover:not(:disabled) { border-color: var(--accent-2); }
 .reference-box { display: grid; gap: 4px; margin: 4px 0 6px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; }
 .reference-box .field-row { align-items: center; }
+.voice-check.good { color: #4ade80; }
+.voice-check.bad { color: #f87171; }
