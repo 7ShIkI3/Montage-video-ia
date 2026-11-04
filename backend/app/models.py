@@ -325,6 +325,29 @@ class Review(BaseModel):
     at: float = Field(default_factory=time.time)
 
 
+class Brand(BaseModel):
+    """Identité de marque appliquée au style : couleurs des textes et des sous-titres, police, ton."""
+    name: str = ""
+    colors: list[str] = Field(default_factory=list)  # couleurs dominantes (#RRGGBB)
+    primary: str = "#FF5C7C"  # bandeaux
+    accent: str = "#FFE500"  # mot prononcé des sous-titres, gros textes
+    text: str = "#FFFFFF"  # texte lisible sur la couleur principale
+    font: str | None = None
+    font_installed: bool = False
+    tone: str = ""
+    source: str = ""  # « logo:fichier » ou « site:adresse »
+
+
+class RoleStep(BaseModel):
+    """Une étape du réalisateur, tenue par un rôle nommé (stratège, directeur créatif, storyboard…)."""
+    role: str
+    title: str
+    by: str = "local"  # « claude », « heuristique » ou « local »
+    items: list[str] = Field(default_factory=list)
+    ok: bool | None = None  # vérifications de l'étape : None = rien à vérifier
+    notes: list[str] = Field(default_factory=list)  # ce qui ne colle pas
+
+
 class Timeline(BaseModel):
     clips: list[Clip] = Field(default_factory=list)
     format: Format = "16:9"
@@ -348,6 +371,8 @@ class Timeline(BaseModel):
     dub_language: str | None = None  # langue du doublage IA en place (None = voix d'origine)
     quality: QualityReport | None = None  # dernier contrôle qualité (plan, puis vidéo finie)
     review: Review | None = None  # note du relecteur indépendant
+    brand: Brand | None = None  # identité de marque (couleurs, police, ton) appliquée aux textes
+    plan: list[RoleStep] = Field(default_factory=list)  # les étapes du réalisateur, rôle par rôle
     voice_focus: list[str] = Field(default_factory=list)  # plans calés sur les phrases, projecteurs posés
     reference_match: dict | None = None  # comparaison du rythme obtenu avec celui de la vidéo de référence
     comments: list[Comment] = Field(default_factory=list)

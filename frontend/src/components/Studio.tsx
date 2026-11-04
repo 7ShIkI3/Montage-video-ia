@@ -92,7 +92,12 @@ export function TemplatesPanel() {
   const project = useStore((s) => s.project);
   const { notify, setTimeline } = useStore.getState();
   const [list, setList] = useState<StyleTemplate[]>([]);
-  useEffect(() => { api.templates().then(setList).catch(() => undefined); }, []);
+  useEffect(() => {
+    const load = () => api.templates().then(setList).catch(() => undefined);
+    load();
+    window.addEventListener("templates-changed", load);
+    return () => window.removeEventListener("templates-changed", load);
+  }, []);
   if (!project) return null;
   const save = async () => {
     const name = prompt("Nom du modèle (look, sous-titres, format, musique, logo)", "Ma chaîne");
@@ -121,7 +126,7 @@ export function TemplatesPanel() {
           <li key={t.id}>
             <button className="v-main" onClick={() => apply(t)} title="Appliquer à ce projet">
               <span className="v-name">{t.name}</span>
-              <span className="muted small">{t.style} · {t.format} · {t.look}{t.images.length ? " · logo" : ""}</span>
+              <span className="muted small">{t.style} · {t.format} · {t.look}{t.images.length ? " · logo" : ""}{t.brand ? " · marque" : ""}</span>
             </button>
             <button className="icon-btn" title="Supprimer" onClick={() => del(t)}>✕</button>
           </li>
@@ -207,5 +212,65 @@ export function PresetExport({ onDone }: { onDone: (names: string[]) => void }) 
         {busy ? "Rendu en cours…" : sel.length > 1 ? `Exporter ${sel.length} versions` : "Exporter"}
       </button>
     </div>
+  );
+}
+
+/** Identité de marque : couleurs, police et ton tirés d'un logo importé ou d'un site, appliqués aux textes. */
+export function BrandPanel() {
+  const project = useStore((s) => s.project);
+  const tl = useStore((s) => s.timeline);
+  const [url, setUrl] = useState("");
+  const [asTemplate, setAsTemplate] = useState(true);
+  const [busy, setBusy] = useState(false);
+  if (!project || !tl) return null;
+  const logos = Array.from(new Set((tl.images ?? []).map((g) => g.asset)));
+  const b = tl.brand;
+  const run = async (body: { asset?: string; url?: string }) => {
+    const st = useStore.getState();
+    setBusy(true);
+    try {
+      await saveIfDirty();
+      const r = await api.setBrand(project.id, { ...body, template: asTemplate });
+      await st.refreshProject({ timeline: true });
+      if (r.template) window.dispatchEvent(new Event("templates-changed"));
+      st.notify(`Identité « ${r.brand.name} » appliquée${r.template ? `, modèle « ${r.template.name} » enregistré` : ""}.`);
+    } catch (e) {
+      st.notify(`Identité de marque impossible : ${(e as Error).message}`);
+    } finally { setBusy(false); }
+  };
+  const clear = async () => {
+    const st = useStore.getState();
+    await saveIfDirty();
+    await api.clearBrand(project.id);
+    await st.refreshProject({ timeline: true });
+  };
+  return (
+    <section className="panel brand">
+      <header><h3>Identité de marque</h3>{b && <button className="small-btn" onClick={clear}>Retirer</button>}</header>
+      {b ? (
+        <div className="brand-card">
+          <div className="brand-swatches">
+            {b.colors.map((c) => <span key={c} style={{ background: c }} title={c} className={c === b.accent ? "acc" : c === b.primary ? "pri" : ""} />)}
+          </div>
+          <p className="small"><b>{b.name || "Marque"}</b> · principale {b.primary} · accent {b.accent}</p>
+          {b.font && <p className="small">Police {b.font}{b.font_installed ? "" : " (non installée : police par défaut au rendu)"}</p>}
+          {b.tone && <p className="small">Ton : {b.tone}</p>}
+        </div>
+      ) : (
+        <p className="muted small">Tire les couleurs, la police et le ton d'un logo ou d'un site : sous-titres, gros textes et bandeaux prennent les couleurs de la marque.</p>
+      )}
+      {logos.length > 0 && (
+        <div className="field-row">
+          {logos.slice(0, 3).map((a) => (
+            <button key={a} className="small-btn" disabled={busy} onClick={() => run({ asset: a })} title={a}>Depuis {a.length > 18 ? a.slice(0, 16) + "…" : a}</button>
+          ))}
+        </div>
+      )}
+      <div className="field-row">
+        <input placeholder="site-de-la-marque.fr" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <button className="small-btn" disabled={busy || !url.trim()} onClick={() => run({ url })}>{busy ? "Lecture…" : "Depuis le site"}</button>
+      </div>
+      <label className="check small"><input type="checkbox" checked={asTemplate} onChange={(e) => setAsTemplate(e.target.checked)} /> Enregistrer aussi un modèle de style</label>
+    </section>
   );
 }

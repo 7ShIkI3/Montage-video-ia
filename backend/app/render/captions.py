@@ -122,9 +122,20 @@ def _esc(t: str) -> str:
     return t.replace("\\", "").replace("{", "(").replace("}", ")")
 
 
-def _text_styles(width: int, height: int) -> list[str]:
+def _brand_colors(brand) -> tuple[str, str, str, str | None]:
+    """(accent, principale, texte sur principale, police) en couleurs ASS ; valeurs d'origine sans marque."""
+    if not brand:
+        return "&H0000E5FF", "&H00FF5C7C", "&H00FFFFFF", None
+    from ..ai.brand import ass_color
+    return (ass_color(brand.accent), ass_color(brand.primary), ass_color(brand.text),
+            brand.font if brand.font and brand.font_installed else None)
+
+
+def _text_styles(width: int, height: int, brand=None) -> list[str]:
     base = min(width, height)
-    f = "Arial Black"
+    acc, prim, ptxt, bfont = _brand_colors(brand)
+    f = bfont or "Arial Black"
+    fb = bfont or "Arial"
     t = int(base * 0.11)
     g = int(base * 0.13)
     b = int(base * 0.055)
@@ -134,8 +145,8 @@ def _text_styles(width: int, height: int) -> list[str]:
     # Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
     return [
         f"Style: Titre,{f},{t},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,100,2,0,1,{max(3, t // 14)},{max(2, t // 25)},5,60,60,60,1",
-        f"Style: GrosTexte,{f},{g},&H0000E5FF,&H00FFFFFF,&H00000000,&HA0000000,-1,0,0,0,100,100,0,0,1,{max(4, g // 10)},{max(2, g // 20)},5,60,60,60,1",
-        f"Style: Bandeau,Arial,{b},&H00FFFFFF,&H00FFFFFF,&H00FF5C7C,&H00FF5C7C,-1,0,0,0,100,100,1,0,3,{max(8, b // 3)},0,1,{int(width * 0.05)},60,{int(height * 0.12)},1",
+        f"Style: GrosTexte,{f},{g},{acc},&H00FFFFFF,&H00000000,&HA0000000,-1,0,0,0,100,100,0,0,1,{max(4, g // 10)},{max(2, g // 20)},5,60,60,60,1",
+        f"Style: Bandeau,{fb},{b},{ptxt},&H00FFFFFF,{prim},{prim},-1,0,0,0,100,100,1,0,3,{max(8, b // 3)},0,1,{int(width * 0.05)},60,{int(height * 0.12)},1",
         f"Style: Legende,Arial,{lg},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,-1,0,0,100,100,0,0,1,2,1,2,60,60,{int(height * 0.18)},1",
         f"Style: Emoji,DejaVu Sans,{e},&H0000E5FF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{max(3, e // 16)},2,5,60,60,60,1",
     ]
@@ -173,14 +184,15 @@ def text_events(texts: list[TextItem], width: int, height: int) -> list[str]:
 
 
 def to_ass(lines: list[CaptionLine], width: int, height: int, style: str, fmt: str,
-           texts: list[TextItem] | None = None) -> str:
+           texts: list[TextItem] | None = None, brand=None) -> str:
     vertical = fmt == "9:16"
     base = min(width, height)
+    acc, _, _, bfont = _brand_colors(brand)
     if style == "karaoke":
         size = int(base * (0.085 if vertical else 0.065))
         outline = max(2, size // 12)
         margin_v = int(height * (0.28 if vertical else 0.09))
-        styl = (f"Style: Default,Arial Black,{size},&H00FFFFFF,&H0000E5FF,&H00000000,&H64000000,"
+        styl = (f"Style: Default,{bfont or 'Arial Black'},{size},&H00FFFFFF,{acc},&H00000000,&H64000000,"
                 f"-1,0,0,0,100,100,0,0,1,{outline},{outline // 2},2,40,40,{margin_v},1")
     else:
         size = int(base * (0.055 if vertical else 0.045))
@@ -194,7 +206,7 @@ def to_ass(lines: list[CaptionLine], width: int, height: int, style: str, fmt: s
         "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
         f"Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n{styl}\n"
-        + "\n".join(_text_styles(width, height)) + "\n\n"
+        + "\n".join(_text_styles(width, height, brand)) + "\n\n"
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
     events = []
@@ -210,7 +222,7 @@ def to_ass(lines: list[CaptionLine], width: int, height: int, style: str, fmt: s
                 for j, x in enumerate(ln.words):
                     t = _esc(x.text.upper())
                     if j == i:
-                        parts.append(r"{\c&H0000E5FF&\fscx112\fscy112}" + t + r"{\c&H00FFFFFF&\fscx100\fscy100}")
+                        parts.append(rf"{{\c{acc}&\fscx112\fscy112}}" + t + r"{\c&H00FFFFFF&\fscx100\fscy100}")
                     else:
                         parts.append(t)
                 pop = r"{\fad(0,0)}" if i else r"{\fscx90\fscy90\t(0,80,\fscx100\fscy100)}"

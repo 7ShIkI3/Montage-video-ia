@@ -798,6 +798,49 @@ def preview_frame(pid: str, media: str, t: float = 0.0, lut: str | None = None, 
     return Response(jpg.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+# --- Identité de marque ---------------------------------------------------------------------
+
+class BrandReq(BaseModel):
+    asset: str | None = None  # logo déjà importé (dossier images du projet)
+    url: str | None = None  # ou site de la marque
+    template: bool = False  # enregistre aussi un modèle de style à son nom
+
+
+@app.post("/api/projects/{pid}/brand")
+def set_brand(pid: str, body: BrandReq):
+    """Tire couleurs, police et ton d'un logo ou d'un site, et les applique aux textes et sous-titres."""
+    from .ai import brand as brand_mod
+    p = _project(pid)
+    try:
+        if body.asset:
+            path = storage.assets_dir(pid) / Path(body.asset).name
+            if not path.exists():
+                raise HTTPException(404, "Logo introuvable")
+            b = brand_mod.from_logo(path, Path(body.asset).stem)
+        elif body.url:
+            b = brand_mod.from_site(body.url.strip()[:500])
+        else:
+            raise HTTPException(400, "Donne un logo ou l'adresse d'un site.")
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Lecture impossible : {e}")
+    p.timeline.brand = b
+    storage.save_project(p)
+    tpl = pipeline.save_template(p, f"Marque {b.name}".strip()) if body.template else None
+    return {"brand": b, "template": tpl}
+
+
+@app.delete("/api/projects/{pid}/brand")
+def clear_brand(pid: str):
+    p = _project(pid)
+    p.timeline.brand = None
+    storage.save_project(p)
+    return {"ok": True}
+
+
 # --- Modèles de style ---------------------------------------------------------------------
 
 class TemplateReq(BaseModel):

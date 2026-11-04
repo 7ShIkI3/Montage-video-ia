@@ -124,3 +124,34 @@ export function QualityPanel() {
     </div>
   );
 }
+
+const ROLE_ICON: Record<string, string> = { stratege: "🎯", creatif: "💡", storyboard: "🎬", montage: "✂️", publication: "📣" };
+
+/** Le réalisateur rôle par rôle : ce que chaque étape a décidé, et ce qui ne colle pas. */
+export function PlanPanel() {
+  const tl = useStore((s) => s.timeline);
+  const [open, setOpen] = useState<string | null>(null);
+  if (!tl?.plan?.length) return null;
+  return (
+    <div className="fx-section plan">
+      <div className="fx-title">Plan de réalisation</div>
+      <ol className="plan-steps">
+        {tl.plan.map((st) => (
+          <li key={st.role} className={st.ok === false ? "plan-warn" : st.ok ? "plan-good" : ""}>
+            <button className="link-like plan-head" onClick={() => setOpen(open === st.role ? null : st.role)}>
+              <span>{ROLE_ICON[st.role] ?? "•"} <b>{st.title}</b></span>
+              <small>{st.by === "claude" ? "Claude" : st.by === "heuristique" ? "IA locale" : "local"}
+                {st.ok === false ? ` · ${st.notes.length} à revoir` : st.ok ? " · ok" : ""} {open === st.role ? "▾" : "▸"}</small>
+            </button>
+            {open === st.role && (
+              <ul>
+                {st.items.map((x, k) => <li key={k}>{x}</li>)}
+                {st.notes.map((x, k) => <li key={"n" + k} className="plan-note">⚠ {x}</li>)}
+              </ul>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}

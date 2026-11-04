@@ -71,6 +71,12 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
 - **Affirmations vérifiées** : le contrôle qualité repère dans les textes et le titre ce qui promet trop
   (« le meilleur », « garanti », « jamais vu », « 100 % ») et l'adoucit, et signale un chiffre affiché qui n'est
   jamais dit dans la vidéo.
+- **Plan de réalisation, rôle par rôle** : stratège (objectif, public, plateforme, promesse), directeur créatif
+  (angle, ton, accroche, moment fort, fin), puis storyboard, montage et publication. Le brief des deux premiers
+  guide le réalisateur ; chaque étape affiche ce qu'elle a décidé et ce qui ne colle pas.
+- **Identité de marque** : depuis un logo importé ou le site de la marque, l'IA tire les couleurs (principale et
+  accent), la police et le ton. Sous-titres, gros textes et bandeaux en prennent les couleurs, le ton guide le
+  réalisateur, et un modèle de style « Marque … » peut être enregistré pour les prochaines vidéos.
 
 ## L'éditeur
 

@@ -446,7 +446,13 @@ export function Player() {
   return (
     <div className="player">
       <div className="player-stage">
-        <div className={`frame frame-${fmt.replace(":", "x")}`} style={{ aspectRatio: aspect }}>
+        <div className={`frame frame-${fmt.replace(":", "x")}`} style={{
+          aspectRatio: aspect,
+          ...(tl?.brand ? {
+            "--brand-accent": tl.brand.accent, "--brand-primary": tl.brand.primary, "--brand-text": tl.brand.text,
+            ...(tl.brand.font && tl.brand.font_installed ? { "--brand-font": `"${tl.brand.font}"` } : {}),
+          } as React.CSSProperties : {}),
+        }}>
           <div ref={stage} className={`fxwrap ${fxClasses(fxEff, look).join(" ")}`}>
             <video ref={v0} className={shown === 0 ? "on" : ""} playsInline preload="auto" />
             <video ref={v1} className={shown === 1 ? "on" : ""} playsInline preload="auto" />

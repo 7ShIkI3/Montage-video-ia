@@ -66,6 +66,15 @@ export interface AudioItem {
   check?: { ok: boolean | null; wer: number | null; heard: string; method: "whisper" | "energie" } | null;
 }
 
+export interface RoleStep {
+  role: string;
+  title: string;
+  by: string;
+  items: string[];
+  ok: boolean | null;
+  notes: string[];
+}
+
 export interface QualityIssue {
   check: string;
   level: "erreur" | "alerte" | "ok";
@@ -172,9 +181,22 @@ export interface ExportPreset {
   container: string;
 }
 
+export interface Brand {
+  name: string;
+  colors: string[];
+  primary: string;
+  accent: string;
+  text: string;
+  font: string | null;
+  font_installed: boolean;
+  tone: string;
+  source: string;
+}
+
 export interface StyleTemplate {
   id: string;
   name: string;
+  brand?: Brand | null;
   style: Style;
   format: Format;
   captions: CaptionStyle;
@@ -258,6 +280,8 @@ export interface Timeline {
   quality?: QualityReport | null;
   review?: Review | null;
   voice_focus?: string[];
+  plan?: RoleStep[];
+  brand?: Brand | null;
   reference_match?: { target_shot: number; result_shot: number; rounds: number; history: number[]; unmatched: string[]; summary: string } | null;
   reframe: boolean;
   comments: Comment[];
@@ -500,6 +524,9 @@ export const api = {
   translate: (id: string, language: string | null) =>
     req<Job>(`/api/projects/${id}/translate`, json("POST", { language })),
   templates: () => req<StyleTemplate[]>(`/api/templates`),
+  setBrand: (id: string, body: { asset?: string; url?: string; template?: boolean }) =>
+    req<{ brand: Brand; template: StyleTemplate | null }>(`/api/projects/${id}/brand`, json("POST", body)),
+  clearBrand: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/brand`, { method: "DELETE" }),
   saveTemplate: (id: string, name: string) => req<StyleTemplate>(`/api/projects/${id}/templates`, json("POST", { name })),
   applyTemplate: (id: string, tid: string) => req<Project>(`/api/projects/${id}/templates/${tid}/apply`, { method: "POST" }),
   deleteTemplate: (tid: string) => req<{ ok: boolean }>(`/api/templates/${tid}`, { method: "DELETE" }),
