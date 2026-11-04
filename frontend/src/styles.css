@@ -525,3 +525,15 @@ button.link-like:disabled { color: var(--muted); cursor: default; }
 .q-list li.q-erreur { border-left-color: #f87171; }
 .q-list li.q-alerte { border-left-color: #fbbf24; }
 .q-list li.q-remark { border-left-color: var(--accent-2); }
+
+/* Directions créatives */
+.directions { display: grid; gap: 8px; margin: 4px 0 10px; }
+.directions input { width: 100%; }
+.direction-card { display: grid; gap: 3px; text-align: left; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); }
+.direction-card b { font-size: 14px; }
+.direction-card span { font-size: 12.5px; }
+.direction-card small { color: var(--muted); font-size: 11.5px; }
+.direction-card.rec { border-color: var(--accent); }
+.direction-card:hover:not(:disabled) { border-color: var(--accent-2); }
+.reference-box { display: grid; gap: 4px; margin: 4px 0 6px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; }
+.reference-box .field-row { align-items: center; }

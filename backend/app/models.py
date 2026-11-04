@@ -339,6 +339,7 @@ class Timeline(BaseModel):
     dub_language: str | None = None  # langue du doublage IA en place (None = voix d'origine)
     quality: QualityReport | None = None  # dernier contrôle qualité (plan, puis vidéo finie)
     review: Review | None = None  # note du relecteur indépendant
+    reference_match: dict | None = None  # comparaison du rythme obtenu avec celui de la vidéo de référence
     comments: list[Comment] = Field(default_factory=list)
     reframe: bool = True  # recadrage automatique sur le visage quand le format est plus étroit que la source
 
@@ -358,6 +359,17 @@ class Version(BaseModel):
     note: str = ""
 
 
+class Direction(BaseModel):
+    """Une direction créative proposée avant le montage : l'utilisateur en choisit une, l'IA monte seule."""
+    id: str = Field(default_factory=lambda: new_id("d_"))
+    name: str
+    pitch: str = ""  # en une phrase : ce que la vidéo racontera et comment
+    rhythm: str = ""
+    tone: str = ""
+    settings: dict = Field(default_factory=dict)  # réglages EditSettings à appliquer (style, durée, format…)
+    recommended: bool = False
+
+
 class Project(BaseModel):
     id: str = Field(default_factory=lambda: new_id("p_"))
     name: str = "Nouveau projet"
@@ -369,6 +381,8 @@ class Project(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     exports: list[str] = Field(default_factory=list)
     publish_kit: dict | None = None  # titres, description, chapitres, hashtags, miniature
+    directions: list[Direction] = Field(default_factory=list)  # 3 directions proposées avant le montage
+    reference: dict | None = None  # profil de rythme d'une vidéo de référence (« monte comme ça »)
     versions: list[Version] = Field(default_factory=lambda: [Version()])
     active_version: str | None = None
 

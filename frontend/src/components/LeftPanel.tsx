@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { api, EditSettings, fmtTime, Style, waitJob } from "../api";
+import { api, Direction, EditSettings, fmtTime, Style, waitJob } from "../api";
 import { useStore } from "../store";
 
 const STYLES: { id: Style; name: string; desc: string }[] = [
@@ -85,15 +85,16 @@ export function AIPanel() {
   const set = (patch: Partial<EditSettings>) => setS({ ...settings, ...patch });
   const busy = !!job && (job.status === "en_cours" || job.status === "en_attente");
 
-  const run = async () => {
+  const run = async (override?: EditSettings) => {
+    const settings_ = override ?? settings;
     if (!project.media.length) return notify("Importe d'abord au moins une vidéo.");
     const dirty = useStore.getState().dirty;
     if (project.timeline.clips.length && !confirm(
       dirty ? "Remonter remplace le montage actuel et tes retouches non enregistrées. Continuer ?"
         : "Remonter remplace le montage actuel. Continuer ?")) return;
     try {
-      await api.patchProject(project.id, { settings });
-      const j = await api.autoEdit(project.id, settings);
+      await api.patchProject(project.id, { settings: settings_ });
+      const j = await api.autoEdit(project.id, settings_);
       await waitJob(j, setJob);
       await useStore.getState().load(project.id);
       notify("Montage terminé. Tu peux le retoucher ou demander des changements à l'IA.");
@@ -148,7 +149,9 @@ export function AIPanel() {
         <textarea rows={2} placeholder="Ex. : garde surtout la partie sur le matériel, ton dynamique"
           value={settings.instructions} onChange={(e) => set({ instructions: e.target.value })} />
       </label>
-      <button className="primary big" onClick={run} disabled={busy || !project.media.length}>
+      <ReferencePicker busy={busy} />
+      <DirectionsPicker busy={busy} onPick={(d) => { const next = { ...settings, ...d.settings } as EditSettings; setS(next); run(next); }} />
+      <button className="primary big" onClick={() => run()} disabled={busy || !project.media.length}>
         {busy ? "L'IA travaille…" : project.timeline.clips.length ? "↻ Remonter avec l'IA" : "✨ Monter avec l'IA"}
       </button>
       {busy && job && (
@@ -156,5 +159,98 @@ export function AIPanel() {
       )}
       {project.warnings.map((w, i) => <p key={i} className="warn small">{w}</p>)}
     </section>
+  );
+}
+
+/** Avant de monter : 3 directions créatives au choix (questions facultatives : plateforme, ton, public). */
+function DirectionsPicker({ busy, onPick }: { busy: boolean; onPick: (d: Direction) => void }) {
+  const project = useStore((s) => s.project);
+  const [open, setOpen] = useState(false);
+  const [platform, setPlatform] = useState("auto");
+  const [tone, setTone] = useState("auto");
+  const [audience, setAudience] = useState("");
+  if (!project) return null;
+  const dirs = project.directions ?? [];
+  const ask = async () => {
+    const st = useStore.getState();
+    try {
+      await waitJob(await api.directions(project.id, { platform, tone, audience }), st.setJob);
+      await st.refreshProject();
+    } catch (e) {
+      st.notify(`Directions impossibles : ${(e as Error).message}`);
+    } finally { st.setJob(null); }
+  };
+  return (
+    <div className="directions">
+      <button className="link-like small" onClick={() => setOpen(!open)}>
+        {open ? "▾" : "▸"} Proposer 3 directions avant de monter
+      </button>
+      {open && (
+        <>
+          <div className="field-row">
+            <label>Plateforme
+              <select value={platform} onChange={(e) => setPlatform(e.target.value)}>
+                <option value="auto">Peu importe</option><option value="youtube">YouTube</option>
+                <option value="tiktok">TikTok, Reels, Shorts</option><option value="instagram">Instagram</option>
+                <option value="linkedin">LinkedIn</option>
+              </select>
+            </label>
+            <label>Ton
+              <select value={tone} onChange={(e) => setTone(e.target.value)}>
+                <option value="auto">Au choix de l'IA</option><option value="fun">Drôle, énergique</option>
+                <option value="pro">Sérieux, pro</option><option value="emotion">Émouvant</option>
+                <option value="pedago">Pédagogique</option>
+              </select>
+            </label>
+          </div>
+          <input placeholder="Public (facultatif) : ex. débutants en montage" value={audience} onChange={(e) => setAudience(e.target.value)} />
+          <button className="small-btn" disabled={busy || !project.media.length} onClick={ask}>
+            {dirs.length ? "Proposer d'autres directions" : "Proposer 3 directions"}
+          </button>
+          {dirs.map((d) => (
+            <button key={d.id} className={`direction-card ${d.recommended ? "rec" : ""}`} disabled={busy} onClick={() => onPick(d)}>
+              <b>{d.name}{d.recommended ? " · recommandée" : ""}</b>
+              <span>{d.pitch}</span>
+              <small>{[d.rhythm, d.tone, d.settings.format, d.settings.target_duration ? `${d.settings.target_duration} s` : "durée libre"].filter(Boolean).join(" · ")}</small>
+            </button>
+          ))}
+          {dirs.length > 0 && <p className="muted small">Clique une direction : l'IA monte seule dans ce sens.</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** « Monte comme cette vidéo » : l'IA copie le rythme d'une vidéo de référence (pas son look). */
+function ReferencePicker({ busy }: { busy: boolean }) {
+  const project = useStore((s) => s.project);
+  const input = useRef<HTMLInputElement>(null);
+  const [sending, setSending] = useState(false);
+  if (!project) return null;
+  const ref = project.reference;
+  const { notify, refreshProject } = useStore.getState();
+  return (
+    <div className="reference-box">
+      <div className="field-row">
+        <span className="small"><b>Vidéo de référence</b> {ref ? `· ${ref.filename}` : "· aucune"}</span>
+        <button className="small-btn" disabled={busy || sending} onClick={() => input.current?.click()}>
+          {sending ? "Analyse…" : ref ? "Changer" : "Choisir…"}
+        </button>
+        {ref && <button className="small-btn" disabled={busy} onClick={async () => { await api.deleteReference(project.id); await refreshProject(); }}>Retirer</button>}
+      </div>
+      <input ref={input} type="file" accept="video/*" hidden onChange={async (e) => {
+        const f = e.target.files?.[0];
+        e.target.value = "";
+        if (!f) return;
+        setSending(true);
+        try {
+          await useStore.getState().saveNow();
+          await api.uploadReference(project.id, f);
+          await refreshProject();
+          notify("Référence analysée : le prochain montage suivra son rythme.");
+        } catch (err) { notify(`Référence refusée : ${(err as Error).message}`); } finally { setSending(false); }
+      }} />
+      <p className="muted small">{ref ? ref.summary : "Dépose un montage que tu aimes : l'IA copiera son rythme (durée des plans, fondus), pas ses couleurs."}</p>
+    </div>
   );
 }

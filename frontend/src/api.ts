@@ -249,6 +249,7 @@ export interface Timeline {
   dub_language?: string | null;
   quality?: QualityReport | null;
   review?: Review | null;
+  reference_match?: { target_shot: number; result_shot: number; rounds: number; history: number[]; unmatched: string[]; summary: string } | null;
   reframe: boolean;
   comments: Comment[];
 }
@@ -278,6 +279,18 @@ export interface Project {
   exports: string[];
   publish_kit: PublishKit | null;
   active_version: string | null;
+  directions?: Direction[];
+  reference?: { filename: string; summary: string; mean_shot: number; shots: number; duration: number } | null;
+}
+
+export interface Direction {
+  id: string;
+  name: string;
+  pitch: string;
+  rhythm: string;
+  tone: string;
+  settings: Partial<EditSettings>;
+  recommended: boolean;
 }
 
 export interface PublishKit {
@@ -457,6 +470,14 @@ export const api = {
     if (p.background) q.set("background", p.background);
     return `/api/projects/${id}/preview-frame?${q}`;
   },
+  uploadReference: async (id: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return req<{ summary: string }>(`/api/projects/${id}/reference`, { method: "POST", body: fd });
+  },
+  deleteReference: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/reference`, { method: "DELETE" }),
+  directions: (id: string, body: { platform: string; tone: string; audience: string }) =>
+    req<Job>(`/api/projects/${id}/directions`, json("POST", body)),
   quality: (id: string, fix: boolean) => req<Job>(`/api/projects/${id}/quality`, json("POST", { fix })),
   review: (id: string) => req<Job>(`/api/projects/${id}/review`, { method: "POST" }),
   soundsheetUrl: (id: string) => `/api/projects/${id}/soundsheet`,

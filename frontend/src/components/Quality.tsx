@@ -72,6 +72,13 @@ export function QualityPanel() {
               ))}
             </ul>
           )}
+          {tl.reference_match && (
+            <p className="small">
+              <b>Rythme de la référence</b> : {tl.reference_match.target_shot.toFixed(1)} s par plan · obtenu{" "}
+              {tl.reference_match.result_shot.toFixed(1)} s en {tl.reference_match.rounds} tour(s)
+              {tl.reference_match.unmatched.length ? ` · pas égalé : ${tl.reference_match.unmatched.join(" ; ")}` : " · égalé"}
+            </p>
+          )}
           {q?.fixed && q.fixed.length > 0 && (
             <details className="small"><summary>Corrigé automatiquement ({q.fixed.length})</summary>
               <ul>{q.fixed.map((f, k) => <li key={k}>{f}</li>)}</ul>

@@ -50,6 +50,15 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
 - **Feuille son/image** : chaque son (paroles, impacts des rushes, bruitages, temps forts et pic de la musique)
   décrit en mots, à côté de ce qui est à l'écran au même instant. Le pic de la musique est calé sur le moment fort.
 
+### Avant de monter
+
+- **3 directions créatives** : l'IA regarde les rushes et propose trois façons différentes de raconter la vidéo
+  (récit complet, short qui accroche, edit gaming, vlog ou discussion selon le contenu), avec une recommandée.
+  Trois questions facultatives orientent les propositions : plateforme, ton, public. Un clic, et l'IA monte seule.
+- **Monter comme une vidéo de référence** : dépose un montage que tu aimes ; l'IA mesure son rythme (coupes,
+  durée des plans, fondus), puis rapproche le sien en 2 à 5 tours et dit ce qu'elle n'a pas pu égaler.
+  Seul le rythme est copié, pas le look.
+
 ## L'éditeur
 
 - Lecture de la timeline en direct (sans rendu), sous-titres en surimpression, aperçu du format.

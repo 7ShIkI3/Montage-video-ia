@@ -156,6 +156,10 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     if settings.music and not music:
         project.warnings.append("Aucune musique trouvée : ajoute des fichiers audio libres de droits.")
 
+    if project.reference:
+        from .ai import reference as ref_mod
+        hint = ref_mod.describe(project.reference) + " Reproduis ce rythme de montage (le look reste celui des rushes)."
+        settings = settings.model_copy(update={"instructions": (settings.instructions + "\n" + hint).strip()})
     director = dir_mod.get_director()
     ctx.step("Réalisation du montage par l'IA" + (" (Claude)" if director.name == "claude" else ""), 0.9)
     order = [m.id for m in project.media]
@@ -196,6 +200,10 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     if notes and tl.director != "claude":  # heuristique ou pvp
         ctx.step("Application de tes commentaires", 0.98)
         comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, notes, _faces(project))
+    if project.reference and tl.clips and settings.style != "pvp":
+        from .ai import reference as ref_mod
+        ctx.step("Rythme calé sur la vidéo de référence", 0.982)
+        tl, tl.reference_match = ref_mod.match(tl, project.reference, transcripts_for(project))
     project.timeline = tl
     tl = polish(project, tl, segments, settings, music, ctx, director, 0.985)
 
@@ -800,3 +808,21 @@ def quality_job(project_id: str, fix: bool, ctx: JobContext) -> dict:
     q = storage.load_project(project_id).timeline.quality
     ctx.step(f"Contrôle qualité : {q.score}/100", 1.0)
     return {"score": q.score, "issues": len(q.issues), "fixed": q.fixed}
+
+
+def propose_directions(project_id: str, platform: str, tone: str, audience: str, ctx: JobContext) -> dict:
+    """Analyse les rushes puis propose 3 directions créatives (rangées dans le projet)."""
+    from .ai import directions as dir_ai
+    project = storage.load_project(project_id)
+    if not project.media:
+        raise ValueError("Ajoute au moins une vidéo avant de demander des directions.")
+    n = len(project.media)
+    for i, m in enumerate(project.media):
+        analyze_media(project, m, ctx, 0.8 * i / n, 0.8 * (i + 1) / n)
+        _save_media(project)
+    ctx.step("Le directeur créatif prépare 3 directions" + (" (Claude)" if config.claude_available() else ""), 0.85)
+    segments = all_segments(project, project.settings)
+    found, who = dir_ai.propose(project, segments, platform, tone, audience)
+    storage.update_project(project_id, lambda p: setattr(p, "directions", found))
+    ctx.step("3 directions prêtes : choisis-en une", 1.0)
+    return {"directions": [d.model_dump() for d in found], "by": who}
