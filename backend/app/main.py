@@ -681,6 +681,13 @@ def run_quality(pid: str, body: QualityReq):
     return manager.submit(pid, "controle", lambda ctx: pipeline.quality_job(pid, body.fix, ctx))
 
 
+@app.post("/api/projects/{pid}/voice-focus")
+def run_voice_focus(pid: str):
+    """Cale les plans sur les phrases et pose un projecteur sur ce que la voix désigne."""
+    _project(pid)
+    return manager.submit(pid, "projecteur", lambda ctx: pipeline.voice_focus_job(pid, ctx))
+
+
 @app.post("/api/projects/{pid}/review")
 def run_review(pid: str):
     """Relecteur indépendant : note la version, et la fait retoucher sous la note de passage (3 tours au plus)."""

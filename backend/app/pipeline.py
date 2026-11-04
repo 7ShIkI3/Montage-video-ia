@@ -200,6 +200,9 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     if notes and tl.director != "claude":  # heuristique ou pvp
         ctx.step("Application de tes commentaires", 0.98)
         comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, notes, _faces(project))
+    if tl.clips and settings.style != "pvp":
+        ctx.step("Plans calés sur les phrases, projecteur sur ce que montre la voix", 0.981)
+        tl.voice_focus = voice_focus(project, tl, transcripts_for(project))
     if project.reference and tl.clips and settings.style != "pvp":
         from .ai import reference as ref_mod
         ctx.step("Rythme calé sur la vidéo de référence", 0.982)
@@ -785,6 +788,45 @@ def review_job(project_id: str, ctx: JobContext) -> dict:
     storage.update_project(project_id, apply)
     ctx.step(f"Relecture : {tl.review.score:.1f}/10 en {tl.review.rounds} tour(s)", 1.0)
     return {"score": tl.review.score, "rounds": tl.review.rounds, "quality": tl.quality.score}
+
+
+def _narrow(project: Project, tl: Timeline) -> set[str]:
+    """Rushes recadrés sur le visage (format plus étroit) : on n'y ajoute pas de zoom animé."""
+    a, b = (int(x) for x in tl.format.split(":"))
+    return {m.id for m in project.media if tl.reframe and m.height and m.width / m.height > a / b + 0.01}
+
+
+def voice_focus(project: Project, tl: Timeline, transcripts: dict) -> list[str]:
+    """Plans calés sur la durée des phrases, puis projecteur sur ce que la voix désigne (sur place)."""
+    from .ai import voicefocus as vf
+    notes = vf.fit_to_sentences(tl, transcripts)
+    try:
+        notes += vf.add_spotlights(project, tl, transcripts, _faces(project), vf.get_locator(), _narrow(project, tl))
+    except Exception as e:  # le projecteur est un plus : il ne doit jamais faire échouer le montage
+        log.warning("Projecteur impossible : %s", e)
+    return notes
+
+
+def voice_focus_job(project_id: str, ctx: JobContext) -> dict:
+    """Relance sur le montage actuel : retire les projecteurs posés par l'IA, puis recale et repose."""
+    project = storage.load_project(project_id)
+    transcripts = transcripts_for(project)
+    ctx.step("Recherche de ce que montre la voix", 0.3)
+    tl = project.timeline.model_copy(deep=True)
+    for c in tl.clips:
+        if any(m.kind == "projecteur" and m.push_in for m in c.masks):
+            c.keyframes = []  # le zoom vers la zone venait du projecteur
+        c.masks = [m for m in c.masks if m.kind != "projecteur"]
+    notes = voice_focus(project, tl, transcripts)
+    tl.voice_focus = notes
+
+    def apply(p: Project) -> None:
+        tl.comments = p.timeline.comments
+        p.timeline = tl
+    storage.update_project(project_id, apply)
+    n = sum(1 for x in notes if x.startswith("projecteur"))
+    ctx.step(f"{n} projecteur(s), {len(notes) - n} calage(s) sur les phrases", 1.0)
+    return {"notes": notes}
 
 
 def quality_job(project_id: str, fix: bool, ctx: JobContext) -> dict:

@@ -77,10 +77,16 @@ class Region(BaseModel):
 
 
 class Mask(Region):
-    """Zone traitée sur un plan : flou (visage, plaque…), pixelisé, cache noir ou cadre de mise en avant."""
+    """Zone traitée sur un plan : flou (visage, plaque…), pixelisé, cache noir, cadre de mise en avant, ou
+    projecteur (le reste de l'image s'assombrit pour guider le regard vers ce dont parle la voix)."""
 
-    kind: Literal["flou", "pixel", "noir", "cadre"] = "flou"
+    kind: Literal["flou", "pixel", "noir", "cadre", "projecteur"] = "flou"
     follow_dx: float | None = None  # si défini, la zone suit le visage (x = position du visage + décalage)
+    start: float | None = None  # zone limitée dans le temps : secondes depuis le début du plan (timeline)
+    end: float | None = None
+    label: str = ""  # petit label posé à côté de la zone (projecteur)
+    push_in: bool = False  # le projecteur a ajouté un zoom animé vers la zone (images clés du plan)
+    reason: str = ""
 
 
 class Keyframe(BaseModel):
@@ -339,6 +345,7 @@ class Timeline(BaseModel):
     dub_language: str | None = None  # langue du doublage IA en place (None = voix d'origine)
     quality: QualityReport | None = None  # dernier contrôle qualité (plan, puis vidéo finie)
     review: Review | None = None  # note du relecteur indépendant
+    voice_focus: list[str] = Field(default_factory=list)  # plans calés sur les phrases, projecteurs posés
     reference_match: dict | None = None  # comparaison du rythme obtenu avec celui de la vidéo de référence
     comments: list[Comment] = Field(default_factory=list)
     reframe: bool = True  # recadrage automatique sur le visage quand le format est plus étroit que la source

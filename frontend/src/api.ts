@@ -187,8 +187,13 @@ export interface Region {
 }
 
 export interface Mask extends Region {
-  kind: "flou" | "pixel" | "noir" | "cadre";
+  kind: "flou" | "pixel" | "noir" | "cadre" | "projecteur";
   follow_dx: number | null;
+  start?: number | null; // zone limitée dans le temps (secondes depuis le début du plan)
+  end?: number | null;
+  label?: string;
+  reason?: string;
+  push_in?: boolean;
 }
 
 export interface Comment {
@@ -249,6 +254,7 @@ export interface Timeline {
   dub_language?: string | null;
   quality?: QualityReport | null;
   review?: Review | null;
+  voice_focus?: string[];
   reference_match?: { target_shot: number; result_shot: number; rounds: number; history: number[]; unmatched: string[]; summary: string } | null;
   reframe: boolean;
   comments: Comment[];
@@ -480,6 +486,7 @@ export const api = {
     req<Job>(`/api/projects/${id}/directions`, json("POST", body)),
   quality: (id: string, fix: boolean) => req<Job>(`/api/projects/${id}/quality`, json("POST", { fix })),
   review: (id: string) => req<Job>(`/api/projects/${id}/review`, { method: "POST" }),
+  voiceFocus: (id: string) => req<Job>(`/api/projects/${id}/voice-focus`, { method: "POST" }),
   soundsheetUrl: (id: string) => `/api/projects/${id}/soundsheet`,
   ttsStatus: () => req<Record<string, string | null>>(`/api/tts`),
   dub: (id: string, language: string | null, original_volume = 0.12) =>

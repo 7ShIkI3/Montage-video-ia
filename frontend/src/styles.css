@@ -121,7 +121,7 @@ a { color: var(--accent-2); }
 .frame video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transform-origin: center; }
 .frame video.on { opacity: 1; }
 .frame-empty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--muted); padding: 20px; }
-.caption { position: absolute; left: 4%; right: 4%; text-align: center; pointer-events: none; }
+.caption { position: absolute; z-index: 5; left: 4%; right: 4%; text-align: center; pointer-events: none; }
 .caption.karaoke { bottom: 9%; font-family: "Arial Black", Impact, sans-serif; font-weight: 900; font-size: clamp(14px, 4.2cqw, 48px); color: white;
   text-shadow: 0 0 3px #000, 2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000; }
 .caption .cw { display: inline-block; margin: 0 0.24em; }
@@ -291,6 +291,8 @@ a.btn:hover { border-color: var(--accent); }
 .mask-flou { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
 .mask-pixel { backdrop-filter: blur(6px) contrast(1.2) saturate(0.8); -webkit-backdrop-filter: blur(6px); background-image: linear-gradient(90deg, rgba(0,0,0,.08) 50%, transparent 50%), linear-gradient(rgba(0,0,0,.08) 50%, transparent 50%); background-size: 14px 14px; }
 .mask-noir { background: #000; }
+.mask-projecteur { border: max(2px, 0.45cqmin) solid #ffe500; box-shadow: 0 0 0 200vmax rgba(0,0,0,.55); }
+.spot-label { position: absolute; left: -2px; bottom: calc(100% + 6px); background: #ffe500; color: #111; font-weight: 700; font-size: max(11px, 2.4cqmin); padding: 2px 6px; border-radius: 3px; white-space: nowrap; }
 .mask-cadre { border: max(3px, 0.6cqmin) solid #ffe500; box-shadow: 0 0 10px rgba(255,229,0,.5); }
 .region-box { position: absolute; z-index: 7; border: 2px dashed #ffe500; border-radius: 4px; pointer-events: none; box-shadow: 0 0 0 9999px rgba(0,0,0,0.12); }
 .region-box.s-applique { border-color: #2bd4c0; box-shadow: none; }
@@ -525,6 +527,7 @@ button.link-like:disabled { color: var(--muted); cursor: default; }
 .q-list li.q-erreur { border-left-color: #f87171; }
 .q-list li.q-alerte { border-left-color: #fbbf24; }
 .q-list li.q-remark { border-left-color: var(--accent-2); }
+.q-list li.q-note { grid-template-columns: 1fr; color: var(--muted); }
 
 /* Directions créatives */
 .directions { display: grid; gap: 8px; margin: 4px 0 10px; }

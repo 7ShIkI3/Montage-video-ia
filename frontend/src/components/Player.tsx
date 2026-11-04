@@ -462,10 +462,18 @@ export function Player() {
               Importe tes rushes puis clique sur <b>Monter avec l'IA</b>
             </div>
           )}
-          {g && cc && cc.masks?.map((m, k) => {
+          {g && cc && cc.masks?.filter((m) => {
+            if (m.start == null || m.end == null) return true;
+            const loc = srcToLocal(cc, Math.max(0, g.srcT - cc.src_in));
+            return loc >= m.start && loc < m.end;
+          }).map((m, k) => {
             const fc = m.follow_dx != null && project ? faceCx(facesCache[`${project.id}/${cc.media_id}`], g.srcT) : null;
             const x = fc != null ? Math.max(0, Math.min(1 - m.w, fc + (m.follow_dx ?? 0))) : m.x;
-            return <div key={k} className={`mask mask-${m.kind}`} style={regionToFrame(g, { ...m, x })} />;
+            return (
+              <div key={k} className={`mask mask-${m.kind}`} style={regionToFrame(g, { ...m, x })}>
+                {m.kind === "projecteur" && m.label ? <span className="spot-label">{m.label}</span> : null}
+              </div>
+            );
           })}
           {g && bubbles.filter((c) => c.region && c.media_id === g.mediaId).map((c) => (
             <div key={"r" + c.id} className={`region-box s-${c.status}`} style={regionToFrame(g, c.region!)} />

@@ -58,6 +58,12 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
 - **Monter comme une vidéo de référence** : dépose un montage que tu aimes ; l'IA mesure son rythme (coupes,
   durée des plans, fondus), puis rapproche le sien en 2 à 5 tours et dit ce qu'elle n'a pas pu égaler.
   Seul le rythme est copié, pas le look.
+- **Projecteur sur ce que montre la voix** : quand la voix désigne quelque chose (« regardez ce bouton »,
+  « voici », « en haut à droite »), le reste de l'image s'assombrit, la zone est entourée et le cadre s'en
+  approche. Claude trouve la zone sur l'image ; sans clé, une carte de saillance locale le fait (seulement
+  pour les désignations explicites). Les plans sont aussi calés sur les phrases : un plan ne coupe plus une
+  phrase en plein milieu, et un plan de coupe finit avec la phrase qu'il illustre. Bouton « Projecteur sur la
+  voix » dans le contrôle qualité pour le relancer.
 
 ## L'éditeur
 

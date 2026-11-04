@@ -1,7 +1,7 @@
 // Contrôle qualité du montage et note du relecteur indépendant.
 import { useState } from "react";
 import { api, fmtTime, waitJob } from "../api";
-import { useStore } from "../store";
+import { clipStarts, useStore } from "../store";
 
 const CHECK_LABELS: Record<string, string> = {
   accroche: "Accroche", moment_fort: "Moment fort", plan_long: "Rythme", texte: "Texte", lecture: "Lecture",
@@ -16,12 +16,15 @@ export function QualityPanel() {
   if (!project || !tl || !tl.clips.length) return null;
   const q = tl.quality;
   const r = tl.review;
-  const busy = !!job && (job.kind === "controle" || job.kind === "relecture") && job.status !== "termine" && job.status !== "erreur";
-  const run = async (kind: "check" | "fix" | "review") => {
+  const busy = !!job && ["controle", "relecture", "projecteur"].includes(job.kind) && job.status !== "termine" && job.status !== "erreur";
+  const spots = tl.clips.flatMap((c, i) => c.masks.filter((m) => m.kind === "projecteur").map((m) => ({ m, i })));
+  const starts = clipStarts(tl);
+  const run = async (kind: "check" | "fix" | "review" | "focus") => {
     const st = useStore.getState();
     try {
       await st.saveNow();
-      const j = kind === "review" ? await api.review(project.id) : await api.quality(project.id, kind === "fix");
+      const j = kind === "review" ? await api.review(project.id) : kind === "focus" ? await api.voiceFocus(project.id)
+        : await api.quality(project.id, kind === "fix");
       const done = await waitJob(j, st.setJob);
       await st.refreshProject({ timeline: true });
       st.notify(done.message || "Contrôle terminé.");
@@ -79,6 +82,21 @@ export function QualityPanel() {
               {tl.reference_match.unmatched.length ? ` · pas égalé : ${tl.reference_match.unmatched.join(" ; ")}` : " · égalé"}
             </p>
           )}
+          {(spots.length > 0 || (tl.voice_focus?.length ?? 0) > 0) && (
+            <details className="small"><summary>Ce que montre la voix ({spots.length} projecteur{spots.length > 1 ? "s" : ""})</summary>
+              <ul className="q-list">
+                {spots.map(({ m, i }, k) => (
+                  <li key={k} className="q-remark">
+                    <button className="link-like" onClick={() => useStore.getState().setPlayhead(starts[i] + (m.start ?? 0))}>
+                      {fmtTime(starts[i] + (m.start ?? 0))}
+                    </button>
+                    <span>{m.label ? <b>{m.label} · </b> : null}{m.reason}</span>
+                  </li>
+                ))}
+                {(tl.voice_focus ?? []).filter((n) => !n.startsWith("projecteur")).map((n, k) => <li key={"n" + k} className="q-note"><span>{n}</span></li>)}
+              </ul>
+            </details>
+          )}
           {q?.fixed && q.fixed.length > 0 && (
             <details className="small"><summary>Corrigé automatiquement ({q.fixed.length})</summary>
               <ul>{q.fixed.map((f, k) => <li key={k}>{f}</li>)}</ul>
@@ -93,6 +111,8 @@ export function QualityPanel() {
           <div className="field-row">
             <button className="small-btn" disabled={busy} onClick={() => run("check")}>Contrôler</button>
             <button className="small-btn" disabled={busy || !issues.some((i) => i.fix)} onClick={() => run("fix")}>Corriger tout seul</button>
+            <button className="small-btn" disabled={busy} onClick={() => run("focus")}
+              title="Cale les plans sur la durée des phrases et pose un projecteur sur ce que la voix désigne">Projecteur sur la voix</button>
             <button className="small-btn primary" disabled={busy} onClick={() => run("review")}>Faire relire</button>
           </div>
           <p className="muted small">
