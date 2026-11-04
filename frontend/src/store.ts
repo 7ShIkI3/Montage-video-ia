@@ -1,15 +1,66 @@
 import { create } from "zustand";
-import { api, CaptionLine, Clip, Comment, EffectsCatalog, ImageItem, ImpactItem, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript, waitJob } from "./api";
+import { api, CaptionLine, Clip, AudioItem, Comment, EffectsCatalog, ImageItem, ImpactItem, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript, waitJob } from "./api";
 
 const uid = () => "c_" + Math.random().toString(36).slice(2, 12);
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
 const MIN_CLIP = 0.1;
 
-export const clipDur = (c: Clip) => (c.src_out - c.src_in) / Math.max(0.05, c.speed || 1);
+// --- Vitesse et images clés (mêmes calculs que le rendu : backend/app/models.py) ---
+
+/** [vitesse de début, vitesse de fin] quand le plan a une rampe de vitesse. */
+export function rampOf(c: Clip): [number, number] | null {
+  if (c.speed_end == null) return null;
+  const k = (v: number) => Math.max(0.25, Math.min(4, v));
+  const s0 = k(c.speed || 1), s1 = k(c.speed_end);
+  return Math.abs(s1 - s0) < 1e-3 ? null : [s0, s1];
+}
+
+export const clipDur = (c: Clip) => {
+  const r = rampOf(c);
+  const sd = c.src_out - c.src_in;
+  return r ? (2 * sd) / (r[0] + r[1]) : sd / Math.max(0.05, c.speed || 1);
+};
+
+/** Instant du plan (timeline) → secondes de rush depuis src_in. */
+export function localToSrc(c: Clip, t: number): number {
+  const r = rampOf(c);
+  if (!r) return t * Math.max(0.05, c.speed || 1);
+  return r[0] * t + ((r[1] - r[0]) * t * t) / (2 * clipDur(c));
+}
+
+/** Secondes de rush depuis src_in → instant du plan sur la timeline. */
+export function srcToLocal(c: Clip, tau: number): number {
+  const r = rampOf(c);
+  if (!r) return tau / Math.max(0.05, c.speed || 1);
+  const a = (r[1] - r[0]) / (2 * clipDur(c));
+  return (-r[0] + Math.sqrt(Math.max(0, r[0] * r[0] + 4 * a * tau))) / (2 * a);
+}
+
+export function speedAt(c: Clip, t: number): number {
+  const r = rampOf(c);
+  if (!r) return c.speed || 1;
+  return r[0] + (r[1] - r[0]) * Math.max(0, Math.min(1, t / Math.max(1e-6, clipDur(c))));
+}
+
+/** Zoom et cadrage animés du plan à l'instant t (null sans images clés). */
+export function kfAt(c: Clip, t: number): { zoom: number; x: number; y: number } | null {
+  const ks = [...(c.keyframes || [])].sort((a, b) => a.t - b.t);
+  if (!ks.length) return null;
+  if (t <= ks[0].t) return ks[0];
+  for (let i = 0; i + 1 < ks.length; i++) {
+    const a = ks[i], b = ks[i + 1];
+    if (t < b.t) {
+      let u = Math.max(0, Math.min(1, (t - a.t) / Math.max(1e-3, b.t - a.t)));
+      if (b.ease === "doux") u = u * u * (3 - 2 * u);
+      return { zoom: a.zoom + (b.zoom - a.zoom) * u, x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u };
+    }
+  }
+  return ks[ks.length - 1];
+}
 const rid = (p: string) => p + Math.random().toString(36).slice(2, 12);
 
-export type Sel = { kind: "clip" | "text" | "sfx" | "overlay" | "comment" | "impact" | "image"; id: string };
-export type ItemKind = "text" | "sfx" | "overlay" | "comment" | "impact" | "image";
+export type Sel = { kind: "clip" | "text" | "sfx" | "overlay" | "comment" | "impact" | "image" | "audio"; id: string };
+export type ItemKind = "text" | "sfx" | "overlay" | "comment" | "impact" | "image" | "audio";
 
 /** Position sur la timeline d'un commentaire ancré sur un rush (null si le passage n'est plus monté). */
 export function commentTime(tl: Timeline, c: Comment): number | null {
@@ -17,7 +68,7 @@ export function commentTime(tl: Timeline, c: Comment): number | null {
   let t = 0;
   for (const clip of tl.clips) {
     if (clip.media_id === c.media_id && c.src_t >= clip.src_in - 1e-3 && c.src_t < clip.src_out + 1e-3)
-      return t + (c.src_t - clip.src_in) / Math.max(0.05, clip.speed || 1);
+      return t + srcToLocal(clip, c.src_t - clip.src_in);
     t += clipDur(clip);
   }
   return null;
@@ -100,6 +151,7 @@ interface State {
   addSfx: (kind: string) => void;
   addImpact: (kind: string) => void;
   addImage: (asset: string, watermark: boolean) => void;
+  addAudio: (asset: string, duration: number, kind: AudioItem["kind"], start?: number, label?: string) => void;
   setTimeline: (p: Project) => void;
   addOverlay: (o: Omit<OverlayItem, "id">) => void;
   updateItem: (kind: ItemKind, id: string, patch: Record<string, unknown>) => void;
@@ -109,7 +161,8 @@ interface State {
 
 const listOf = (tl: Timeline, kind: ItemKind) =>
   (kind === "text" ? tl.texts : kind === "sfx" ? tl.sfx : kind === "comment" ? tl.comments
-    : kind === "impact" ? (tl.impacts ??= []) : kind === "image" ? (tl.images ??= []) : tl.overlays) as Array<{ id: string }>;
+    : kind === "impact" ? (tl.impacts ??= []) : kind === "image" ? (tl.images ??= [])
+    : kind === "audio" ? (tl.audio ??= []) : tl.overlays) as Array<{ id: string }>;
 
 export const useStore = create<State>((set, get) => ({
   project: null,
@@ -243,11 +296,23 @@ export const useStore = create<State>((set, get) => ({
     const hit = clipAt(timeline, playhead);
     if (!hit) return;
     const c = timeline.clips[hit.index];
-    const cut = c.src_in + (playhead - hit.start) * (c.speed || 1);
+    const cut = c.src_in + localToSrc(c, playhead - hit.start);
     if (cut - c.src_in < MIN_CLIP || c.src_out - cut < MIN_CLIP) return;
+    const tc = playhead - hit.start;
     get().edit((tl) => {
       const a = tl.clips[hit.index];
-      const b = { ...a, id: uid(), src_in: cut };
+      const b: Clip = { ...a, id: uid(), src_in: cut };
+      if (rampOf(a)) {  // la rampe continue de l'autre côté de la coupe
+        const mid = speedAt(a, tc);
+        b.speed = mid;
+        a.speed_end = mid;
+      }
+      if (a.keyframes?.length) {
+        const here = kfAt(a, tc)!;
+        const k = { ...here, t: 0, ease: "doux" as const };
+        b.keyframes = [k, ...a.keyframes.filter((x) => x.t > tc).map((x) => ({ ...x, t: +(x.t - tc).toFixed(3) }))];
+        a.keyframes = [...a.keyframes.filter((x) => x.t < tc), { ...k, t: +tc.toFixed(3) }];
+      }
       a.src_out = cut;
       tl.clips.splice(hit.index + 1, 0, b);
     });
@@ -307,6 +372,19 @@ export const useStore = create<State>((set, get) => ({
     });
     get().selectItem({ kind: "image", id });
   },
+  addAudio: (asset, duration, kind, start, label) => {
+    const id = rid("a_");
+    const at = start ?? get().playhead;
+    get().edit((tl) => {
+      const items = (tl.audio ??= []);
+      // Première piste libre à cet endroit (4 pistes audio).
+      const busy = (lane: number) => items.some((a) => a.lane === lane && at < a.start + (a.src_out - a.src_in) && a.start < at + duration);
+      const lane = [0, 1, 2, 3].find((l) => !busy(l)) ?? 0;
+      items.push({ id, asset, start: +at.toFixed(3), src_in: 0, src_out: +duration.toFixed(3), lane, kind,
+        volume: kind === "voix" ? 1 : 0.7, fade_in: 0.05, fade_out: 0.15, label: label || "" });
+    });
+    get().selectItem({ kind: "audio", id });
+  },
   setTimeline: (p) => {
     set({ project: p, timeline: p.timeline, past: [], future: [], dirty: false, item: null, selected: null, playhead: 0, captions: [] });
     get().refreshDerived();  // sous-titres de la nouvelle timeline
@@ -330,7 +408,7 @@ export const useStore = create<State>((set, get) => ({
       tl.comments = [...(tl.comments || []), {
         id, text: text.trim(), status: "ouvert", reply: "", created_at: Date.now() / 1000,
         media_id: pr ? pr.media_id : c ? c.media_id : null,
-        src_t: pr ? pr.src_t : c && hit ? +(c.src_in + (playhead - hit.start) * (c.speed || 1)).toFixed(3) : 0,
+        src_t: pr ? pr.src_t : c && hit ? +(c.src_in + localToSrc(c, playhead - hit.start)).toFixed(3) : 0,
         region: pr ? pr.region : null,
       }];
     });

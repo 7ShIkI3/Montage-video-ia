@@ -1,7 +1,9 @@
 import { useMemo, useRef, useState } from "react";
 import { api, Clip, EffectsCatalog, fmtTime, Opt, Timeline, waitJob } from "../api";
-import { clipAt, clipStarts, commentTime, ItemKind, useStore } from "../store";
+import { clipAt, clipStarts, commentTime, ItemKind, srcToLocal, useStore } from "../store";
 import { ImageButtons } from "./Studio";
+import { CaptionLanguage } from "./AudioTools";
+import { MotionEditor } from "./Motion";
 
 export function CommandBar() {
   const project = useStore((s) => s.project);
@@ -188,6 +190,7 @@ export function Inspector() {
           <label>Volume {Math.round(c.volume * 100)} %
             <input type="range" min={0} max={2} step={0.05} value={c.volume} onChange={(e) => updateClip(c.id, { volume: +e.target.value })} />
           </label>
+          <MotionEditor c={c} />
           {catalog && <ClipEffects c={c} catalog={catalog} />}
         </>
       ) : it && it.kind !== "clip" && it.kind !== "comment" ? (
@@ -213,6 +216,7 @@ export function Inspector() {
               </select>
             </label>
           </div>
+          <CaptionLanguage />
           {tl.format !== "16:9" && (
             <label className="inline"><input type="checkbox" checked={tl.reframe !== false}
               onChange={(e) => setTimelineProps({ reframe: e.target.checked })} /> Recadrage auto sur le visage</label>
@@ -289,11 +293,6 @@ function ClipEffects({ c, catalog }: { c: Clip; catalog: EffectsCatalog }) {
         <label>Transition d'entrée
           <select value={c.transition} onChange={(e) => updateClip(c.id, { transition: e.target.value })}>
             {catalog.transitions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-          </select>
-        </label>
-        <label>Vitesse
-          <select value={c.speed} onChange={(e) => updateClip(c.id, { speed: +e.target.value })}>
-            {catalog.speeds.map((v) => <option key={v} value={v}>{v === 1 ? "Normale" : `×${v}`}</option>)}
           </select>
         </label>
       </div>
@@ -421,6 +420,52 @@ function ItemEditor() {
       </>
     );
   }
+  if (it.kind === "audio") {
+    const a = (tl.audio || []).find((x) => x.id === it.id);
+    if (!a) return null;
+    const full = a.src_out;
+    return (
+      <>
+        <header><h3>{a.kind === "voix" ? "Voix off" : a.kind === "musique" ? "Musique" : "Son"}</h3>{back}</header>
+        <audio controls src={api.audioUrl(project.id, a.asset)} style={{ width: "100%" }} />
+        <label>Nom<input value={a.label} onChange={(e) => up({ label: e.target.value })} /></label>
+        <div className="field-row">
+          <label>Type
+            <select value={a.kind} onChange={(e) => up({ kind: e.target.value })}>
+              <option value="voix">Voix off</option><option value="son">Son</option><option value="musique">Musique</option>
+            </select>
+          </label>
+          <label>Piste
+            <select value={a.lane} onChange={(e) => up({ lane: +e.target.value })}>
+              {[0, 1, 2, 3].map((l) => <option key={l} value={l}>Audio {l + 1}</option>)}
+            </select>
+          </label>
+        </div>
+        <div className="field-row">
+          <label>Début (s)<input type="number" step={0.05} min={0} value={a.start.toFixed(2)} onChange={(e) => up({ start: Math.max(0, +e.target.value) })} /></label>
+          <label>Durée (s)<input type="number" step={0.05} min={0.1} value={(a.src_out - a.src_in).toFixed(2)}
+            onChange={(e) => up({ src_out: Math.max(a.src_in + 0.1, a.src_in + +e.target.value) })} /></label>
+        </div>
+        <label>Couper le début {a.src_in.toFixed(2)} s
+          <input type="range" min={0} max={Math.max(0, full - 0.1)} step={0.05} value={a.src_in} onChange={(e) => up({ src_in: Math.min(+e.target.value, a.src_out - 0.1) })} />
+        </label>
+        <label>Volume {Math.round(a.volume * 100)} %
+          <input type="range" min={0} max={2} step={0.05} value={a.volume} onChange={(e) => up({ volume: +e.target.value })} />
+        </label>
+        <div className="field-row">
+          <label>Fondu d'entrée {a.fade_in.toFixed(1)} s
+            <input type="range" min={0} max={3} step={0.1} value={a.fade_in} onChange={(e) => up({ fade_in: +e.target.value })} />
+          </label>
+          <label>Fondu de sortie {a.fade_out.toFixed(1)} s
+            <input type="range" min={0} max={3} step={0.1} value={a.fade_out} onChange={(e) => up({ fade_out: +e.target.value })} />
+          </label>
+        </div>
+        <p className="muted small">La musique de fond baisse toute seule sous la voix off quand « baisse auto » est activée.</p>
+        <button className="danger" onClick={del}>Supprimer ce son</button>
+      </>
+    );
+  }
+
   if (it.kind === "image") {
     const x = (tl.images ?? []).find((t) => t.id === it.id);
     if (!x) return null;
@@ -571,9 +616,8 @@ export function TranscriptPanel() {
         {items.map(({ c, ci, start, words }) => (
           <p key={c.id}>
             {words.map(({ w, idx }, wi) => {
-              const sp = c.speed || 1;
-              const t = start + (w.start - c.src_in) / sp;
-              const isNow = playhead >= t && playhead < start + (w.end - c.src_in) / sp;
+              const t = start + srcToLocal(c, w.start - c.src_in);
+              const isNow = playhead >= t && playhead < start + srcToLocal(c, w.end - c.src_in);
               const inSel = sel && sel.clip === ci && wi >= Math.min(sel.a, sel.b) && wi <= Math.max(sel.a, sel.b);
               return (
                 <span key={idx} className={`w ${isNow ? "now" : ""} ${inSel ? "sel" : ""} ${w.prob < 0.5 ? "unsure" : ""}`}

@@ -68,6 +68,39 @@ def safe_music_path(track: str | None) -> str | None:
     return None
 
 
+def audio_dir(project_id: str) -> Path:
+    """Sons du projet : voix off enregistrées, sons et musiques des pistes audio."""
+    d = project_dir(project_id) / "audio"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _translations_path(project_id: str) -> Path:
+    return project_dir(project_id) / "translations.json"
+
+
+def load_translations(project_id: str, lang: str | None) -> dict[str, str]:
+    """Traductions des phrases de sous-titres déjà faites pour une langue (texte d'origine -> traduction)."""
+    if not lang:
+        return {}
+    p = _translations_path(project_id)
+    try:
+        return json.loads(p.read_text(encoding="utf-8")).get(lang, {})
+    except (OSError, ValueError):
+        return {}
+
+
+def save_translations(project_id: str, lang: str, mapping: dict[str, str]) -> None:
+    with _lock:
+        p = _translations_path(project_id)
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        data.setdefault(lang, {}).update(mapping)
+        _write_json(p, json.dumps(data, ensure_ascii=False, indent=1))
+
+
 def assets_dir(project_id: str) -> Path:
     """Images du projet (logos, stickers, photos)."""
     d = project_dir(project_id) / "assets"

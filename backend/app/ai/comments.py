@@ -22,7 +22,7 @@ def locate(tl: Timeline, c: Comment) -> tuple[int, float] | None:
     t = 0.0
     for i, clip in enumerate(tl.clips):
         if clip.media_id == c.media_id and clip.src_in - 1e-3 <= c.src_t < clip.src_out + 1e-3:
-            return i, t + (c.src_t - clip.src_in) / max(0.05, clip.speed)
+            return i, t + clip.src_to_local(c.src_t - clip.src_in)
         t += clip.duration
     return None
 
@@ -178,7 +178,13 @@ def apply_local(tl: Timeline, c: Comment, segments: list[Segment], media_duratio
         done.append("plan placé à la fin")
 
     # Vitesse, cadrage, son
-    if _has(text, "ralenti", "slow"):
+    if _has(text, "rampe", "ralenti progressif", "ralentit progressivement", "speed ramp"):
+        if neg:
+            clip.speed, clip.speed_end = 1.0, None
+        else:
+            clip.speed, clip.speed_end = 1.0, 0.4
+        done.append("rampe de vitesse " + ("retirée" if neg else "×1 → ×0,4"))
+    elif _has(text, "ralenti", "slow"):
         clip.speed = 1.0 if neg else 0.5
         done.append("ralenti " + ("retiré" if neg else "×0,5"))
     elif _has(text, "accélère", "accelere", "accéléré", "accelere", "plus vite", "x2"):
@@ -187,7 +193,13 @@ def apply_local(tl: Timeline, c: Comment, segments: list[Segment], media_duratio
     elif "vitesse normale" in text:
         clip.speed = 1.0
         done.append("vitesse normale")
-    if "zoom" in text and "zoom lent" not in text and "zoom d'entrée" not in text:
+    if _has(text, "zoom progressif", "zoom avant progressif", "zoome progressivement", "zoom qui avance"):
+        from ..models import Keyframe
+        d = clip.duration
+        clip.keyframes = [] if neg else [Keyframe(t=0, zoom=1.0), Keyframe(t=round(d, 3), zoom=1.35,
+                                                                       x=clip.focus_x or 0.5, y=clip.focus_y or 0.45)]
+        done.append("zoom progressif " + ("retiré" if neg else "ajouté (images clés)"))
+    elif "zoom" in text and "zoom lent" not in text and "zoom d'entrée" not in text:
         clip.zoom = 1.0 if neg or "dézoom" in text or "dezoom" in text else 1.2
         done.append("zoom " + ("retiré" if clip.zoom == 1.0 else "ajouté"))
     if _has(text, "plus fort", "monte le son", "on entend pas", "on n'entend pas", "trop bas"):

@@ -78,6 +78,54 @@ def _cover_focus(W: int, H: int, zoom: float, fx_: float, fy: float) -> str:
             f"crop={W}:{H}:x='clip({fx_:.4f}*iw-{W}/2,0,iw-{W})':y='clip({fy:.4f}*ih-{H}/2,0,ih-{H})'")
 
 
+def kf_expr(kfs, key: str, tvar: str = "t") -> str:
+    """Valeur interpolée d'une image clé (zoom, x ou y) en expression FFmpeg du temps du plan."""
+    pts = sorted(kfs, key=lambda k: k.t)
+    vals = [(k.t, float(getattr(k, key)), k.ease) for k in pts]
+    expr = f"{vals[-1][1]:.5f}"
+    for (t0, v0, _), (t1, v1, ease) in reversed(list(zip(vals, vals[1:]))):
+        span = max(1e-3, t1 - t0)
+        u = f"clip(({tvar}-{t0:.4f})/{span:.4f},0,1)"
+        if ease == "doux":
+            u = f"(({u})*({u})*(3-2*({u})))"
+        expr = f"if(lt({tvar},{t1:.4f}),{v0:.5f}+({v1 - v0:.5f})*{u},{expr})"
+    return f"if(lt({tvar},{vals[0][0]:.4f}),{vals[0][1]:.5f},{expr})"
+
+
+def _cover_keyframes(W: int, H: int, kfs) -> str:
+    """Zoom et cadrage animés : même géométrie que l'aperçu (image couvrante x zoom, puis cadre centré sur
+    le point choisi, sans sortir de l'image)."""
+    z, cx, cy = kf_expr(kfs, "zoom"), kf_expr(kfs, "x"), kf_expr(kfs, "y")
+    s = f"max({W}/iw,{H}/ih)*({z})"
+    return (f"scale=w='max({W},trunc(iw*{s}/2)*2)':h='max({H},trunc(ih*{s}/2)*2)':eval=frame:flags=bicubic,"
+            f"crop={W}:{H}:x='clip(({cx})*iw-{W}/2,0,iw-{W})':y='clip(({cy})*ih-{H}/2,0,ih-{H})'")
+
+
+def ramp_setpts(c) -> str:
+    """Horodatage d'une rampe de vitesse : la vitesse passe progressivement de s0 à s1 sur le plan."""
+    s0, s1 = c.ramp
+    a = (s1 - s0) / (2 * c.duration)
+    return f"setpts='(-{s0:.5f}+sqrt({s0 * s0:.6f}+4*({a:.6f})*(PTS-STARTPTS)*TB))/(2*({a:.6f}))/TB'"
+
+
+def ramp_audio(c, src_label: str, tag: str, n: int | None = None) -> tuple[list[str], str]:
+    """Son d'une rampe de vitesse : découpé en tranches, chacune à sa vitesse (atempo garde la hauteur)."""
+    d = c.duration
+    n = n or max(4, min(24, int(d * 4)))
+    ts = [d * k / n for k in range(n + 1)]
+    taus = [c.local_to_src(t) for t in ts]
+    outs = [f"{tag}s{k}" for k in range(n)]
+    parts = [f"{src_label}asplit={n}" + "".join(f"[{o}]" for o in outs)]
+    pieces = []
+    for k in range(n):
+        sp = (taus[k + 1] - taus[k]) / max(1e-6, ts[k + 1] - ts[k])
+        parts.append(f"[{outs[k]}]atrim=start={taus[k]:.4f}:end={taus[k + 1]:.4f},asetpts=PTS-STARTPTS,"
+                     f"{fx.atempo_chain(sp)}[{tag}p{k}]")
+        pieces.append(f"[{tag}p{k}]")
+    parts.append("".join(pieces) + f"concat=n={n}:v=0:a=1[{tag}r]")
+    return parts, f"[{tag}r]"
+
+
 def mask_filters(masks, tag: str, face_kf: list[tuple[float, float]] | None = None) -> list[str]:
     """Flou, pixelisation, cache ou cadre sur des zones de l'image source (avant recadrage).
     Une zone posée sur un visage le suit dans le temps (face_kf : trajectoire du visage dans le plan)."""
@@ -138,20 +186,24 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
             inputs += ["-ss", f"{c.src_in:.3f}", "-t", f"{sd:.3f}", "-i", src]
             vin = n_in
             n_in += 1
-            src_rate = (m.fps or FPS) * speed  # images source disponibles par seconde de timeline
+            slowest = min(c.ramp) if c.ramp else speed
+            src_rate = (m.fps or FPS) * slowest  # images source disponibles par seconde de timeline
+            pts = ramp_setpts(c) if c.ramp else f"setpts=(PTS-STARTPTS)/{speed:.4f}"
             if smooth and src_rate < FPS - 1:
                 # Interpolation de mouvement : crée les images manquantes (60-120 i/s, ralentis fluides).
-                vchain.append(f"[{vin}:v:0]setpts=(PTS-STARTPTS)/{speed:.4f},"
+                vchain.append(f"[{vin}:v:0]{pts},"
                               f"minterpolate=fps={FPS}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1")
             else:
-                vchain.append(f"[{vin}:v:0]setpts=(PTS-STARTPTS)/{speed:.4f},fps={FPS}")
+                vchain.append(f"[{vin}:v:0]{pts},fps={FPS}")
             face_kf = None
             if any(mk.follow_dx is not None for mk in c.masks):
                 face_kf = faces_an.keyframes((storage.load_signals(project.id, m.id) or {}).get("faces"),
                                              c.src_in, c.src_out, speed)
             vchain += mask_filters(c.masks, f"c{i}", face_kf)
             kf: list[tuple[float, float]] = []
-            if c.focus_x is not None:
+            if c.keyframes:
+                vchain.append(_cover_keyframes(W, H, c.keyframes))
+            elif c.focus_x is not None:
                 vchain.append(_cover_focus(W, H, c.zoom, c.focus_x, c.focus_y if c.focus_y is not None else 0.5))
             else:
                 if timeline.reframe and m.width / max(1, m.height) > W / H + 0.01:
@@ -182,9 +234,16 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
                 n_in += 1
             else:
                 ain = vin
-            achain = [f"[{ain}:a:0]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo"]
-            if abs(speed - 1.0) > 1e-3:
-                achain.append(fx.atempo_chain(speed))
+            base = f"[{ain}:a:0]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo"
+            if c.ramp:
+                filters.append(base + f"[ra{i}]")
+                parts, lab = ramp_audio(c, f"[ra{i}]", f"r{i}")
+                filters += parts
+                achain = [f"{lab}anull"]
+            else:
+                achain = [base]
+                if abs(speed - 1.0) > 1e-3:
+                    achain.append(fx.atempo_chain(speed))
             for e in c.audio_effects:
                 spec = fx.AUDIO_EFFECTS.get(e)
                 if spec:
@@ -270,7 +329,8 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
         vlabel = f"vimg{k}"
 
     # --- sous-titres + piste Textes (un seul fichier ASS) ---
-    if write_ass(timeline, transcripts, W, H, work_dir) and not three_d:
+    tr = storage.load_translations(project.id, timeline.caption_language)
+    if write_ass(timeline, transcripts, W, H, work_dir, tr) and not three_d:
         filters.append(f"[{vlabel}]ass=captions.ass[vout]")
         vlabel = "vout"
 
@@ -292,6 +352,27 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
     if sfx_labels:
         filters.append(f"[ac]{''.join(sfx_labels)}amix=inputs={len(sfx_labels) + 1}:duration=first:normalize=0[afx]")
         alabel = "afx"
+
+    # Pistes audio : voix off, sons et musiques posés sur la timeline, mélangés à la voix avant la musique
+    # (la musique s'efface donc aussi sous la voix off).
+    items = [a for a in timeline.audio if a.start < total and a.duration > 0.05
+             and (storage.audio_dir(project.id) / Path(a.asset).name).exists()]
+    if items:
+        labs = []
+        for k, a in enumerate(items):
+            path = storage.audio_dir(project.id) / Path(a.asset).name
+            dur = min(a.duration, total - a.start)
+            inputs += ["-ss", f"{a.src_in:.3f}", "-t", f"{dur:.3f}", "-i", str(path)]
+            ms = int(round(a.start * 1000))
+            fo = min(a.fade_out, dur / 2)
+            filters.append(
+                f"[{n_in}:a:0]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,"
+                f"volume={a.volume:.3f},afade=t=in:d={min(a.fade_in, dur / 2):.3f},"
+                f"afade=t=out:st={max(0.0, dur - fo):.3f}:d={fo:.3f},adelay={ms}|{ms}[au{k}]")
+            labs.append(f"[au{k}]")
+            n_in += 1
+        filters.append(f"[{alabel}]{''.join(labs)}amix=inputs={len(labs) + 1}:duration=first:normalize=0[atr]")
+        alabel = "atr"
 
     if music_path:
         skip = max(0.0, timeline.music.start or 0.0)
@@ -338,8 +419,9 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
     return args, total
 
 
-def write_ass(timeline: Timeline, transcripts: dict[str, Transcript], W: int, H: int, work_dir: Path) -> bool:
-    lines = cap.build_lines(timeline, transcripts) if timeline.captions != "aucun" else []
+def write_ass(timeline: Timeline, transcripts: dict[str, Transcript], W: int, H: int, work_dir: Path,
+              translations: dict[str, str] | None = None) -> bool:
+    lines = cap.build_lines(timeline, transcripts, translations) if timeline.captions != "aucun" else []
     texts = [t for t in timeline.texts if t.style != "texte_3d"]
     if not (lines or texts):
         return False
@@ -362,7 +444,8 @@ def render(project: Project, timeline: Timeline, transcripts: dict[str, Transcri
                                     fps=fps, smooth=smooth, container=container)
         # Le filtre ass lit captions.ass en chemin relatif depuis work_dir (évite l'échappement des chemins).
         ffmpeg.run(args, total, on_progress, cwd=work_dir)
-    srt = cap.to_srt(cap.build_lines(timeline, transcripts))
+    tr = storage.load_translations(project.id, timeline.caption_language)
+    srt = cap.to_srt(cap.build_lines(timeline, transcripts, tr))
     out_path.with_suffix(".srt").write_text(srt, encoding="utf-8")
     return out_path
 

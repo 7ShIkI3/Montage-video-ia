@@ -45,6 +45,13 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
 - Texte : cliquer un mot pour y aller, Maj+clic pour sélectionner et couper des mots, double-clic pour
   corriger un sous-titre.
 - « Demande à l'IA » : consignes en langage naturel, annulables comme une retouche.
+- Images clés : zoom et cadrage animés sur un plan (zoom avant, arrière, panoramique, zoom choc ou à la
+  main), rendus à l'identique à l'export.
+- Rampes de vitesse : la vitesse passe progressivement d'une valeur à une autre sur le plan, son compris.
+- Pistes audio : jusqu'à 4 pistes pour la voix off (enregistrée au micro depuis le curseur), des sons et
+  des musiques, avec volume et fondus ; la musique de fond baisse sous la voix off.
+- Sous-titres traduits : choisis une langue, Claude traduit chaque ligne en gardant son minutage
+  (traductions gardées en cache, sous-titres .srt et vidéo dans la langue choisie).
 
 ## Installation
 
