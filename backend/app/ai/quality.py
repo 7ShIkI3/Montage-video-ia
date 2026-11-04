@@ -154,6 +154,23 @@ def plan_checks(tl: Timeline, transcripts: dict[str, Transcript], settings: Edit
                                  + (f", {ck['wer'] * 100:.0f} % de mots faux" if ck.get("wer") is not None else "")
                                  + ". Reformule le texte ou change de voix.", a.start, None, a.id))
 
+    # 9. Affirmations des textes et du titre : pas de promesse excessive, pas de chiffre sorti de nulle part.
+    from . import claims
+    spoken = " ".join(w.text for w in words)
+    shown = [(x.id, x.start, x.text) for x in tl.texts] + ([("titre", 0.0, tl.title)] if tl.title else [])
+    for tid, t, text in shown:
+        where = "Le titre" if tid == "titre" else f"Le texte « {text[:30]} »"
+        over = claims.overclaims(text)
+        if over:
+            frag, why = over[0]
+            issues.append(_issue("affirmation", "alerte", f"{where} exagère ({why} : « {frag} »). Proposé : "
+                                 f"« {claims.soften(text)[:60]} ».", None if tid == "titre" else t,
+                                 "affirmation_adoucir", tid))
+        nums = claims.unsupported_numbers(text, spoken)
+        if nums and words:
+            issues.append(_issue("affirmation", "alerte", f"{where} affiche « {nums[0]} », un chiffre jamais dit "
+                                 "dans la vidéo : vérifie qu'il est juste.", None if tid == "titre" else t, None, tid))
+
     return QualityReport(score=score_of(issues), issues=issues)
 
 
@@ -212,6 +229,20 @@ def apply_fixes(tl: Timeline, report: QualityReport, transcripts: dict[str, Tran
             if "zoom_lent" not in c.effects:
                 c.effects.append("zoom_lent")
                 done.append(f"zoom lent ajouté sur le plan fixe à {it.t or 0:.0f} s")
+        elif f == "affirmation_adoucir":
+            from . import claims
+            if it.target == "titre" and tl.title:
+                new = claims.soften(tl.title)
+                if new != tl.title:
+                    tl.title = new
+                    done.append(f"titre adouci : « {new} »")
+            else:
+                x = next((x for x in tl.texts if x.id == it.target), None)
+                if x:
+                    new = claims.soften(x.text)
+                    if new and new != x.text:
+                        x.text = new
+                        done.append(f"texte adouci : « {new} »")
         elif f in ("texte_court", "texte_duree", "texte_retirer"):
             x = next((x for x in tl.texts if x.id == it.target), None)
             if not x:

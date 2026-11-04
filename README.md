@@ -68,6 +68,9 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
   curseur) ou un doublage est réécouté par Whisper. Si ce qu'on entend ne ressemble pas au texte, le contrôle
   qualité le signale. Chaque mot est horodaté, et les sous-titres animés suivent la voix IA (la voix doublée
   quand la vidéo est doublée). Sans Whisper, les mots sont calés sur l'énergie du son.
+- **Affirmations vérifiées** : le contrôle qualité repère dans les textes et le titre ce qui promet trop
+  (« le meilleur », « garanti », « jamais vu », « 100 % ») et l'adoucit, et signale un chiffre affiché qui n'est
+  jamais dit dans la vidéo.
 
 ## L'éditeur
 

@@ -5,7 +5,7 @@ import { clipStarts, useStore } from "../store";
 
 const CHECK_LABELS: Record<string, string> = {
   accroche: "Accroche", moment_fort: "Moment fort", plan_long: "Rythme", texte: "Texte", lecture: "Lecture",
-  flashs: "Flashs", duree: "Durée", bruitage: "Bruitage", synchro: "Synchro son/image", son: "Son", image: "Image", voix_ia: "Voix IA",
+  flashs: "Flashs", duree: "Durée", bruitage: "Bruitage", synchro: "Synchro son/image", son: "Son", image: "Image", voix_ia: "Voix IA", affirmation: "Affirmation",
 };
 
 export function QualityPanel() {
