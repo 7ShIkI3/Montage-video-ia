@@ -7,6 +7,7 @@ import { CaptionLanguage } from "./AudioTools";
 import { MotionEditor } from "./Motion";
 import { CUTOUTS, CutoutTools, DubPanel, AIVoiceoverPanel, LutPicker } from "./Lot3";
 import { PlanPanel, QualityPanel } from "./Quality";
+import { Icon } from "../icons";
 
 export function CommandBar() {
   const project = useStore((s) => s.project);
@@ -100,8 +101,8 @@ export function CommentsPanel() {
         onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); add(); } }} />
       {pending ? (
         <div className="zone-pill">
-          <span>⬚ Zone sélectionnée sur l'image</span>
-          <button className="link" onClick={() => setPendingRegion(null)} title="Retirer la zone">✕</button>
+          <span><Icon name="square" size={12} /> Zone sélectionnée sur l'image</span>
+          <button className="link" onClick={() => setPendingRegion(null)} title="Retirer la zone" aria-label="Retirer la zone"><Icon name="x" size={14} /></button>
         </div>
       ) : null}
       {pending && (
@@ -115,11 +116,11 @@ export function CommentsPanel() {
       <div className="comment-row">
         <button className={`small-btn pick-btn ${picking ? "on" : ""}`} disabled={!hit || busy}
           onClick={() => setPicking(!picking)} title="Sélectionner un élément directement sur l'image">
-          ⬚ {picking ? "Trace la zone…" : "Sélectionner sur la vidéo"}
+          <Icon name="square" size={12} />{picking ? "Trace la zone…" : "Sélectionner sur la vidéo"}
         </button>
         <label className="inline small"><input type="checkbox" checked={general || !hit} disabled={!hit || !!pending}
           onChange={(e) => setGeneral(e.target.checked)} /> Tout le montage</label>
-        <button className="small-btn primary-soft" disabled={!text.trim() || busy} onClick={add}>💬 Ajouter</button>
+        <button className="small-btn primary-soft" disabled={!text.trim() || busy} onClick={add}><Icon name="message" size={13} />Ajouter</button>
       </div>
       {sorted.length > 0 && (
         <ul className="comment-list">
@@ -131,9 +132,9 @@ export function CommentsPanel() {
                 <div className="cm-head">
                   <b>{c.media_id ? (t != null ? fmtTime(t, true) : "passage retiré") : "Général"}</b>
                   <span className={`cm-status s-${c.status}`}>{label[c.status]}</span>
-                  <button className="link" title="Supprimer" onClick={(e) => { e.stopPropagation(); deleteItem("comment", c.id); }}>✕</button>
+                  <button className="link" title="Supprimer" onClick={(e) => { e.stopPropagation(); deleteItem("comment", c.id); }} aria-label="Supprimer"><Icon name="x" size={13} /></button>
                 </div>
-                <div>{c.region && <span className="zone-tag" title="Commentaire sur une zone de l'image">⬚</span>} {c.text}</div>
+                <div>{c.region && <span className="zone-tag" title="Commentaire sur une zone de l'image"><Icon name="square" size={11} strokeWidth={2.4} /></span>} {c.text}</div>
                 {c.reply && <div className="cm-reply">IA : {c.reply}</div>}
               </li>
             );
@@ -252,7 +253,7 @@ export function Inspector() {
       {tl.rejected.length > 0 && (
         <div className="rejected">
           <button className="link" onClick={() => setShowRejected(!showRejected)}>
-            {showRejected ? "▾" : "▸"} Passages écartés par l'IA ({tl.rejected.length})
+            <Icon name={showRejected ? "chevron-down" : "chevron-right"} size={13} /> Passages écartés par l'IA ({tl.rejected.length})
           </button>
           {showRejected && (
             <ul>
@@ -343,20 +344,20 @@ function GlobalFx({ tl, catalog }: { tl: Timeline; catalog: EffectsCatalog }) {
         {tl.overlays?.length ?? 0} plan(s) de coupe · {tl.impacts?.length ?? 0} impact(s)
       </p>
       <div className="field-row">
-        <button className="small-btn" onClick={() => addText()}>＋ Texte au curseur</button>
+        <button className="small-btn" onClick={() => addText()}><Icon name="plus" size={13} strokeWidth={2.4} />Texte au curseur</button>
       </div>
       <div className="sfx-row">
         <select value={kind} onChange={(e) => setKind(e.target.value)}>
           {catalog.sfx.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
-        <button className="small-btn" onClick={() => new Audio(api.sfxUrl(kind)).play().catch(() => undefined)}>▶</button>
-        <button className="small-btn" onClick={() => addSfx(kind)}>＋ Bruitage</button>
+        <button className="small-btn" onClick={() => new Audio(api.sfxUrl(kind)).play().catch(() => undefined)} aria-label="Écouter"><Icon name="play" size={12} /></button>
+        <button className="small-btn" onClick={() => addSfx(kind)}><Icon name="plus" size={13} strokeWidth={2.4} />Bruitage</button>
       </div>
       <div className="sfx-row">
         <select value={ik} onChange={(e) => setIk(e.target.value)}>
           {(catalog.impacts ?? []).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
-        <button className="small-btn" onClick={() => addImpact(ik)}>＋ Impact 3D</button>
+        <button className="small-btn" onClick={() => addImpact(ik)}><Icon name="plus" size={13} strokeWidth={2.4} />Impact 3D</button>
       </div>
       <ImageButtons />
     </div>
@@ -372,7 +373,7 @@ function ItemEditor() {
   if (!tl || !it || it.kind === "clip" || !project) return null;
   const up = (patch: Record<string, unknown>) => updateItem(it.kind as ItemKind, it.id, patch);
   const del = () => deleteItem(it.kind as ItemKind, it.id);
-  const back = <button className="link" onClick={() => selectItem(null)}>← Montage</button>;
+  const back = <button className="link" onClick={() => selectItem(null)}><Icon name="back" size={13} /> Montage</button>;
 
   if (it.kind === "text") {
     const x = tl.texts.find((t) => t.id === it.id);
@@ -544,7 +545,7 @@ function ItemEditor() {
           <input type="range" min={0} max={1.5} step={0.05} value={x.volume} onChange={(e) => up({ volume: +e.target.value })} />
         </label>
         <div className="field-row">
-          <button className="small-btn" onClick={() => new Audio(api.sfxUrl(x.kind)).play().catch(() => undefined)}>▶ Écouter</button>
+          <button className="small-btn" onClick={() => new Audio(api.sfxUrl(x.kind)).play().catch(() => undefined)}><Icon name="play" size={12} />Écouter</button>
           <button className="small-btn danger" onClick={del}>Supprimer</button>
         </div>
       </>
@@ -635,7 +636,7 @@ export function TranscriptPanel() {
     <section className="panel transcript">
       <header>
         <h3>Texte</h3>
-        <button className="small-btn" disabled={!sel} onClick={cut}>✂ Couper la sélection</button>
+        <button className="small-btn" disabled={!sel} onClick={cut}><Icon name="scissors" size={13} />Couper la sélection</button>
       </header>
       <p className="muted small">Clic : aller au mot · Maj+clic : sélectionner · double-clic : corriger</p>
       <div className="words">

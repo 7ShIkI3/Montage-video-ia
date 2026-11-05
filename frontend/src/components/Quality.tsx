@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { api, fmtTime } from "../api";
 import { clipStarts, isBusy, useStore } from "../store";
+import { Icon, IconName } from "../icons";
 
 const CHECK_LABELS: Record<string, string> = {
   accroche: "Accroche", moment_fort: "Moment fort", plan_long: "Rythme", texte: "Texte", lecture: "Lecture",
@@ -30,7 +31,7 @@ export function QualityPanel() {
   const issues = (q?.issues ?? []).filter((i) => i.level !== "ok");
   return (
     <div className="fx-section quality">
-      <button className="fx-title link-like" onClick={() => setOpen(!open)}>Contrôle qualité et relecture {open ? "▾" : "▸"}</button>
+      <button className="fx-title link-like" onClick={() => setOpen(!open)}>Contrôle qualité et relecture <Icon name={open ? "chevron-down" : "chevron-right"} size={13} /></button>
       <div className="q-scores">
         <div className={`q-score ${q ? tone(q.score, 100) : ""}`}>
           <b>{q ? q.score : "–"}</b><span>/100</span>
@@ -119,7 +120,7 @@ export function QualityPanel() {
   );
 }
 
-const ROLE_ICON: Record<string, string> = { stratege: "🎯", creatif: "💡", storyboard: "🎬", montage: "✂️", publication: "📣" };
+const ROLE_ICON: Record<string, IconName> = { stratege: "zap", creatif: "sparkles", storyboard: "film", montage: "scissors", publication: "upload" };
 
 /** Le réalisateur rôle par rôle : ce que chaque étape a décidé, et ce qui ne colle pas. */
 export function PlanPanel() {
@@ -133,14 +134,14 @@ export function PlanPanel() {
         {tl.plan.map((st) => (
           <li key={st.role} className={st.ok === false ? "plan-warn" : st.ok ? "plan-good" : ""}>
             <button className="link-like plan-head" onClick={() => setOpen(open === st.role ? null : st.role)}>
-              <span>{ROLE_ICON[st.role] ?? "•"} <b>{st.title}</b></span>
+              <span><Icon name={ROLE_ICON[st.role] ?? "dot"} size={13} /> <b>{st.title}</b></span>
               <small>{st.by === "claude" ? "Claude" : st.by === "heuristique" ? "IA locale" : "local"}
-                {st.ok === false ? ` · ${st.notes.length} à revoir` : st.ok ? " · ok" : ""} {open === st.role ? "▾" : "▸"}</small>
+                {st.ok === false ? ` · ${st.notes.length} à revoir` : st.ok ? " · ok" : ""} <Icon name={open === st.role ? "chevron-down" : "chevron-right"} size={12} /></small>
             </button>
             {open === st.role && (
               <ul>
                 {st.items.map((x, k) => <li key={k}>{x}</li>)}
-                {st.notes.map((x, k) => <li key={"n" + k} className="plan-note">⚠ {x}</li>)}
+                {st.notes.map((x, k) => <li key={"n" + k} className="plan-note"><Icon name="alert" size={12} /> {x}</li>)}
               </ul>
             )}
           </li>

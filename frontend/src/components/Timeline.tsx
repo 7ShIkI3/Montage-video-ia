@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtTime } from "../api";
 import { clipDur, clipStarts, commentTime, rampOf, Sel, timelineDuration, useStore } from "../store";
 import { AddSoundButton, VoiceOverButton } from "./AudioTools";
+import { Icon } from "../icons";
 
 type Env = { hop: number; envelope: number[] };
 const envCache: Record<string, Env | "loading"> = {};
@@ -150,14 +151,14 @@ export function TimelineView() {
   const mediaName = (id: string) => project.media.find((m) => m.id === id)?.filename ?? "?";
   const colorFor = (id: string) => {
     const i = project.media.findIndex((m) => m.id === id);
-    return ["#7c5cff", "#2bb3a3", "#e9853c", "#d0498d", "#4f8ff7", "#9bbf3a"][Math.max(0, i) % 6];
+    return ["#5A4FCF", "#1F8A7A", "#B5552A", "#A8386F", "#2F6FB5", "#6F8A2A"][Math.max(0, i) % 6];
   };
 
   return (
     <div className="timeline">
       <div className="timeline-toolbar">
-        <button onClick={splitAtPlayhead} title="Couper au curseur (S)">✂ Couper</button>
-        <button onClick={() => addText()} title="Ajouter un texte au curseur">＋ Texte</button>
+        <button onClick={splitAtPlayhead} title="Couper au curseur (S)"><Icon name="scissors" size={14} />Couper</button>
+        <button onClick={() => addText()} title="Ajouter un texte au curseur"><Icon name="plus" size={14} />Texte</button>
         <VoiceOverButton />
         <AddSoundButton />
         <button
@@ -165,12 +166,13 @@ export function TimelineView() {
           disabled={!item}
           title="Supprimer (Suppr)"
         >
-          🗑 Supprimer
+          <Icon name="trash" size={14} />Supprimer
         </button>
-        <button onClick={() => useStore.getState().undo()} title="Annuler (Ctrl+Z)">↶</button>
-        <button onClick={() => useStore.getState().redo()} title="Rétablir (Ctrl+Y)">↷</button>
+        <span className="sep" />
+        <button className="icon-btn" onClick={() => useStore.getState().undo()} title="Annuler (Ctrl+Z)" aria-label="Annuler"><Icon name="undo" size={15} /></button>
+        <button className="icon-btn" onClick={() => useStore.getState().redo()} title="Rétablir (Ctrl+Y)" aria-label="Rétablir"><Icon name="redo" size={15} /></button>
         <span className="spacer" />
-        <span className="muted small">{tl.clips.length} plans · {fmtTime(total)}</span>
+        <span className="stat"><b>{tl.clips.length}</b> plans · <b>{fmtTime(total)}</b></span>
         <label className="zoom">
           Zoom
           <input type="range" min={4} max={300} value={pps} onChange={(e) => setZoom(+e.target.value)} />
@@ -191,7 +193,7 @@ export function TimelineView() {
                 style={{ left: o.start * pps, width: Math.max(4, (o.src_out - o.src_in) * pps), borderColor: colorFor(o.media_id) }}
                 onMouseDown={(e) => startMoveItem(e, "overlay", o.id, o.start)}
                 title={`${mediaName(o.media_id)} · ${o.mode === "plein" ? "plein écran" : "incrustation"}\n${o.reason}`}>
-                {o.mode === "plein" ? "▣" : "◱"} {mediaName(o.media_id)}
+                <Icon name={o.mode === "plein" ? "square" : "image"} size={10} strokeWidth={2.4} />{mediaName(o.media_id)}
               </div>
             ))}
           </div>
@@ -232,11 +234,11 @@ export function TimelineView() {
                   )}
                   {w > 30 && (
                     <div className="clip-label">
-                      {c.zoom > 1.001 && <span className="badge">🔍</span>}
+                      {c.zoom > 1.001 && <span className="badge" title="Zoom"><Icon name="search" size={10} strokeWidth={2.4} /></span>}
                       {rampOf(c) ? <span className="badge" title="Rampe de vitesse">×{c.speed}→{c.speed_end}</span>
                         : c.speed !== 1 && <span className="badge">×{c.speed}</span>}
                       {(c.effects.length > 0 || c.audio_effects.length > 0) && (
-                        <span className="badge" title={[...c.effects, ...c.audio_effects].join(", ")}>✨</span>
+                        <span className="badge" title={[...c.effects, ...c.audio_effects].join(", ")}><Icon name="sparkles" size={10} strokeWidth={2.4} /></span>
                       )}
                       {mediaName(c.media_id)}
                     </div>
@@ -268,7 +270,7 @@ export function TimelineView() {
                 style={{ left: s.start * pps }}
                 onMouseDown={(e) => startMoveItem(e, "sfx", s.id, s.start)}
                 title={`${labelOf(catalog?.sfx, s.kind)} · ${Math.round(s.volume * 100)} %`}>
-                🔊 {labelOf(catalog?.sfx, s.kind)}
+                <Icon name="volume" size={10} strokeWidth={2.4} />{labelOf(catalog?.sfx, s.kind)}
               </div>
             ))}
           </div>
@@ -277,7 +279,7 @@ export function TimelineView() {
               <div key={g.id} className={`item-block image ${isSel("image", g.id) ? "sel" : ""}`}
                 style={{ left: g.start * pps, width: Math.max(16, (g.duration ?? Math.max(0, total - g.start)) * pps) }}
                 onMouseDown={(e) => startMoveItem(e, "image", g.id, g.start)} title={g.asset}>
-                🖼 {g.duration == null ? "Filigrane · " : ""}{g.asset}
+                <Icon name="image" size={10} strokeWidth={2.4} />{g.duration == null ? "Filigrane · " : ""}{g.asset}
               </div>
             ))}
           </div>
@@ -298,7 +300,7 @@ export function TimelineView() {
                 <div key={cm.id} className={`cm-pin s-${cm.status} ${isSel("comment", cm.id) ? "sel" : ""}`}
                   style={{ left: t * pps }} title={`${cm.text}${cm.reply ? "\nIA : " + cm.reply : ""}`}
                   onMouseDown={(e) => { e.stopPropagation(); selectItem({ kind: "comment", id: cm.id }); setPlayhead(t); }}>
-                  💬
+                  <Icon name="message" size={14} strokeWidth={2.2} />
                 </div>
               );
             })}
@@ -310,7 +312,7 @@ export function TimelineView() {
                   style={{ left: a.start * pps, width: Math.max(8, (a.src_out - a.src_in) * pps) }}
                   onMouseDown={(e) => startMoveItem(e, "audio", a.id, a.start)}
                   title={`${a.label || a.asset} · ${(a.src_out - a.src_in).toFixed(1)} s · ${Math.round(a.volume * 100)} %`}>
-                  {a.kind === "voix" ? "🎙" : a.kind === "musique" ? "♫" : "🔈"} {a.label || a.asset}
+                  <Icon name={a.kind === "voix" ? "mic" : a.kind === "musique" ? "music" : "volume"} size={10} strokeWidth={2.4} />{a.label || a.asset}
                 </div>
               ))}
             </div>
@@ -326,7 +328,7 @@ export function TimelineView() {
           <div className="track track-music" onMouseDown={seekFromEvent}>
             {tl.music.track && (
               <div className="music-block" style={{ width: total * pps }}>
-                ♪ {tl.music.track.split(/[\\/]/).pop()} · {Math.round(tl.music.volume * 100)} %
+                <Icon name="music" size={11} strokeWidth={2.2} /> {tl.music.track.split(/[\\/]/).pop()} · {Math.round(tl.music.volume * 100)} %
                 {tl.music.ducking && " · baisse auto sous la voix"}
               </div>
             )}

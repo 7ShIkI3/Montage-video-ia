@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { kindLabel, TrackedJob, useStore } from "../store";
+import { Icon } from "../icons";
 
 const STATUS_LABEL: Record<TrackedJob["status"], string> = {
   en_attente: "En attente", en_cours: "En cours", termine: "Terminée", erreur: "Erreur", annulee: "Annulée",
@@ -45,7 +46,7 @@ function TaskRow({ job, now }: { job: TrackedJob; now: number }) {
         <span className="muted small task-time">{mmss(elapsed)}</span>
         {active && (
           <button className="small-btn" disabled={job.cancel_requested} title="Arrêter cette tâche"
-            onClick={() => useStore.getState().cancelJob(job.id)}>✕ Annuler</button>
+            onClick={() => useStore.getState().cancelJob(job.id)}><Icon name="x" size={12} strokeWidth={2.4} />Annuler</button>
         )}
       </div>
       {active && <div className="progress"><div style={{ width: `${job.progress * 100}%` }} /><span>{job.message || "En attente…"}</span></div>}
@@ -56,12 +57,12 @@ function TaskRow({ job, now }: { job: TrackedJob; now: number }) {
           <a key={f} className="small-btn btn" href={api.exportUrl(job.project_id, f)} download>Télécharger</a>
         ))}
         {job.status === "erreur" && job.retry && (
-          <button className="small-btn" onClick={() => job.retry!()}>↻ Réessayer</button>
+          <button className="small-btn" onClick={() => job.retry!()}><Icon name="redo" size={12} />Réessayer</button>
         )}
       </div>
       {job.steps?.length > 0 && (
         <>
-          <button className="link small" onClick={() => setOpen(!open)}>{open ? "▾" : "▸"} Détails ({job.steps.length})</button>
+          <button className="link small" onClick={() => setOpen(!open)}><Icon name={open ? "chevron-down" : "chevron-right"} size={12} /> Détails ({job.steps.length})</button>
           {open && (
             <ul className="task-steps small">
               {job.steps.map((st, i) => (
@@ -110,7 +111,7 @@ export function Tasks() {
     <div className="tasks-wrap" ref={wrap}>
       <button className={`tasks-btn ${active.length ? "busy" : ""}`} onClick={() => setOpen(!open)} aria-expanded={open}
         title="Tâches en cours et récentes">
-        {latest ? <Ring value={latest.progress} /> : <span aria-hidden>⏳</span>} Tâches ({active.length})
+        {latest ? <Ring value={latest.progress} /> : <Icon name="list-video" size={14} />}{active.length ? `${active.length} tâche${active.length > 1 ? "s" : ""}` : "Tâches"}
       </button>
       {open && (
         <div className="popover tasks-drawer">

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { api, Direction, EditSettings, fmtTime, Style } from "../api";
 import { useStore } from "../store";
+import { Icon } from "../icons";
 
 const STYLES: { id: Style; name: string; desc: string }[] = [
   { id: "youtube", name: "YouTube", desc: "Rythme soutenu, coupes franches" },
@@ -38,7 +39,7 @@ export function MediaPanel() {
       onDrop={(e) => { e.preventDefault(); setOver(false); send([...e.dataTransfer.files]); }}>
       <header>
         <h3>Rushes</h3>
-        <button className="small-btn" onClick={() => input.current?.click()}>+ Importer</button>
+        <button className="small-btn" onClick={() => input.current?.click()}><Icon name="plus" size={13} strokeWidth={2.4} />Importer</button>
         <input ref={input} type="file" multiple accept="video/*,audio/*" hidden
           onChange={(e) => { send([...(e.target.files ?? [])]); e.target.value = ""; }} />
       </header>
@@ -54,12 +55,12 @@ export function MediaPanel() {
         {project.media.map((m) => (
           <li key={m.id}>
             <div className="thumb">
-              {m.proxy ? <img src={api.thumbUrl(project.id, m.id)} alt="" /> : <span>{m.has_video ? "🎬" : "🎙"}</span>}
+              {m.proxy ? <img src={api.thumbUrl(project.id, m.id)} alt="" /> : <Icon name={m.has_video ? "film" : "mic"} size={16} />}
             </div>
             <div className="meta">
               <div className="name" title={m.filename}>{m.filename}</div>
               <div className="muted small">
-                {fmtTime(m.duration)} · {m.width ? `${m.width}×${m.height}` : "audio"} {m.analyzed ? "· analysé ✓" : ""}
+                {fmtTime(m.duration)} · {m.width ? `${m.width}×${m.height}` : "audio"} {m.analyzed ? "· analysé" : ""}
               </div>
             </div>
             <button className="icon-btn" title="Retirer" onClick={async () => {
@@ -70,7 +71,7 @@ export function MediaPanel() {
                 await api.deleteMedia(project.id, m.id);
                 await st.refreshProject({ timeline: true });
               });
-            }}>✕</button>
+            }} aria-label="Retirer"><Icon name="x" size={14} /></button>
           </li>
         ))}
       </ul>
@@ -157,7 +158,7 @@ export function AIPanel() {
       <ReferencePicker busy={busy} />
       <DirectionsPicker busy={busy} onPick={(d) => { const next = { ...settings, ...d.settings } as EditSettings; setS(next); run(next); }} />
       <button className="primary big" onClick={() => run()} disabled={busy || !project.media.length}>
-        {busy ? "L'IA travaille…" : project.timeline.clips.length ? "↻ Remonter avec l'IA" : "✨ Monter avec l'IA"}
+        {busy ? "L'IA travaille…" : <><Icon name="sparkles" size={18} strokeWidth={2} />{project.timeline.clips.length ? "Remonter avec l'IA" : "Monter avec l'IA"}</>}
       </button>
       {busy && job && (
         <div className="progress-row">
@@ -185,7 +186,7 @@ function DirectionsPicker({ busy, onPick }: { busy: boolean; onPick: (d: Directi
   return (
     <div className="directions">
       <button className="link-like small" onClick={() => setOpen(!open)}>
-        {open ? "▾" : "▸"} Proposer 3 directions avant de monter
+        <Icon name={open ? "chevron-down" : "chevron-right"} size={13} /> Proposer 3 directions avant de monter
       </button>
       {open && (
         <>

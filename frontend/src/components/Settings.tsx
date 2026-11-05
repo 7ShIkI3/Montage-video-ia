@@ -1,6 +1,7 @@
-// Réglages : clé Claude, transcription (GPU/CPU, modèle, langue), voix de synthèse et état du système.
+// Réglages : clé Claude, transcription (GPU/CPU, modèle, langue), voix de synthèse, serveur et état du système.
 import { useEffect, useState } from "react";
 import { api, Settings as ServerSettings } from "../api";
+import { Icon } from "../icons";
 import { useStore } from "../store";
 
 const CLAUDE_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
@@ -13,6 +14,10 @@ const FIELD_LABEL: Record<string, string> = {
   claude_model: "modèle Claude", claude_effort: "effort Claude", whisper_model: "modèle Whisper",
   whisper_device: "calcul Whisper", whisper_language: "langue forcée",
 };
+const SECTIONS = [
+  { id: "claude", label: "Claude" }, { id: "transcription", label: "Transcription" }, { id: "voix", label: "Voix" },
+  { id: "serveur", label: "Serveur" }, { id: "systeme", label: "Système" },
+];
 
 /** Avertit que ces champs viennent de l'environnement : ce qui est saisi ici est enregistré mais ignoré. */
 function EnvNote({ cfg, fields }: { cfg: ServerSettings; fields: string[] }) {
@@ -46,6 +51,7 @@ export function Settings({ onBack }: { onBack: () => void }) {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
+  const [section, setSection] = useState("claude");
 
   const fill = (c: ServerSettings) => {
     setCfg(c);
@@ -63,6 +69,18 @@ export function Settings({ onBack }: { onBack: () => void }) {
     st.refreshCaps();
     api.languages().then(setLangs).catch(() => undefined);
   }, []);
+
+  // La navigation suit la section visible.
+  useEffect(() => {
+    const els = SECTIONS.map((s) => document.getElementById(s.id)).filter((x): x is HTMLElement => !!x);
+    if (!els.length) return;
+    const obs = new IntersectionObserver((entries) => {
+      const seen = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+      if (seen[0]) setSection(seen[0].target.id);
+    }, { rootMargin: "-80px 0px -60% 0px" });
+    els.forEach((el) => obs.observe(el));
+    return () => obs.disconnect();
+  }, [cfg]);
 
   /** Envoie un changement partiel, puis recharge l'état du système (la pastille de l'éditeur suit). */
   const save = async (patch: Parameters<typeof api.saveSettings>[0], done: string) => {
@@ -97,7 +115,7 @@ export function Settings({ onBack }: { onBack: () => void }) {
     setTest(null);
     try {
       const r = await api.testClaude();
-      setTest(r.ok ? { ok: true, text: `OK · ${r.model}` } : { ok: false, text: r.error || "Échec du test" });
+      setTest(r.ok ? { ok: true, text: `Connexion OK · ${r.model}` } : { ok: false, text: r.error || "Échec du test" });
     } catch (e) {
       setTest({ ok: false, text: (e as Error).message });
     } finally {
@@ -111,129 +129,156 @@ export function Settings({ onBack }: { onBack: () => void }) {
 
   const langName = (code: string) => langs.find((l) => l.code === code)?.name ?? code;
   const source = cfg?.key_source === "env" ? "variable d'environnement" : "fichier";
+  const saveBtn = <button className="primary" disabled={saving} onClick={saveAll}>{saving ? "Enregistrement…" : "Enregistrer"}</button>;
 
   return (
-    <div className="home settings-page">
-      <header className="settings-head">
-        <button className="icon-btn" onClick={onBack} title="Retour">← Retour</button>
-        <h1>Réglages</h1>
+    <div className="settings-page">
+      <header className="appbar">
+        <button className="back-link" onClick={onBack}><Icon name="back" size={18} strokeWidth={2} />Retour</button>
+        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Réglages</h1>
+        <span className="spacer" />
+        <span className="muted small">Enregistrés dans Documents/Monteur IA/settings.json</span>
       </header>
-      {!cfg ? <p className="muted">Chargement…</p> : (
-        <>
-          <section className="panel settings-section">
-            <header><h3>Claude</h3></header>
-            <p className="small">
-              {cfg.anthropic_api_key_set
-                ? <>Clé définie{cfg.anthropic_api_key_hint ? ` (…${cfg.anthropic_api_key_hint.replace(/^[….*•]+/, "")})` : ""} via {source}.</>
-                : <span className="warn">Aucune clé : le montage utilise l'IA locale, plus simple.</span>}
-            </p>
-            {cfg.key_source === "env" && (
-              <p className="banner">La clé vient de la variable d'environnement ANTHROPIC_API_KEY : elle a priorité sur celle saisie ici.</p>
-            )}
-            <label>Clé API Anthropic
-              <div className="key-row">
-                <input type={showKey ? "text" : "password"} value={key} placeholder="sk-ant-…" autoComplete="off" spellCheck={false}
-                  onChange={(e) => setKey(e.target.value)} />
-                <button type="button" className="small-btn" onClick={() => setShowKey(!showKey)}
-                  title={showKey ? "Masquer la clé" : "Afficher la clé"} aria-label={showKey ? "Masquer la clé" : "Afficher la clé"}>
-                  {showKey ? "🙈" : "👁"}
-                </button>
-              </div>
-            </label>
-            <EnvNote cfg={cfg} fields={["claude_model", "claude_effort"]} />
-            <div className="field-row">
-              <label>Modèle<Choice value={model} options={CLAUDE_MODELS} onChange={setModel} /></label>
-              <label>Effort de réflexion<Choice value={effort} options={EFFORTS} onChange={setEffort} /></label>
-            </div>
-            <div className="row-btns">
-              <button className="primary" disabled={saving} onClick={saveAll}>{saving ? "Enregistrement…" : "Enregistrer"}</button>
-              <button disabled={testing || !!key.trim() || !cfg.anthropic_api_key_set} onClick={testKey}
-                title={key.trim() ? "Enregistre d'abord la clé saisie" : undefined}>{testing ? "Test…" : "Tester"}</button>
-              <button disabled={saving || cfg.key_source !== "fichier"} onClick={clearKey}
-                title={cfg.key_source === "env" ? "La clé vient de l'environnement : à retirer là-bas" : undefined}>Effacer</button>
-              {test && <span className={`small ${test.ok ? "test-ok" : "warn"}`}>{test.text}</span>}
-            </div>
-            <p className="muted small">Stockée dans Documents/Monteur IA/settings.json, jamais dans le dépôt ni envoyée ailleurs qu'à Anthropic.</p>
-          </section>
-
-          <section className="panel settings-section">
-            <header><h3>Transcription</h3></header>
-            {caps?.whisper_fallback && (
-              <p className="banner warn">GPU indisponible : {caps.whisper_fallback} — transcription sur CPU</p>
-            )}
-            {caps?.cuda && !caps.cublas && (
-              <div className="banner">
-                <p>Une carte NVIDIA est détectée, mais la bibliothèque cuBLAS manque. Pour l'installer :</p>
-                <div className="key-row">
-                  <code className="cmd">{CUDA_COMMAND}</code>
-                  <button type="button" className="small-btn" onClick={() => copy(CUDA_COMMAND)}>Copier</button>
+      {!cfg ? <p className="muted" style={{ padding: 32 }}>Chargement…</p> : (
+        <div className="settings-wrap">
+          <nav className="settings-nav" aria-label="Sections des réglages">
+            {SECTIONS.map((s) => <a key={s.id} href={`#/reglages#${s.id}`} className={section === s.id ? "on" : ""}
+              onClick={(e) => { e.preventDefault(); document.getElementById(s.id)?.scrollIntoView({ behavior: "smooth", block: "start" }); setSection(s.id); }}>{s.label}</a>)}
+          </nav>
+          <div className="settings-body">
+            <section id="claude" className="settings-section">
+              <header>
+                <div>
+                  <h3>Claude</h3>
+                  <p>Le réalisateur IA : consignes libres, traduction, doublage. Sans clé, l'app utilise l'IA locale, plus simple.</p>
                 </div>
-              </div>
-            )}
-            <EnvNote cfg={cfg} fields={["whisper_model", "whisper_device", "whisper_language"]} />
-            <div className="field-row">
-              <label>Calcul
-                <select value={device} onChange={(e) => setDevice(e.target.value as ServerSettings["whisper_device"])}>
-                  <option value="auto">Auto</option>
-                  <option value="cuda">GPU NVIDIA (cuda)</option>
-                  <option value="cpu">CPU</option>
-                </select>
+                {cfg.anthropic_api_key_set
+                  ? <span className="status-chip ok">Clé définie{cfg.anthropic_api_key_hint ? ` · …${cfg.anthropic_api_key_hint.replace(/^[….*•]+/, "")}` : ""} · {source}</span>
+                  : <span className="status-chip warn">Aucune clé</span>}
+              </header>
+              {cfg.key_source === "env" && (
+                <p className="banner">La clé vient de la variable d'environnement ANTHROPIC_API_KEY : elle a priorité sur celle saisie ici.</p>
+              )}
+              <label>Clé API Anthropic
+                <div className="key-row">
+                  <input type={showKey ? "text" : "password"} value={key} placeholder="sk-ant-…" autoComplete="off" spellCheck={false}
+                    onChange={(e) => setKey(e.target.value)} />
+                  <button type="button" className="small-btn" onClick={() => setShowKey(!showKey)}
+                    title={showKey ? "Masquer la clé" : "Afficher la clé"} aria-label={showKey ? "Masquer la clé" : "Afficher la clé"}>
+                    <Icon name={showKey ? "eye-off" : "eye"} size={16} />
+                  </button>
+                </div>
               </label>
-              <label>Modèle Whisper<Choice value={whisper} options={WHISPER_MODELS} onChange={setWhisper} /></label>
-            </div>
-            <p className="muted small">Auto prend le GPU NVIDIA s'il fonctionne, sinon le processeur. Le GPU transcrit bien plus vite ; le CPU marche partout. Un modèle plus gros comprend mieux mais est plus lent.</p>
-            <label>Langue forcée <span className="muted small">(vide = détection automatique)</span>
-              <input value={language} placeholder="fr, en, es…" maxLength={8} onChange={(e) => setLanguage(e.target.value)} />
-            </label>
-            <div className="row-btns">
-              <button className="primary" disabled={saving} onClick={saveAll}>{saving ? "Enregistrement…" : "Enregistrer"}</button>
-            </div>
-          </section>
+              <EnvNote cfg={cfg} fields={["claude_model", "claude_effort"]} />
+              <div className="field-row">
+                <label>Modèle<Choice value={model} options={CLAUDE_MODELS} onChange={setModel} /></label>
+                <label>Effort de réflexion<Choice value={effort} options={EFFORTS} onChange={setEffort} /></label>
+              </div>
+              <div className="row-btns">
+                {saveBtn}
+                <button disabled={testing || !!key.trim() || !cfg.anthropic_api_key_set} onClick={testKey}
+                  title={key.trim() ? "Enregistre d'abord la clé saisie" : undefined}>{testing ? "Test…" : "Tester la clé"}</button>
+                <button className="danger" disabled={saving || cfg.key_source !== "fichier"} onClick={clearKey}
+                  title={cfg.key_source === "env" ? "La clé vient de l'environnement : à retirer là-bas" : undefined}>Effacer</button>
+                {test && <span className={`small ${test.ok ? "test-ok" : "warn"}`}>{test.ok && <Icon name="check" size={14} strokeWidth={3} />}{test.text}</span>}
+              </div>
+              <p className="muted small" style={{ margin: 0 }}>Jamais dans le dépôt, jamais envoyée ailleurs qu'à Anthropic. Une variable d'environnement ANTHROPIC_API_KEY garde la priorité.</p>
+            </section>
 
-          <section className="panel settings-section">
-            <header><h3>Voix</h3></header>
-            {caps && Object.keys(caps.tts ?? {}).length ? (
-              <table className="settings-table">
-                <thead><tr><th>Langue</th><th>Moteur</th></tr></thead>
-                <tbody>
-                  {Object.entries(caps.tts).map(([code, engine]) => (
-                    <tr key={code}>
-                      <td>{langName(code)}</td>
-                      <td className={engine ? "" : "muted"}>{engine ? `${engine} · ${ENGINE_LABEL[engine]}` : "aucune"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : <p className="muted small">État des voix indisponible.</p>}
-            <p className="muted small">Les voix servent au doublage et à la voix off IA. Une voix Piper sonne naturelle ; espeak est une voix de secours.</p>
-          </section>
+            <section id="transcription" className="settings-section">
+              <header>
+                <div>
+                  <h3>Transcription</h3>
+                  <p>Whisper transcrit les rushes au mot près. Le GPU va bien plus vite ; le processeur marche partout.</p>
+                </div>
+              </header>
+              {caps?.whisper_fallback && (
+                <div className="banner warn"><Icon name="alert" size={18} /><div><p style={{ margin: 0 }}>GPU indisponible : {caps.whisper_fallback}. Transcription sur CPU pour l'instant.</p></div></div>
+              )}
+              {caps?.cuda && !caps.cublas && (
+                <div className="banner warn">
+                  <Icon name="alert" size={18} />
+                  <div>
+                    <p>Carte NVIDIA détectée, mais la bibliothèque cuBLAS manque. Pour l'installer :</p>
+                    <div className="key-row">
+                      <code className="cmd">{CUDA_COMMAND}</code>
+                      <button type="button" className="small-btn" style={{ width: "auto", padding: "0 10px" }} onClick={() => copy(CUDA_COMMAND)}><Icon name="copy" size={14} />Copier</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <EnvNote cfg={cfg} fields={["whisper_model", "whisper_device", "whisper_language"]} />
+              <div className="field-row three">
+                <label>Calcul
+                  <select value={device} onChange={(e) => setDevice(e.target.value as ServerSettings["whisper_device"])}>
+                    <option value="auto">Auto</option>
+                    <option value="cuda">GPU NVIDIA (cuda)</option>
+                    <option value="cpu">CPU</option>
+                  </select>
+                </label>
+                <label>Modèle Whisper<Choice value={whisper} options={WHISPER_MODELS} onChange={setWhisper} /></label>
+                <label>Langue forcée
+                  <input value={language} placeholder="auto (fr, en, es…)" maxLength={8} onChange={(e) => setLanguage(e.target.value)} />
+                </label>
+              </div>
+              <p className="muted small" style={{ margin: 0 }}>Auto prend le GPU NVIDIA s'il fonctionne, sinon le processeur. Un modèle plus gros comprend mieux mais est plus lent. Langue vide : détection automatique.</p>
+              <div className="row-btns">{saveBtn}</div>
+            </section>
 
-          <section className="panel settings-section">
-            <header><h3>Serveur</h3></header>
-            <label>Port de l'application de bureau
-              <input type="number" min={1024} max={65535} value={port} onChange={(e) => setPort(e.target.value)} />
-            </label>
-            <p className="muted small">
-              Pris en compte au prochain lancement de l'application de bureau (si le port est occupé, un port libre est choisi).
-              Le serveur lancé à la main avec uvicorn garde son option <code>--port</code>.
-            </p>
-            <div className="row-btns">
-              <button className="primary" disabled={saving} onClick={saveAll}>{saving ? "Enregistrement…" : "Enregistrer"}</button>
-            </div>
-          </section>
+            <section id="voix" className="settings-section">
+              <header>
+                <div>
+                  <h3>Voix</h3>
+                  <p>Pour le doublage et la voix off IA. Piper sonne naturel, espeak est une voix de secours.</p>
+                </div>
+              </header>
+              {caps && Object.keys(caps.tts ?? {}).length ? (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="settings-table">
+                    <thead><tr><th>Langue</th><th>Moteur</th><th style={{ textAlign: "right" }}>Qualité</th></tr></thead>
+                    <tbody>
+                      {Object.entries(caps.tts).map(([code, engine]) => (
+                        <tr key={code}>
+                          <td>{langName(code)}</td>
+                          <td className={engine ? "" : "muted"}>{engine ?? "aucune"}</td>
+                          <td style={{ textAlign: "right" }} className={engine === "piper" ? "" : engine ? "warn" : "muted"}>{engine ? ENGINE_LABEL[engine] : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <p className="muted small">État des voix indisponible.</p>}
+              <p className="muted small" style={{ margin: 0 }}>Ajoute une voix Piper (<code>&lt;langue&gt;*.onnx</code>) dans le dossier des voix pour un rendu naturel.</p>
+            </section>
 
-          <section className="panel settings-section">
-            <header><h3>Système</h3></header>
-            {caps ? (
-              <ul className="settings-list small">
-                <li>Encodeur vidéo : <b>{caps.encoder}</b></li>
-                <li>Whisper : <b>{caps.whisper_model}</b>{caps.whisper_device ? ` sur ${caps.whisper_device === "cuda" ? "GPU" : "CPU"}` : ""}</li>
-                <li>Réalisateur : <b>{caps.claude ? caps.claude_model : "IA locale (pas de clé Claude)"}</b></li>
-                <li>Bibliothèque musicale : <b>{caps.music_library}</b> morceau{caps.music_library > 1 ? "x" : ""}</li>
-              </ul>
-            ) : <p className="muted small">Le serveur ne répond pas.</p>}
-          </section>
-        </>
+            <section id="serveur" className="settings-section">
+              <header>
+                <div>
+                  <h3>Serveur</h3>
+                  <p>Pris en compte au prochain lancement de l'application de bureau. Si le port est occupé, un port libre est choisi.</p>
+                </div>
+              </header>
+              <div className="row-btns" style={{ alignItems: "flex-end", gap: 16 }}>
+                <label style={{ width: 200 }}>Port
+                  <input type="number" min={1024} max={65535} value={port} onChange={(e) => setPort(e.target.value)} />
+                </label>
+                {saveBtn}
+              </div>
+            </section>
+
+            <section id="systeme" className="settings-section">
+              <header><div><h3>Système</h3></div></header>
+              {caps ? (
+                <div className="sys-grid">
+                  <div className="sys-tile"><span>Encodeur</span><b>{caps.encoder}</b></div>
+                  <div className="sys-tile"><span>Whisper</span><b>{caps.whisper_model}{caps.whisper_device ? ` · ${caps.whisper_device === "cuda" ? "GPU" : "CPU"}` : ""}</b></div>
+                  <div className="sys-tile"><span>Réalisateur</span><b>{caps.claude ? caps.claude_model : "IA locale"}</b></div>
+                  <div className="sys-tile"><span>Musiques</span><b>{caps.music_library} morceau{caps.music_library > 1 ? "x" : ""}</b></div>
+                </div>
+              ) : <p className="muted small">Le serveur ne répond pas.</p>}
+            </section>
+          </div>
+        </div>
       )}
     </div>
   );
