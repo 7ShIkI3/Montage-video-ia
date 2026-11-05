@@ -391,6 +391,13 @@ export function Player() {
       for (const s of sfx) if (s.start > reported.current && s.start <= t) playSfx(s.kind, s.volume);
       for (const im of impacts) if (im.start > reported.current && im.start <= t) fireImpact(im);
       reported.current = t;
+      // Boucle sur la zone d'entrée/sortie (Ctrl+L) : arrivé à la sortie, on repart de l'entrée
+      // (le saut relance la lecture, comme un clic sur la timeline).
+      const rg = useStore.getState().loopRange ? tl.range : null;
+      if (rg && t >= rg.end - 1 / 60 && rg.end - rg.start > 0.3) {
+        setPlayhead(rg.start);
+        return;
+      }
       setPlayhead(t);
       syncOverlay(t, true);
       reframe(el, c, el.currentTime);

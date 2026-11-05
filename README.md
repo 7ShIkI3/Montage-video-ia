@@ -93,6 +93,9 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
   kit de publication (règles YouTube respectées) et tous passent en repères dans l'export XML.
 - Audio par plan : volume, fondus d'entrée et de sortie, coupure du son, dessinés sur la timeline et
   identiques au rendu.
+- Zone d'entrée/sortie : `I` / `O` sans plan sélectionné (ou `X` pour le plan au curseur) posent une zone,
+  glissable par ses bornes. `Ctrl+L` la lit en boucle, `Maj+Suppr` retire son contenu et referme le trou,
+  et l'export propose « seulement la zone » (plans coupés, textes, sons, musique et repères recalés).
 - Panneau « Pourquoi » : raison et score de chaque plan, passages écartés réintégrables en un clic.
 - Texte : cliquer un mot pour y aller, Maj+clic pour sélectionner et couper des mots, double-clic pour
   corriger un sous-titre.

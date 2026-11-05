@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, cuda, pipeline, settings, storage
+from . import config, cuda, pipeline, settings, storage, timeline_ops
 from .analysis import transcribe as tr_mod
 from .jobs import manager
 from .media import ffmpeg
@@ -586,6 +586,7 @@ class ExportReq(BaseModel):
     fps: int | None = None  # None = comme la source
     smooth: bool = False  # interpolation de mouvement quand la source a moins d'images
     container: str = "mp4"  # mp4, webm, mov (ProRes) ou gif
+    range_only: bool = False  # seulement la zone d'entrée/sortie (I/O) de la timeline
 
 
 @app.post("/api/projects/{pid}/export")
@@ -593,6 +594,15 @@ def export(pid: str, body: ExportReq):
     p = _project(pid)
     if not p.timeline.clips:
         raise HTTPException(400, "La timeline est vide.")
+    tl = label = None
+    if body.range_only:
+        if not p.timeline.range:
+            raise HTTPException(400, "Aucune zone d'entrée/sortie : pose-la avec I et O (sans plan sélectionné).")
+        r = p.timeline.range
+        tl = timeline_ops.slice_timeline(p.timeline, r.start, r.end)
+        if not tl.clips:
+            raise HTTPException(400, "La zone ne contient aucun plan.")
+        label = f"{p.timeline.title or p.name} (zone {_mmss(r.start)}-{_mmss(r.end)})"
     if body.quality not in render_mod.QUALITIES:
         raise HTTPException(400, "Qualité inconnue")
     if body.fps is not None and body.fps not in render_mod.FPS_CHOICES:
@@ -600,7 +610,11 @@ def export(pid: str, body: ExportReq):
     if body.container not in (*render_mod.CONTAINERS, "gif"):
         raise HTTPException(400, "Format de fichier inconnu")
     return manager.submit(pid, "export", lambda ctx: pipeline.export(pid, body.quality, ctx, body.fps, body.smooth,
-                                                                     body.container))
+                                                                     body.container, tl=tl, label=label))
+
+
+def _mmss(t: float) -> str:
+    return f"{int(t) // 60}m{int(t) % 60:02d}"
 
 
 @app.post("/api/projects/{pid}/publish-kit")

@@ -4,6 +4,7 @@ import { api, ApiError, CaptionLine, Clip, AudioItem, Comment, EffectsCatalog, H
 const uid = () => "c_" + Math.random().toString(36).slice(2, 12);
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
 const MIN_CLIP = 0.1;
+const MIN_RANGE = 0.1;
 
 // --- Vitesse et images clés (mêmes calculs que le rendu : backend/app/models.py) ---
 
@@ -58,6 +59,26 @@ export function kfAt(c: Clip, t: number): { zoom: number; x: number; y: number }
   return ks[ks.length - 1];
 }
 const rid = (p: string) => p + Math.random().toString(36).slice(2, 12);
+
+/** Coupe le plan à l'instant local `tc` (comme la touche S) : rampe et images clés continuent après la coupe.
+ *  Renvoie [avant, après] ; `après` garde l'identifiant du plan, à remplacer si les deux sont conservés. */
+export function cutClip(c: Clip, tc: number): [Clip, Clip] {
+  const cut = c.src_in + localToSrc(c, tc);
+  const a: Clip = { ...clone(c), src_out: cut, fade_out: 0 };
+  const b: Clip = { ...clone(c), src_in: cut, transition: "aucune", fade_in: 0 };
+  if (rampOf(c)) {
+    const mid = speedAt(c, tc);
+    a.speed_end = mid;
+    b.speed = mid;
+  }
+  if (c.keyframes?.length) {
+    const here = kfAt(c, tc)!;
+    const k = { ...here, t: 0, ease: "doux" as const };
+    b.keyframes = [k, ...c.keyframes.filter((x) => x.t > tc).map((x) => ({ ...x, t: +(x.t - tc).toFixed(3) }))];
+    a.keyframes = [...c.keyframes.filter((x) => x.t < tc), { ...k, t: +tc.toFixed(3) }];
+  }
+  return [a, b];
+}
 
 export type Sel = { kind: "clip" | "text" | "sfx" | "overlay" | "comment" | "impact" | "image" | "audio" | "marker"; id: string };
 export type ItemKind = "text" | "sfx" | "overlay" | "comment" | "impact" | "image" | "audio" | "marker";
@@ -254,6 +275,16 @@ interface State {
   trimToPlayhead: (id: string, side: "in" | "out") => void;
   /** Pose un repère au curseur (ou sélectionne celui qui s'y trouve déjà). */
   addMarker: () => void;
+  /** Lecture en boucle de la zone d'entrée/sortie. */
+  loopRange: boolean;
+  setLoopRange: (on: boolean) => void;
+  /** Entrée (« in ») ou sortie (« out ») de la zone au curseur ; l'autre borne s'ajuste si elle gêne. */
+  markRange: (side: "in" | "out") => void;
+  /** Zone = le plan sous le curseur (X). */
+  rangeFromClip: () => void;
+  setRange: (r: { start: number; end: number } | null) => void;
+  /** Retire tout ce qui est dans la zone et referme le trou (suppression « ripple »). */
+  deleteRange: () => void;
 
   edit: (fn: (tl: Timeline) => void) => void;
   undo: () => void;
@@ -310,6 +341,7 @@ export const useStore = create<State>((set, get) => ({
   helpOpen: false,
   paletteOpen: false,
   exportOpen: false,
+  loopRange: false,
   catalog: null,
   item: null,
   picking: false,
@@ -511,6 +543,68 @@ export const useStore = create<State>((set, get) => ({
     get().edit((tl) => { (tl.markers ??= []).push({ id, t: +playhead.toFixed(3), label: "", color: "corail", chapter: true }); });
     set({ item: { kind: "marker", id }, selected: null });
   },
+  setLoopRange: (on) => set({ loopRange: on }),
+  setRange: (r) => get().edit((tl) => { tl.range = r; }),
+  markRange: (side) => {
+    const { timeline, playhead } = get();
+    if (!timeline) return;
+    const total = timelineDuration(timeline);
+    const t = +Math.max(0, Math.min(playhead, total)).toFixed(3);
+    const r = timeline.range;
+    let start = r?.start ?? 0, end = r?.end ?? total;
+    if (side === "in") { start = t; if (end <= start + MIN_RANGE) end = total; }
+    else { end = t; if (start >= end - MIN_RANGE) start = 0; }
+    if (end - start < MIN_RANGE) return;
+    get().setRange({ start, end });
+  },
+  rangeFromClip: () => {
+    const { timeline, playhead } = get();
+    if (!timeline) return;
+    const hit = clipAt(timeline, Math.min(playhead, Math.max(0, timelineDuration(timeline) - 1e-3)));
+    if (!hit) return;
+    const end = hit.start + clipDur(timeline.clips[hit.index]);
+    get().setRange({ start: +hit.start.toFixed(3), end: +end.toFixed(3) });
+  },
+  deleteRange: () => {
+    const { timeline } = get();
+    const r = timeline?.range;
+    if (!timeline || !r) return;
+    const { start: a, end: b } = r;
+    const span = b - a;
+    get().edit((tl) => {
+      // Plans : on garde ce qui est avant a et après b (coupe comme la touche S, rampes et images clés comprises).
+      const starts = clipStarts(tl);
+      const out: Clip[] = [];
+      tl.clips.forEach((c, i) => {
+        const c0 = starts[i], c1 = c0 + clipDur(c);
+        if (c1 <= a + 1e-6 || c0 >= b - 1e-6) { out.push(c); return; }
+        if (a > c0 + 1e-6) { const [head] = cutClip(c, a - c0); if (clipDur(head) >= MIN_CLIP) out.push(head); }
+        if (b < c1 - 1e-6) { const [, tail] = cutClip(c, b - c0); if (clipDur(tail) >= MIN_CLIP) out.push({ ...tail, id: uid() }); }
+      });
+      tl.clips = out;
+      const shift = <T extends { start: number }>(items: T[] | undefined, durOf?: (x: T) => number | null): T[] =>
+        (items || []).filter((it) => {
+          if (it.start >= b - 1e-6) { it.start = +(it.start - span).toFixed(3); return true; }
+          if (it.start >= a - 1e-6) return false;  // commence dans la zone
+          const d = durOf?.(it);
+          if (d != null && it.start + d > a) {  // à cheval sur l'entrée : on le raccourcit
+            const keep = a - it.start;
+            if ("duration" in it && (it as { duration: number | null }).duration != null) (it as { duration: number }).duration = +keep.toFixed(3);
+            else if ("src_out" in it) (it as unknown as { src_out: number; src_in: number }).src_out = +((it as unknown as { src_in: number }).src_in + keep).toFixed(3);
+          }
+          return true;
+        });
+      tl.texts = shift(tl.texts, (x) => x.duration);
+      tl.sfx = shift(tl.sfx);
+      tl.impacts = shift(tl.impacts);
+      tl.images = shift(tl.images, (g) => g.duration);
+      tl.audio = shift(tl.audio, (x) => x.src_out - x.src_in);
+      tl.overlays = shift(tl.overlays, (o) => o.src_out - o.src_in);
+      tl.markers = (tl.markers || []).filter((k) => k.t < a - 1e-6 || k.t >= b - 1e-6).map((k) => (k.t >= b - 1e-6 ? { ...k, t: +(k.t - span).toFixed(3) } : k));
+      tl.range = null;
+    });
+    set({ playhead: a, selected: null, item: null });
+  },
 
   edit: (fn) => {
     const tl = get().timeline;
@@ -570,21 +664,10 @@ export const useStore = create<State>((set, get) => ({
     if (cut - c.src_in < MIN_CLIP || c.src_out - cut < MIN_CLIP) return;
     const tc = playhead - hit.start;
     get().edit((tl) => {
-      const a = tl.clips[hit.index];
-      const b: Clip = { ...a, id: uid(), src_in: cut };
-      if (rampOf(a)) {  // la rampe continue de l'autre côté de la coupe
-        const mid = speedAt(a, tc);
-        b.speed = mid;
-        a.speed_end = mid;
-      }
-      if (a.keyframes?.length) {
-        const here = kfAt(a, tc)!;
-        const k = { ...here, t: 0, ease: "doux" as const };
-        b.keyframes = [k, ...a.keyframes.filter((x) => x.t > tc).map((x) => ({ ...x, t: +(x.t - tc).toFixed(3) }))];
-        a.keyframes = [...a.keyframes.filter((x) => x.t < tc), { ...k, t: +tc.toFixed(3) }];
-      }
-      a.src_out = cut;
-      tl.clips.splice(hit.index + 1, 0, b);
+      const [a, b] = cutClip(tl.clips[hit.index], tc);  // rampe et images clés continuent de l'autre côté
+      a.fade_out = tl.clips[hit.index].fade_out;  // une coupe garde les fondus du plan d'origine
+      b.fade_in = tl.clips[hit.index].fade_in;
+      tl.clips.splice(hit.index, 1, a, { ...b, id: uid() });
     });
   },
   restoreRejected: (clip) => {

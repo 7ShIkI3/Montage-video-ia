@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, fmtTime } from "../api";
 import { Icon, IconName } from "../icons";
 import { isBusy, jobOf, LeftTab, RightTab, useStore } from "../store";
 import { Shortcuts } from "./Shortcuts";
@@ -63,8 +63,11 @@ function useShortcuts() {
       else if (k === "z" && e.shiftKey && !mod) { s.zoomFit(); }
       else if (mod && k === "d") { e.preventDefault(); if (clip) s.duplicateClip(clip); }
       else if (mod && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); if (clip) s.nudgeClip(clip, e.key === "ArrowLeft" ? -1 : 1); }
-      else if (k === "i" && !mod) { if (clip) s.trimToPlayhead(clip, "in"); }
-      else if (k === "o" && !mod) { if (clip) s.trimToPlayhead(clip, "out"); }
+      else if (k === "i" && !mod) { if (clip) s.trimToPlayhead(clip, "in"); else s.markRange("in"); }
+      else if (k === "o" && !mod) { if (clip) s.trimToPlayhead(clip, "out"); else s.markRange("out"); }
+      else if (k === "x" && !mod) { if (e.shiftKey) s.setRange(null); else s.rangeFromClip(); }
+      else if (mod && k === "l") { e.preventDefault(); s.setLoopRange(!s.loopRange); }
+      else if (e.key === "Delete" && e.shiftKey) { e.preventDefault(); s.deleteRange(); }
       else if (k === "m" && !mod) { s.addMarker(); }
       else if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); s.undo(); }
       else if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); s.redo(); }
@@ -123,6 +126,8 @@ function ExportButton() {
   const [quality, setQuality] = useState("1080p");
   const [fps, setFps] = useState<number | null>(null);
   const [smooth, setSmooth] = useState(false);
+  const [rangeOnly, setRangeOnly] = useState(false);
+  const range = useStore((s) => s.timeline?.range ?? null);
   const [last, setLast] = useState<string | null>(null);
   const [lastMany, setLastMany] = useState<string[]>([]);
   // Le popover se ferme au clic à l'extérieur et sur Échap.
@@ -151,9 +156,9 @@ function ExportButton() {
     if (await st.guard("Sauvegarde impossible", async () => { await st.saveNow(); return true; })) window.location.href = href;
   };
 
-  const go = () => useStore.getState().runJob("Export", () => api.export(project.id, quality, fps, smooth), {
-    onDone: (j) => setLast(j.result as string),
-  });
+  const useRange = !!range && rangeOnly;
+  const go = () => useStore.getState().runJob(useRange ? "Export de la zone" : "Export",
+    () => api.export(project.id, quality, fps, smooth, useRange), { onDone: (j) => setLast(j.result as string) });
 
   return (
     <div className="export-wrap" ref={wrap}>
@@ -186,6 +191,12 @@ function ExportButton() {
             <label className="inline">
               <input type="checkbox" checked={smooth} onChange={(e) => setSmooth(e.target.checked)} />
               Fluidité IA : créer les images manquantes ({srcFps} → {wantFps} i/s, rendu plus long)
+            </label>
+          )}
+          {range && (
+            <label className="inline" title="La zone posée avec I et O sur la timeline">
+              <input type="checkbox" checked={rangeOnly} onChange={(e) => setRangeOnly(e.target.checked)} />
+              Seulement la zone {fmtTime(range.start)} → {fmtTime(range.end)} ({(range.end - range.start).toFixed(1)} s)
             </label>
           )}
           {upscale && <p className="warn small">Tes rushes font {srcH}p : l'export {quality} sera agrandi, pas plus net.</p>}

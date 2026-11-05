@@ -24,6 +24,13 @@ export const SHORTCUT_GROUPS: { title: string; items: Shortcut[] }[] = [
     { keys: ["Ctrl", "Y"], label: "Rétablir" },
     { keys: ["Alt", "glisser"], label: "Désactiver l'aimantation pendant un déplacement" },
   ] },
+  { title: "Zone d'entrée/sortie", items: [
+    { keys: ["I", "O"], label: "Sans plan sélectionné : entrée / sortie de la zone au curseur" },
+    { keys: ["X"], label: "Zone sur le plan au curseur" },
+    { keys: ["Ctrl", "L"], label: "Lire la zone en boucle" },
+    { keys: ["Maj", "Suppr"], label: "Supprimer le contenu de la zone et refermer" },
+    { keys: ["Maj", "X"], label: "Effacer la zone" },
+  ] },
   { title: "Affichage", items: [
     { keys: ["+", "-"], label: "Zoomer / dézoomer la timeline" },
     { keys: ["Ctrl", "molette"], label: "Zoomer sous la souris" },
