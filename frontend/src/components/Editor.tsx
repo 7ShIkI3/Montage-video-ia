@@ -8,6 +8,7 @@ import { AIPanel, MediaPanel } from "./LeftPanel";
 import { Player } from "./Player";
 import { CommandBar, CommentsPanel, Inspector, TranscriptPanel } from "./RightPanel";
 import { TimelineView } from "./Timeline";
+import { ResearchPanel } from "./Research";
 import { PresetExport, BrandPanel, TemplatesPanel, VersionsPanel } from "./Studio";
 import { Tasks } from "./Tasks";
 
@@ -239,7 +240,7 @@ const LEFT_TABS: { id: LeftTab; label: string; icon: IconName }[] = [
   { id: "marque", label: "Identité de marque", icon: "palette" },
 ];
 const RIGHT_TABS: { id: RightTab; label: string }[] = [
-  { id: "consigne", label: "Consigne" }, { id: "inspecteur", label: "Inspecteur" }, { id: "texte", label: "Texte" },
+  { id: "consigne", label: "Consigne" }, { id: "inspecteur", label: "Inspecteur" }, { id: "texte", label: "Texte" }, { id: "recherche", label: "Recherche" },
 ];
 
 /** Poignée de redimensionnement d'un panneau (glisser ; double-clic : taille par défaut). */
@@ -398,6 +399,7 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
             {right === "consigne" && <><CommandBar /><CommentsPanel /></>}
             {right === "inspecteur" && <Inspector />}
             {right === "texte" && <TranscriptPanel />}
+            {right === "recherche" && <ResearchPanel />}
           </div>
         </aside>
       )}
