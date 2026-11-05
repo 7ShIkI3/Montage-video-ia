@@ -49,6 +49,8 @@ def setup_env() -> None:
         sys.path.insert(0, str(backend))
     Path(os.environ["MONTEUR_DATA_DIR"]).mkdir(parents=True, exist_ok=True)
     redirect_std(Path(os.environ["MONTEUR_DATA_DIR"]) / "monteur.log")
+    if getattr(sys, "frozen", False):
+        hide_console_windows()
     from app import cuda
     cuda.add_dll_dirs()  # DLL CUDA de pip, avant tout import de ctranslate2
 
@@ -64,6 +66,25 @@ def redirect_std(log: Path) -> None:
         sys.stdout = f
     if sys.stderr is None:
         sys.stderr = f
+
+
+def hide_console_windows() -> None:
+    """Windows, application sans console : chaque sous-processus console (ffmpeg, ffprobe, espeak, piper…)
+    ouvrirait sa propre fenêtre noire à l'écran. On ajoute CREATE_NO_WINDOW à tous les lancements
+    (subprocess.run passe par Popen), en un seul endroit plutôt qu'à chaque appel du backend."""
+    if os.name != "nt":
+        return
+    import subprocess
+    if getattr(subprocess.Popen, "_monteur_sans_fenetre", False):
+        return
+    orig_init = subprocess.Popen.__init__
+
+    def init(self, *args, **kwargs):
+        kwargs["creationflags"] = kwargs.get("creationflags", 0) | subprocess.CREATE_NO_WINDOW
+        orig_init(self, *args, **kwargs)
+
+    subprocess.Popen.__init__ = init  # type: ignore[method-assign]
+    subprocess.Popen._monteur_sans_fenetre = True  # type: ignore[attr-defined]
 
 
 def free_port() -> int:
