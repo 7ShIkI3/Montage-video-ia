@@ -78,6 +78,18 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
   accent), la police et le ton. Sous-titres, gros textes et bandeaux en prennent les couleurs, le ton guide le
   réalisateur, et un modèle de style « Marque … » peut être enregistré pour les prochaines vidéos.
 
+### Pendant et après le montage
+
+- **Réalisation en direct** : pendant un montage, des directions, des shorts ou la démo, le lecteur affiche les
+  étapes du réalisateur (analyse, transcription, repérage, stratégie, montage, habillage, calage, relecture,
+  vérification), celle en cours avec son message, la progression, le chrono et un bouton pour arrêter.
+- **Pitch** : à la fin, le réalisateur présente son montage (titre, résumé, nombre de plans, durée, note du
+  relecteur, score qualité, avertissements, plan rôle par rôle) et propose de le lire, de voir le plan ou
+  d'exporter. Bouton « Pitch » dans l'onglet Plan pour le revoir.
+- **Essayer sans vidéo** : sur l'accueil, un clip de combat PvP en voxels généré par l'app (graphismes et sons
+  synthétiques) est importé dans un projet de démo et monté en style PvP, sous tes yeux. L'application installée
+  embarque le clip ; en dev, il est rendu une fois (~3 min) puis gardé dans le cache des données.
+
 ## L'éditeur
 
 - Hors ligne : polices embarquées (Inter, Space Grotesk, JetBrains Mono), aucune ressource externe ; confirmations
@@ -191,6 +203,7 @@ chargement, l'app retombe toute seule sur le processeur (plus lent) et l'indique
 | `MONTEUR_PIPER_VOICES` | `./data/voices` | Voix Piper du doublage (`<langue>*.onnx`) |
 | `MONTEUR_SEGMENTER_MODEL` | téléchargé | Modèle de détourage `selfie_segmenter.tflite` |
 | `MONTEUR_FFMPEG`, `MONTEUR_FFPROBE` | PATH | Chemin de FFmpeg (appli de bureau) |
+| `MONTEUR_DEMO_CLIP` | clip embarqué ou rendu | Vidéo utilisée par « Essayer sans vidéo » |
 
 La clé Claude, les modèles, l'appareil Whisper et le port peuvent aussi se régler dans l'app (Réglages,
 engrenage en haut à droite). Ils sont stockés dans `Documents/Monteur IA/settings.json`, hors dépôt ; une
@@ -209,12 +222,15 @@ Le test de bout en bout crée un rush synthétique, lance le montage IA, retouch
 consigne puis exporte et vérifie la vidéo produite. `tests/test_pvp.py` vérifie la détection des coups, le
 tempo, chaque élément 3D et un edit PvP exporté.
 
-Pour essayer l'edit PvP sans vidéo de jeu, `scripts/make_pvp_clip.py` génère un clip de combat en voxels
-(vue à la première personne, coups, éliminations et sons synthétiques) :
+Pour essayer l'edit PvP sans vidéo de jeu, `scripts/make_pvp_clip.py` génère le clip de combat en voxels
+(vue à la première personne, coups, éliminations et sons synthétiques) que le bouton « Essayer sans vidéo »
+utilise (rendu dans `backend/app/media/demo.py`) :
 
 ```bash
-python scripts/make_pvp_clip.py pvp.mp4 --seconds 40 --fps 60
+python scripts/make_pvp_clip.py pvp.mp4 --seconds 40 --fps 30
 ```
+
+`MONTEUR_DEMO_CLIP=chemin.mp4` remplace ce clip par le tien pour la démo (et dans les tests).
 
 ## Structure
 

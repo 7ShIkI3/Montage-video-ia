@@ -412,7 +412,7 @@ export interface Job {
   updated_at: number;
   finished_at: number | null;
   stage: string | null;
-  steps: { t: number; message: string; progress: number }[];
+  steps: { t: number; message: string; progress: number; stage?: string | null }[];
   cancel_requested: boolean;
 }
 
@@ -669,6 +669,8 @@ export const api = {
   deleteTemplate: (tid: string) => req<{ ok: boolean }>(`/api/templates/${tid}`, { method: "DELETE" }),
   xmlUrl: (id: string) => `/api/projects/${id}/export.xml`,
   srtUrl: (id: string) => `/api/projects/${id}/captions.srt`,
+  /** « Essayer sans vidéo » : projet de démo créé tout de suite, clip et montage en tâche de fond. */
+  demo: () => req<{ project: Project; job: Job }>("/api/demo", { method: "POST" }),
   job: (jobId: string) => req<Job>(`/api/jobs/${jobId}`),
   activeJobs: (id: string) => req<Job[]>(`/api/projects/${id}/jobs`),
   jobsHistory: (id: string) => req<Job[]>(`/api/projects/${id}/jobs?all=1`),

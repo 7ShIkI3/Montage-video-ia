@@ -98,7 +98,8 @@ def test_project_jobs_history_and_steps():
     assert got["stage"] == "analyse" and got["timeout_s"] == 3600 and hist[0]["timeout_s"] == 600
     assert got["started_at"] and got["finished_at"] and got["updated_at"] >= got["started_at"]
     assert len(got["steps"]) == MAX_STEPS and got["steps"][-1]["message"] == f"boucle {MAX_STEPS + 19}"
-    assert set(got["steps"][0]) == {"t", "message", "progress"}
+    assert set(got["steps"][0]) == {"t", "message", "progress", "stage"}
+    assert got["steps"][0]["stage"] == "analyse" and got["steps"][1]["stage"] == "analyse"  # l'étape reste jusqu'à la suivante
 
 
 def test_shutdown_cancels_active_jobs():

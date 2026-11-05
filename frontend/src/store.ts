@@ -186,8 +186,11 @@ export const KIND_LABELS: Record<string, string> = {
   montage: "Montage automatique", export: "Export", doublage: "Doublage", traduction: "Traduction des sous-titres",
   controle: "Contrôle qualité", relecture: "Relecture", shorts: "Shorts", publication: "Kit de publication",
   voix_ia: "Voix de synthèse", directions: "3 directions", projecteur: "Projecteur voix", commentaires: "Commentaires",
-  consigne: "Consigne", telechargement: "Téléchargement", recherche: "Recherche web",
+  consigne: "Consigne", telechargement: "Téléchargement", recherche: "Recherche web", demo: "Démo sans vidéo",
 };
+
+/** Tâches dont la fin ouvre le pitch du réalisateur. */
+const PITCH_KINDS = new Set(["montage", "demo"]);
 export const kindLabel = (kind: string) => KIND_LABELS[kind] ?? kind;
 
 const isActive = (j: Job) => j.status === "en_attente" || j.status === "en_cours";
@@ -246,6 +249,9 @@ interface State {
   rightTab: RightTab;
   helpOpen: boolean;
   paletteOpen: boolean;
+  /** Pitch du réalisateur (fin de montage) : ouvert, et tâche dont la fin attend le rechargement du projet. */
+  pitchOpen: boolean;
+  pitchPending: string | null;
   exportOpen: boolean;
   layout: Layout;
   setLayout: (patch: Partial<Layout>) => void;
@@ -288,6 +294,7 @@ interface State {
   setRightTab: (t: RightTab) => void;
   setHelp: (open: boolean) => void;
   setPalette: (open: boolean) => void;
+  setPitch: (open: boolean) => void;
   setExportOpen: (open: boolean) => void;
   /** Curseur sur le plan précédent (-1) ou suivant (+1), qui devient sélectionné. */
   jumpClip: (dir: -1 | 1) => void;
@@ -364,6 +371,8 @@ export const useStore = create<State>((set, get) => ({
   rightTab: "consigne",
   helpOpen: false,
   paletteOpen: false,
+  pitchOpen: false,
+  pitchPending: null,
   exportOpen: false,
   loopRange: false,
   layout: loadLayout(),
@@ -397,7 +406,7 @@ export const useStore = create<State>((set, get) => ({
     for (const j of history) jobs[j.id] = j;
     for (const j of active) jobs[j.id] = j;
     for (const [jid, j] of Object.entries(get().jobs)) if (isActive(j) || !jobs[jid]) jobs[jid] = j;
-    set({ jobs, job: activeJob({ jobs }) });
+    set({ jobs, job: activeJob({ jobs }), ...(get().pitchPending ? { pitchOpen: true, pitchPending: null } : {}) });
     await get().refreshDerived();
     // Tâches lancées avant un rechargement de la page : on reprend leur suivi jusqu'au bout.
     for (const j of active) {
@@ -420,6 +429,7 @@ export const useStore = create<State>((set, get) => ({
     } else {
       set({ project: np, timeline: np.timeline, dirty: false });
     }
+    if (get().pitchPending) set({ pitchOpen: true, pitchPending: null });
     await get().refreshDerived();
   },
   saveNow: async () => {
@@ -440,8 +450,11 @@ export const useStore = create<State>((set, get) => ({
   },
   setProject: (p) => set({ project: p }),
   putJob: (j, extra) => {
-    const jobs = { ...get().jobs, [j.id]: { ...get().jobs[j.id], ...j, ...extra } };
-    set({ jobs, job: activeJob({ jobs }) });
+    const prev = get().jobs[j.id];
+    const jobs = { ...get().jobs, [j.id]: { ...prev, ...j, ...extra } };
+    // Un montage suivi ici qui vient de finir : le pitch s'ouvrira dès que le projet sera rechargé.
+    const pitch = j.status === "termine" && !!prev && isActive(prev) && PITCH_KINDS.has(j.kind);
+    set({ jobs, job: activeJob({ jobs }), ...(pitch ? { pitchPending: j.id } : {}) });
   },
   runJob: async (label, start, opts) => {
     const pid = get().project?.id;
@@ -517,6 +530,7 @@ export const useStore = create<State>((set, get) => ({
   setRightTab: (t) => set({ rightTab: t }),
   setHelp: (open) => set({ helpOpen: open, paletteOpen: open ? false : get().paletteOpen }),
   setPalette: (open) => set({ paletteOpen: open, helpOpen: open ? false : get().helpOpen }),
+  setPitch: (open) => set({ pitchOpen: open, pitchPending: null }),
   setExportOpen: (open) => {
     // L'export est un onglet du panneau droit : « ouvrir » l'affiche (et déplie le panneau s'il est replié).
     set({ exportOpen: open });

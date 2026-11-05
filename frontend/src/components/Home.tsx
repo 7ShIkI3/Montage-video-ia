@@ -34,6 +34,11 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
     }
   };
   const newProject = () => useStore.getState().guard("Création du projet impossible", async () => onOpen((await api.createProject("Nouveau projet")).id));
+  // Démo sans vidéo : le projet s'ouvre tout de suite, le clip et le montage se font sous les yeux de l'utilisateur.
+  const tryDemo = () => useStore.getState().guard("Démo impossible", async () => {
+    setBusy("Préparation de la démo…");
+    try { onOpen((await api.demo()).project.id); } finally { setBusy(null); }
+  });
 
   const shown = useMemo(() => {
     if (!projects) return null;
@@ -59,6 +64,7 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
             {busy ?? <><Icon name="upload" size={16} strokeWidth={2} />Importer des vidéos</>}
           </button>
           <button onClick={newProject} disabled={!!busy}><Icon name="plus" size={16} />Nouveau projet</button>
+          <button onClick={tryDemo} disabled={!!busy} title="Un clip de combat PvP généré par l'app, monté automatiquement"><Icon name="sparkles" size={16} />Essayer sans vidéo</button>
           <p className="hint">Ou glisse des fichiers vidéo n'importe où sur cette page.</p>
           <input ref={input} type="file" multiple accept="video/*,audio/*" hidden onChange={(e) => quickStart([...(e.target.files ?? [])])} />
           {error && <p className="warn small">{error}</p>}

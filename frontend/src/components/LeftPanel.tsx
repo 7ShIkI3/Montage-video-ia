@@ -112,8 +112,7 @@ export function AIPanel() {
       onDone: async () => {
         await useStore.getState().load(project.id);
         // load() vide l'historique : Ctrl+Z doit pouvoir revenir au montage d'avant.
-        useStore.setState({ past: before ? [before] : [], future: [] });
-        notify("Montage terminé. Retouche-le à la main ou donne une consigne.");
+        useStore.setState({ past: before ? [before] : [], future: [] });  // le pitch du réalisateur s'ouvre ensuite
       },
     });
   };

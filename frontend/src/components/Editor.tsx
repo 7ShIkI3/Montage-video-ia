@@ -3,6 +3,7 @@ import { api, fmtTime } from "../api";
 import { Icon, IconName } from "../icons";
 import { DEFAULT_LAYOUT, isBusy, LeftTab, RIGHT_TAB_ORDER, RightTab, useStore } from "../store";
 import { Shortcuts } from "./Shortcuts";
+import { Pitch } from "./Pitch";
 import { dialogOpen } from "./Dialog";
 import { CommandPalette } from "./CommandPalette";
 import { AIPanel, MediaPanel } from "./LeftPanel";
@@ -53,7 +54,7 @@ function useShortcuts() {
       const mod = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
       const clip = s.item?.kind === "clip" ? s.item.id : null;
-      if (s.helpOpen || s.paletteOpen) {
+      if (s.helpOpen || s.paletteOpen || s.pitchOpen) {
         if (e.key === "Escape") { s.setHelp(false); s.setPalette(false); }
         return;
       }
@@ -195,6 +196,7 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
   const right = useStore((s) => s.rightTab);
   const helpOpen = useStore((s) => s.helpOpen);
   const paletteOpen = useStore((s) => s.paletteOpen);
+  const pitchOpen = useStore((s) => s.pitchOpen);
   const layout = useStore((s) => s.layout);
   const exportBusy = useStore((s) => isBusy(s, "export"));
   const openComments = useStore((s) => (s.timeline?.comments || []).filter((c) => c.status === "ouvert").length);
@@ -322,6 +324,7 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
       <StatusBar />
       {helpOpen && <Shortcuts onClose={() => useStore.getState().setHelp(false)} />}
       {paletteOpen && <CommandPalette onClose={() => useStore.getState().setPalette(false)} />}
+      {pitchOpen && <Pitch onClose={() => useStore.getState().setPitch(false)} />}
     </div>
   );
 }
