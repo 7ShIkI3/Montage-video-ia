@@ -542,6 +542,32 @@ function ItemEditor() {
       </>
     );
   }
+  if (it.kind === "marker") {
+    const x = (tl.markers ?? []).find((t) => t.id === it.id);
+    if (!x) return null;
+    return (
+      <>
+        <header><h3>Repère</h3>{back}</header>
+        <label>Libellé
+          <input value={x.label} placeholder="Ex. : Intro, Le marché, Conclusion" onChange={(e) => up({ label: e.target.value })} />
+        </label>
+        <div className="field-row">
+          <label>Position (s)<input type="number" step={0.05} value={x.t.toFixed(2)} onChange={(e) => up({ t: Math.max(0, +e.target.value) })} /></label>
+          <label>Couleur
+            <select value={x.color} onChange={(e) => up({ color: e.target.value })}>
+              {(["corail", "jaune", "vert", "bleu", "violet"] as const).map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+        </div>
+        <label className="inline"><input type="checkbox" checked={x.chapter} onChange={(e) => up({ chapter: e.target.checked })} /> Chapitre YouTube (kit de publication)</label>
+        <p className="muted small">Les repères « chapitre » deviennent les chapitres de la description du kit (premier à 0:00, 10 s minimum, au moins 3). Tous passent en repères dans l'export XML.</p>
+        <div className="field-row">
+          <button className="small-btn" onClick={() => useStore.getState().setPlayhead(x.t)}>Aller au repère</button>
+          <button className="small-btn danger" onClick={del}>Supprimer</button>
+        </div>
+      </>
+    );
+  }
   if (it.kind === "sfx") {
     const x = tl.sfx.find((t) => t.id === it.id);
     if (!x) return null;

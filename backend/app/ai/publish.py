@@ -41,11 +41,35 @@ def _words(text: str, n: int) -> str:
     return out[:1].upper() + out[1:] if out else ""
 
 
+def _chapters_from_markers(tl: Timeline, total: float) -> list[dict]:
+    """Les repères « chapitre » de l'utilisateur, aux règles YouTube : premier à 0:00, 10 s minimum entre deux,
+    au moins 3 chapitres (sinon on laisse faire le découpage automatique). Un libellé donné est gardé tel quel
+    (`fixed`), un libellé vide est numéroté."""
+    out: list[dict] = []
+    for m in sorted((k for k in tl.markers if k.chapter), key=lambda k: k.t):
+        if m.t > total - 5 or (out and m.t - out[-1]["t"] < 10):
+            continue
+        out.append({"t": round(m.t, 2), "title": m.label.strip(), "fixed": bool(m.label.strip())})
+    if not out:
+        return []
+    if out[0]["t"] > 0:
+        out.insert(0, {"t": 0.0, "title": "Intro", "fixed": False})
+        if out[1]["t"] < 10:
+            del out[1]
+    for i, c in enumerate(out):
+        if not c["title"]:
+            c["title"] = f"Chapitre {i + 1}"
+    return out if len(out) >= 3 else []
+
+
 def chapters(tl: Timeline, segments: list[Segment], project: Project) -> list[dict]:
     """Chapitres au format YouTube : premier à 0:00, au moins 3, chacun d'au moins 10 s."""
     total = tl.duration
     if total < 40 or not tl.clips:
         return []
+    user = _chapters_from_markers(tl, total)
+    if user:
+        return user
     by_id = {s.id: s for s in segments}
     target = max(10.0, total / 6)
     out, t, cur_start, cur_text = [], 0.0, 0.0, ""
@@ -176,7 +200,7 @@ def build_kit(project: Project, segments: list[Segment], out_dir: Path, work: Pa
         try:
             ck = claude_kit(project, tl, segments, chaps)
             for k, ct in zip(chaps, ck.get("chapter_titles", [])):
-                if ct.strip():
+                if ct.strip() and not k.get("fixed"):  # un libellé posé par l'utilisateur n'est pas réécrit
                     k["title"] = ct.strip()
             kit.update({k: ck[k] for k in ("titles", "summary", "hashtags", "thumbnail_text") if ck.get(k)})
             kit["by"] = "claude"
@@ -187,7 +211,7 @@ def build_kit(project: Project, segments: list[Segment], out_dir: Path, work: Pa
         desc += "\n\nChapitres :\n" + "\n".join(f"{_fmt(c['t'])} {c['title']}" for c in chaps)
     if kit["hashtags"]:
         desc += "\n\n" + " ".join(kit["hashtags"])
-    kit["chapters"] = chaps
+    kit["chapters"] = [{"t": c["t"], "title": c["title"]} for c in chaps]
     kit["description"] = desc
     thumb = out_dir / "miniature.jpg"
     thumbnail(project, tl, kit["thumbnail_text"] or tl.title or project.name, thumb, work)

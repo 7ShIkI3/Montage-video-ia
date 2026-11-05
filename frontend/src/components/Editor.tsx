@@ -65,6 +65,7 @@ function useShortcuts() {
       else if (mod && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); if (clip) s.nudgeClip(clip, e.key === "ArrowLeft" ? -1 : 1); }
       else if (k === "i" && !mod) { if (clip) s.trimToPlayhead(clip, "in"); }
       else if (k === "o" && !mod) { if (clip) s.trimToPlayhead(clip, "out"); }
+      else if (k === "m" && !mod) { s.addMarker(); }
       else if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); s.undo(); }
       else if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); s.redo(); }
       else if (e.key.toLowerCase() === "s" && !mod) { s.splitAtPlayhead(); }

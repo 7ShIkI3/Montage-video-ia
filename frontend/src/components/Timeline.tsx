@@ -153,7 +153,7 @@ export function TimelineView() {
   };
 
   // Glisser un texte, un bruitage ou un plan de coupe sur sa piste (une seule étape d'annulation).
-  const startMoveItem = (e: React.MouseEvent, kind: "text" | "sfx" | "overlay" | "impact" | "image" | "audio", id: string, start: number) => {
+  const startMoveItem = (e: React.MouseEvent, kind: "text" | "sfx" | "overlay" | "impact" | "image" | "audio" | "marker", id: string, start: number) => {
     e.stopPropagation();
     e.preventDefault();
     selectItem({ kind, id });
@@ -166,11 +166,11 @@ export function TimelineView() {
       if (!ev.altKey) { const r = snapTo(v, points, pps); v = r.t; setSnapAt(r.snapped); } else setSnapAt(null);
       const st = useStore.getState();
       if (first) {
-        st.updateItem(kind, id, { start: v });
+        st.updateItem(kind, id, kind === "marker" ? { t: v } : { start: v });
         first = false;
       } else {
         const past = st.past;
-        st.updateItem(kind, id, { start: v });
+        st.updateItem(kind, id, kind === "marker" ? { t: v } : { start: v });
         useStore.setState({ past });
       }
     };
@@ -206,6 +206,7 @@ export function TimelineView() {
         >
           <Icon name="trash" size={14} />Supprimer
         </button>
+        <button onClick={() => useStore.getState().addMarker()} title="Poser un repère au curseur (M) : chapitre YouTube, repère XML"><Icon name="dot" size={14} />Repère</button>
         <span className="sep" />
         <button className="icon-btn" onClick={() => useStore.getState().undo()} title="Annuler (Ctrl+Z)" aria-label="Annuler"><Icon name="undo" size={15} /></button>
         <button className="icon-btn" onClick={() => useStore.getState().redo()} title="Rétablir (Ctrl+Y)" aria-label="Rétablir"><Icon name="redo" size={15} /></button>
@@ -224,6 +225,14 @@ export function TimelineView() {
             {ticks.map((t) => (
               <div key={t} className="tick" style={{ left: t * pps }}>
                 <span>{fmtTime(t)}</span>
+              </div>
+            ))}
+            {(tl.markers || []).map((k) => (
+              <div key={k.id} className={`marker-flag c-${k.color} ${isSel("marker", k.id) ? "sel" : ""} ${k.chapter ? "" : "no-chapter"}`}
+                style={{ left: k.t * pps }} title={`${k.label || "Repère"} · ${fmtTime(k.t, true)}${k.chapter ? " · chapitre" : ""}`}
+                onMouseDown={(e) => { startMoveItem(e, "marker", k.id, k.t); }}
+                onDoubleClick={() => setPlayhead(k.t)}>
+                <span>{k.label}</span>
               </div>
             ))}
           </div>

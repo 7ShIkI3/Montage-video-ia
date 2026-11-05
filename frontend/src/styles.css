@@ -636,3 +636,12 @@ code.cmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding
 .fade { position: absolute; top: 0; bottom: 0; pointer-events: none; z-index: 1; }
 .fade-in { left: 0; background: linear-gradient(to top right, rgba(10,10,12,0.6) 49.5%, transparent 50.5%); border-left: 1px solid rgba(255,255,255,0.35); }
 .fade-out { right: 0; background: linear-gradient(to top left, rgba(10,10,12,0.6) 49.5%, transparent 50.5%); border-right: 1px solid rgba(255,255,255,0.35); }
+
+/* ---------- Repères sur la règle ---------- */
+.marker-flag { position: absolute; top: 2px; height: 20px; padding: 0 6px 0 10px; max-width: 160px; display: flex; align-items: center; transform: translateX(-1px);
+  border-left: 2px solid var(--mk); color: var(--mk); font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; z-index: 5; --mk: var(--accent); }
+.marker-flag::before { content: ""; position: absolute; left: -2px; top: 0; width: 8px; height: 8px; background: var(--mk); border-radius: 0 0 6px 0; }
+.marker-flag span { overflow: hidden; text-overflow: ellipsis; }
+.marker-flag.c-jaune { --mk: var(--warn); } .marker-flag.c-vert { --mk: var(--ok); } .marker-flag.c-bleu { --mk: #4F8FF7; } .marker-flag.c-violet { --mk: var(--violet); }
+.marker-flag.no-chapter { opacity: 0.6; border-left-style: dashed; }
+.marker-flag.sel { outline: 1.5px solid var(--text); outline-offset: 1px; border-radius: 3px; }
