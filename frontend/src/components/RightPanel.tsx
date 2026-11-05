@@ -3,10 +3,8 @@ import { api, Clip, EffectsCatalog, fmtTime, Opt, Timeline } from "../api";
 import { CapHint } from "../caps";
 import { clipAt, clipStarts, commentTime, ItemKind, srcToLocal, useStore } from "../store";
 import { ImageButtons } from "./Studio";
-import { CaptionLanguage } from "./AudioTools";
 import { MotionEditor } from "./Motion";
-import { CUTOUTS, CutoutTools, DubPanel, AIVoiceoverPanel, LutPicker } from "./Lot3";
-import { PlanPanel, QualityPanel } from "./Quality";
+import { CUTOUTS, CutoutTools } from "./Lot3";
 import { Icon } from "../icons";
 import { MusicLibraryDialog } from "./Library";
 
@@ -150,145 +148,121 @@ export function CommentsPanel() {
   );
 }
 
-export function Inspector() {
+/** Réglages du plan sélectionné : raison, score, entrée/sortie, zoom, son, fondus, mouvement, effets. */
+export function ClipEditor({ c }: { c: Clip }) {
+  const catalog = useStore((s) => s.catalog);
+  const segments = useStore((s) => s.segments);
+  const { updateClip } = useStore.getState();
+  const segText = (id: string | null) => segments.find((s) => s.id === id)?.text ?? "";
+  return (
+    <>
+      <header><h3>Plan sélectionné</h3></header>
+      <p className="why"><b>Pourquoi ce plan est gardé :</b> {c.reason || "—"}</p>
+      {segText(c.segment_id) && <p className="quote">« {segText(c.segment_id)} »</p>}
+      <div className="score-row">Score <div className="bar"><div style={{ width: `${c.score * 100}%` }} /></div> {Math.round(c.score * 100)}</div>
+      <div className="field-row">
+        <label>Entrée (s)
+          <input type="number" step={0.05} value={c.src_in.toFixed(2)}
+            onChange={(e) => useStore.getState().trimClip(c.id, "in", +e.target.value)} />
+        </label>
+        <label>Sortie (s)
+          <input type="number" step={0.05} value={c.src_out.toFixed(2)}
+            onChange={(e) => useStore.getState().trimClip(c.id, "out", +e.target.value)} />
+        </label>
+      </div>
+      <label>Zoom {Math.round((c.zoom - 1) * 100)} %
+        <input type="range" min={1} max={1.5} step={0.01} value={c.zoom} onChange={(e) => updateClip(c.id, { zoom: +e.target.value })} />
+      </label>
+      <label>Volume {Math.round(c.volume * 100)} %
+        <input type="range" min={0} max={2} step={0.05} value={c.volume} onChange={(e) => updateClip(c.id, { volume: +e.target.value })} />
+      </label>
+      <label className="inline">
+        <input type="checkbox" checked={c.audio_effects.includes("muet")}
+          onChange={(e) => updateClip(c.id, { audio_effects: e.target.checked ? [...c.audio_effects.filter((x) => x !== "muet"), "muet"] : c.audio_effects.filter((x) => x !== "muet") })} />
+        Couper le son de ce plan
+      </label>
+      <div className="field-row">
+        <label>Fondu d'entrée (s)
+          <input type="number" min={0} max={5} step={0.1} value={c.fade_in ?? 0}
+            onChange={(e) => updateClip(c.id, { fade_in: Math.max(0, Math.min(5, +e.target.value || 0)) })} />
+        </label>
+        <label>Fondu de sortie (s)
+          <input type="number" min={0} max={5} step={0.1} value={c.fade_out ?? 0}
+            onChange={(e) => updateClip(c.id, { fade_out: Math.max(0, Math.min(5, +e.target.value || 0)) })} />
+        </label>
+      </div>
+      <MotionEditor c={c} />
+      {catalog && <ClipEffects c={c} catalog={catalog} />}
+    </>
+  );
+}
+
+/** Passages écartés par le montage, réintégrables. */
+export function RejectedList() {
+  const tl = useStore((s) => s.timeline);
+  const segments = useStore((s) => s.segments);
+  const [show, setShow] = useState(false);
+  if (!tl || !tl.rejected.length) return null;
+  const segText = (id: string | null) => segments.find((s) => s.id === id)?.text ?? "";
+  return (
+    <div className="rejected">
+      <button className="link" onClick={() => setShow(!show)}>
+        <Icon name={show ? "chevron-down" : "chevron-right"} size={13} /> Passages écartés ({tl.rejected.length})
+      </button>
+      {show && (
+        <ul>
+          {tl.rejected.slice(0, 150).map((r) => (
+            <li key={r.id}>
+              <div className="small"><b>{fmtTime(r.src_in, true)}</b> {segText(r.segment_id).slice(0, 90) || `${(r.src_out - r.src_in).toFixed(1)} s`}</div>
+              <div className="muted small">{r.reason}</div>
+              <button className="small-btn" onClick={() => useStore.getState().restoreRejected(r)}>Réintégrer</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** Musique du montage : bibliothèque, fichier, volume, baisse sous la voix. */
+export function MusicSection() {
   const project = useStore((s) => s.project);
   const tl = useStore((s) => s.timeline);
-  const selected = useStore((s) => s.selected);
-  const it = useStore((s) => s.item);
-  const catalog = useStore((s) => s.catalog);
-  const { updateClip, restoreRejected, setTimelineProps, notify } = useStore.getState();
-  const segments = useStore((s) => s.segments);
-  const [showRejected, setShowRejected] = useState(false);
+  const { setTimelineProps, notify } = useStore.getState();
   const musicInput = useRef<HTMLInputElement>(null);
   const [libOpen, setLibOpen] = useState(false);
   if (!tl || !project) return null;
-  const c = tl.clips.find((x) => x.id === selected);
-  const segText = (id: string | null) => segments.find((s) => s.id === id)?.text ?? "";
-
   return (
-    <section className="panel inspector">
+    <div className="fx-section">
       {libOpen && <MusicLibraryDialog current={tl.music.track} onClose={() => setLibOpen(false)}
         onPick={(path) => setTimelineProps({ music: { ...tl.music, track: path } })} />}
-      {c ? (
+      <div className="fx-title">Musique de fond</div>
+      <div className="music-row">
+        <span>{tl.music.track ? tl.music.track.split(/[\\/]/).pop() : "Aucune musique"}</span>
+        <button className="small-btn" onClick={() => setLibOpen(true)} title="Bibliothèque, musiques libres de droits, son d'un lien"><Icon name="music" size={13} />Bibliothèque…</button>
+        <button className="small-btn" onClick={() => musicInput.current?.click()}>Fichier…</button>
+        {tl.music.track && <button className="small-btn" onClick={() => setTimelineProps({ music: { ...tl.music, track: null } })}>Retirer</button>}
+        <input ref={musicInput} type="file" accept="audio/*" hidden onChange={async (e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (!f) return;
+          try {
+            const m = await api.uploadMusic(project.id, f);
+            setTimelineProps({ music: m });
+          } catch (err) { notify((err as Error).message); }
+        }} />
+      </div>
+      {tl.music.track && (
         <>
-          <header><h3>Plan sélectionné</h3></header>
-          <p className="why"><b>Pourquoi ce plan est gardé :</b> {c.reason || "—"}</p>
-          {segText(c.segment_id) && <p className="quote">« {segText(c.segment_id)} »</p>}
-          <div className="score-row">Score <div className="bar"><div style={{ width: `${c.score * 100}%` }} /></div> {Math.round(c.score * 100)}</div>
-          <div className="field-row">
-            <label>Entrée (s)
-              <input type="number" step={0.05} value={c.src_in.toFixed(2)}
-                onChange={(e) => useStore.getState().trimClip(c.id, "in", +e.target.value)} />
-            </label>
-            <label>Sortie (s)
-              <input type="number" step={0.05} value={c.src_out.toFixed(2)}
-                onChange={(e) => useStore.getState().trimClip(c.id, "out", +e.target.value)} />
-            </label>
-          </div>
-          <label>Zoom {Math.round((c.zoom - 1) * 100)} %
-            <input type="range" min={1} max={1.5} step={0.01} value={c.zoom} onChange={(e) => updateClip(c.id, { zoom: +e.target.value })} />
+          <label>Volume musique {Math.round(tl.music.volume * 100)} %
+            <input type="range" min={0} max={1} step={0.01} value={tl.music.volume}
+              onChange={(e) => setTimelineProps({ music: { ...tl.music, volume: +e.target.value } })} />
           </label>
-          <label>Volume {Math.round(c.volume * 100)} %
-            <input type="range" min={0} max={2} step={0.05} value={c.volume} onChange={(e) => updateClip(c.id, { volume: +e.target.value })} />
-          </label>
-          <label className="inline">
-            <input type="checkbox" checked={c.audio_effects.includes("muet")}
-              onChange={(e) => updateClip(c.id, { audio_effects: e.target.checked ? [...c.audio_effects.filter((x) => x !== "muet"), "muet"] : c.audio_effects.filter((x) => x !== "muet") })} />
-            Couper le son de ce plan
-          </label>
-          <div className="field-row">
-            <label>Fondu d'entrée (s)
-              <input type="number" min={0} max={5} step={0.1} value={c.fade_in ?? 0}
-                onChange={(e) => updateClip(c.id, { fade_in: Math.max(0, Math.min(5, +e.target.value || 0)) })} />
-            </label>
-            <label>Fondu de sortie (s)
-              <input type="number" min={0} max={5} step={0.1} value={c.fade_out ?? 0}
-                onChange={(e) => updateClip(c.id, { fade_out: Math.max(0, Math.min(5, +e.target.value || 0)) })} />
-            </label>
-          </div>
-          <MotionEditor c={c} />
-          {catalog && <ClipEffects c={c} catalog={catalog} />}
-        </>
-      ) : it && it.kind !== "clip" && it.kind !== "comment" ? (
-        <ItemEditor />
-      ) : (
-        <>
-          <header><h3>Montage</h3></header>
-          {tl.title && <p className="title">{tl.title}</p>}
-          <p className="muted small">{tl.summary || "Aucun montage pour l'instant."}</p>
-          {tl.director && (
-            <p className="muted small">Réalisé par : {tl.director === "claude" ? "Claude" : "moteur local"}</p>
-          )}
-          <p className="muted small">Clique un plan dans la timeline pour voir pourquoi il a été choisi.</p>
-          <PlanPanel />
-          <QualityPanel />
-          <div className="field-row">
-            <label>Format
-              <select value={tl.format} onChange={(e) => setTimelineProps({ format: e.target.value as typeof tl.format })}>
-                <option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option>
-              </select>
-            </label>
-            <label>Sous-titres
-              <select value={tl.captions} onChange={(e) => setTimelineProps({ captions: e.target.value as typeof tl.captions })}>
-                <option value="karaoke">Animés</option><option value="classique">Classiques</option><option value="aucun">Aucun</option>
-              </select>
-            </label>
-          </div>
-          <CaptionLanguage />
-          <LutPicker />
-          <DubPanel />
-          <AIVoiceoverPanel />
-          {tl.format !== "16:9" && (
-            <label className="inline"><input type="checkbox" checked={tl.reframe !== false}
-              onChange={(e) => setTimelineProps({ reframe: e.target.checked })} /> Recadrage auto sur le visage</label>
-          )}
-          {catalog && <GlobalFx tl={tl} catalog={catalog} />}
-          <div className="music-row">
-            <span>Musique : {tl.music.track ? tl.music.track.split(/[\\/]/).pop() : "aucune"}</span>
-            <button className="small-btn" onClick={() => setLibOpen(true)} title="Bibliothèque, musiques libres de droits, son d'un lien"><Icon name="music" size={13} />Bibliothèque…</button>
-            <button className="small-btn" onClick={() => musicInput.current?.click()}>Fichier…</button>
-            {tl.music.track && <button className="small-btn" onClick={() => setTimelineProps({ music: { ...tl.music, track: null } })}>Retirer</button>}
-            <input ref={musicInput} type="file" accept="audio/*" hidden onChange={async (e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (!f) return;
-              try {
-                const m = await api.uploadMusic(project.id, f);
-                setTimelineProps({ music: m });
-              } catch (err) { notify((err as Error).message); }
-            }} />
-          </div>
-          {tl.music.track && (
-            <>
-              <label>Volume musique {Math.round(tl.music.volume * 100)} %
-                <input type="range" min={0} max={1} step={0.01} value={tl.music.volume}
-                  onChange={(e) => setTimelineProps({ music: { ...tl.music, volume: +e.target.value } })} />
-              </label>
-              <label className="inline"><input type="checkbox" checked={tl.music.ducking}
-                onChange={(e) => setTimelineProps({ music: { ...tl.music, ducking: e.target.checked } })} /> Baisser la musique sous la voix</label>
-            </>
-          )}
+          <label className="inline"><input type="checkbox" checked={tl.music.ducking}
+            onChange={(e) => setTimelineProps({ music: { ...tl.music, ducking: e.target.checked } })} /> Baisser la musique sous la voix</label>
         </>
       )}
-      {tl.rejected.length > 0 && (
-        <div className="rejected">
-          <button className="link" onClick={() => setShowRejected(!showRejected)}>
-            <Icon name={showRejected ? "chevron-down" : "chevron-right"} size={13} /> Passages écartés ({tl.rejected.length})
-          </button>
-          {showRejected && (
-            <ul>
-              {tl.rejected.slice(0, 150).map((r) => (
-                <li key={r.id}>
-                  <div className="small"><b>{fmtTime(r.src_in, true)}</b> {segText(r.segment_id).slice(0, 90) || `${(r.src_out - r.src_in).toFixed(1)} s`}</div>
-                  <div className="muted small">{r.reason}</div>
-                  <button className="small-btn" onClick={() => restoreRejected(r)}>Réintégrer</button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-    </section>
+    </div>
   );
 }
 
@@ -347,7 +321,7 @@ const GROUP_LABELS: Record<string, string> = {
   couleur: "Couleur", style: "Style", mouvement: "Mouvement", "3d": "3D", ia: "Détourage (sans fond vert)",
 };
 
-function GlobalFx({ tl, catalog }: { tl: Timeline; catalog: EffectsCatalog }) {
+export function GlobalFx({ tl, catalog }: { tl: Timeline; catalog: EffectsCatalog }) {
   const { setTimelineProps, addText, addSfx, addImpact } = useStore.getState();
   const [kind, setKind] = useState(catalog.sfx[0]?.id ?? "whoosh");
   const [ik, setIk] = useState(catalog.impacts?.[0]?.id ?? "secousse");
@@ -384,7 +358,7 @@ function GlobalFx({ tl, catalog }: { tl: Timeline; catalog: EffectsCatalog }) {
   );
 }
 
-function ItemEditor() {
+export function ItemEditor() {
   const tl = useStore((s) => s.timeline);
   const it = useStore((s) => s.item);
   const project = useStore((s) => s.project);
@@ -393,7 +367,7 @@ function ItemEditor() {
   if (!tl || !it || it.kind === "clip" || !project) return null;
   const up = (patch: Record<string, unknown>) => updateItem(it.kind as ItemKind, it.id, patch);
   const del = () => deleteItem(it.kind as ItemKind, it.id);
-  const back = <button className="link" onClick={() => selectItem(null)}><Icon name="back" size={13} /> Montage</button>;
+  const back = <button className="link" onClick={() => selectItem(null)}><Icon name="back" size={13} /> Désélectionner</button>;
 
   if (it.kind === "text") {
     const x = tl.texts.find((t) => t.id === it.id);

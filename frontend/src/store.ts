@@ -127,7 +127,8 @@ export function snapTo(t: number, points: number[], pps: number, px = 8): { t: n
 }
 
 export type LeftTab = "rushes" | "ia" | "versions" | "modeles" | "marque";
-export type RightTab = "consigne" | "inspecteur" | "texte" | "recherche";
+export type RightTab = "consigne" | "montage" | "plan" | "habillage" | "audio" | "qualite" | "export" | "texte" | "recherche";
+export const RIGHT_TAB_ORDER: RightTab[] = ["consigne", "montage", "plan", "habillage", "audio", "qualite", "export", "texte", "recherche"];
 
 /** Espace de travail : largeur des panneaux, hauteur de la timeline, panneaux repliés. Mémorisé dans le navigateur. */
 export interface Layout { left: number; right: number; bottom: number; leftOpen: boolean; rightOpen: boolean }
@@ -516,7 +517,11 @@ export const useStore = create<State>((set, get) => ({
   setRightTab: (t) => set({ rightTab: t }),
   setHelp: (open) => set({ helpOpen: open, paletteOpen: open ? false : get().paletteOpen }),
   setPalette: (open) => set({ paletteOpen: open, helpOpen: open ? false : get().helpOpen }),
-  setExportOpen: (open) => set({ exportOpen: open }),
+  setExportOpen: (open) => {
+    // L'export est un onglet du panneau droit : « ouvrir » l'affiche (et déplie le panneau s'il est replié).
+    set({ exportOpen: open });
+    if (open) { set({ rightTab: "export" }); if (!get().layout.rightOpen) get().setLayout({ rightOpen: true }); }
+  },
   jumpClip: (dir) => {
     const { timeline, playhead } = get();
     if (!timeline?.clips.length) return;

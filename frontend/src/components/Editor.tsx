@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { api, fmtTime } from "../api";
 import { Icon, IconName } from "../icons";
-import { DEFAULT_LAYOUT, isBusy, jobOf, LeftTab, RightTab, useStore } from "../store";
+import { DEFAULT_LAYOUT, isBusy, LeftTab, RIGHT_TAB_ORDER, RightTab, useStore } from "../store";
 import { Shortcuts } from "./Shortcuts";
 import { CommandPalette } from "./CommandPalette";
 import { AIPanel, MediaPanel } from "./LeftPanel";
 import { Player } from "./Player";
-import { CommandBar, CommentsPanel, Inspector, TranscriptPanel } from "./RightPanel";
+import { CommandBar, CommentsPanel, TranscriptPanel } from "./RightPanel";
+import { MontageTab } from "./tabs/MontageTab";
+import { PlanTab } from "./tabs/PlanTab";
+import { HabillageTab } from "./tabs/HabillageTab";
+import { AudioTab } from "./tabs/AudioTab";
+import { QualiteTab } from "./tabs/QualiteTab";
+import { ExportTab } from "./tabs/ExportTab";
 import { TimelineView } from "./Timeline";
 import { ResearchPanel } from "./Research";
-import { PresetExport, BrandPanel, TemplatesPanel, VersionsPanel } from "./Studio";
+import { BrandPanel, TemplatesPanel, VersionsPanel } from "./Studio";
 import { Tasks } from "./Tasks";
 
 function useAutosave() {
@@ -51,6 +57,11 @@ function useShortcuts() {
       }
       if (e.key === "?" || e.key === "F1" || (e.shiftKey && e.key === "/")) { e.preventDefault(); s.setHelp(true); return; }
       if (mod && k === "k") { e.preventDefault(); s.setPalette(true); return; }
+      if (!mod && !e.altKey && /^[1-9]$/.test(e.key)) {  // 1-9 : onglets du panneau droit
+        const t = RIGHT_TAB_ORDER[+e.key - 1];
+        if (t) { s.setRightTab(t); if (!s.layout.rightOpen) s.setLayout({ rightOpen: true }); }
+        return;
+      }
       if (e.code === "Space") { e.preventDefault(); if (s.playing) s.setRate(1); s.setPlaying(!s.playing); }
       else if (k === "k" && !mod) { s.setRate(1); s.setPlaying(false); }
       else if (k === "l" && !mod) { if (s.playing) s.setRate(s.rate >= 4 ? 1 : s.rate * 2); else { s.setRate(1); s.setPlaying(true); } }
@@ -87,148 +98,16 @@ function useShortcuts() {
   }, []);
 }
 
-function PublishKitPanel() {
-  const project = useStore((s) => s.project);
-  const busy = useStore((s) => isBusy(s, "publication"));
-  const { notify, runJob } = useStore.getState();
-  if (!project) return null;
-  const kit = project.publish_kit;
-  const copy = (t: string) => navigator.clipboard?.writeText(t).then(() => notify("Copié !"), () => undefined);
-  const gen = () => runJob("Kit de publication", () => api.publishKit(project.id));
-  return (
-    <div className="export-alt kit">
-      <h4>Kit de publication</h4>
-      <p className="muted small">Titres, description avec chapitres, hashtags et miniature, prêts à coller sur YouTube ou TikTok.</p>
-      <button disabled={busy} onClick={gen}>{busy ? "Rédaction…" : <><Icon name="pencil" />{kit ? "Régénérer" : "Générer le kit"}</>}</button>
-      {kit && (
-        <>
-          <a href={api.exportUrl(project.id, kit.thumbnail)} download>
-            <img className="kit-thumb" src={`${api.exportUrl(project.id, kit.thumbnail)}?v=${project.updated_at}`} alt="Miniature" />
-          </a>
-          <ul className="kit-titles">
-            {kit.titles.map((t) => <li key={t}><span>{t}</span><button className="small-btn" onClick={() => copy(t)}>Copier</button></li>)}
-          </ul>
-          <textarea rows={6} readOnly value={kit.description} />
-          <button className="small-btn" onClick={() => copy(kit.description)}>Copier la description</button>
-          <p className="muted small">Rédigé par : {kit.by === "claude" ? "Claude" : "moteur local"}</p>
-        </>
-      )}
-    </div>
-  );
-}
-
+/** Le bouton « Exporter » de la barre du haut ouvre l'onglet Export du panneau droit. */
 function ExportButton() {
   const project = useStore((s) => s.project);
-  const job = useStore((s) => jobOf(s, "export"));
   const busy = useStore((s) => isBusy(s, "export"));
-  const open = useStore((s) => s.exportOpen);
-  const setOpen = useStore.getState().setExportOpen;
-  const wrap = useRef<HTMLDivElement>(null);
-  const [quality, setQuality] = useState("1080p");
-  const [fps, setFps] = useState<number | null>(null);
-  const [smooth, setSmooth] = useState(false);
-  const [rangeOnly, setRangeOnly] = useState(false);
-  const range = useStore((s) => s.timeline?.range ?? null);
-  const [last, setLast] = useState<string | null>(null);
-  const [lastMany, setLastMany] = useState<string[]>([]);
-  // Le popover se ferme au clic à l'extérieur et sur Échap.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => { if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
-  }, [open]);
   if (!project) return null;
-  const used = new Set(project.timeline.clips.map((c) => c.media_id));
-  const vids = project.media.filter((m) => used.has(m.id) && m.has_video);
-  const srcFps = Math.round(Math.max(0, ...vids.map((m) => m.fps)) || 30);
-  const srcH = Math.max(0, ...vids.map((m) => Math.min(m.width, m.height)));
-  const wantFps = fps ?? srcFps;
-  const upscale = srcH > 0 && +quality.replace("p", "") > srcH + 8;
-
-  // Les téléchargements lisent la timeline enregistrée : on sauvegarde d'abord les retouches.
-  const saveFirst = async (e: React.MouseEvent<HTMLAnchorElement>) => {
-    const st = useStore.getState();
-    if (!st.dirty || !st.timeline) return;
-    e.preventDefault();
-    const href = e.currentTarget.href;
-    if (await st.guard("Sauvegarde impossible", async () => { await st.saveNow(); return true; })) window.location.href = href;
-  };
-
-  const useRange = !!range && rangeOnly;
-  const go = () => useStore.getState().runJob(useRange ? "Export de la zone" : "Export",
-    () => api.export(project.id, quality, fps, smooth, useRange), { onDone: (j) => setLast(j.result as string) });
-
   return (
-    <div className="export-wrap" ref={wrap}>
-      <button className="primary" onClick={() => setOpen(!open)} disabled={!project.timeline.clips.length}><Icon name="download" size={16} strokeWidth={2.2} />Exporter</button>
-      {open && (
-        <div className="popover">
-          <h4>Exporter la vidéo</h4>
-          <PresetExport onDone={setLastMany} />
-          {lastMany.length > 0 && (
-            <ul className="small">{lastMany.map((x) => <li key={x}><a href={api.exportUrl(project.id, x)} download>Télécharger « {x} »</a></li>)}</ul>
-          )}
-          <h4>Réglages sur mesure</h4>
-          <div className="field-row">
-            <label>Qualité
-              <select value={quality} onChange={(e) => setQuality(e.target.value)}>
-                <option value="720p">720p (rapide)</option>
-                <option value="1080p">1080p Full HD</option>
-                <option value="1440p">1440p 2K</option>
-                <option value="2160p">2160p 4K</option>
-              </select>
-            </label>
-            <label>Images / seconde
-              <select value={fps ?? ""} onChange={(e) => setFps(e.target.value ? +e.target.value : null)}>
-                <option value="">Comme la source ({srcFps} i/s)</option>
-                {[24, 25, 30, 50, 60, 100, 120].map((f) => <option key={f} value={f}>{f} i/s</option>)}
-              </select>
-            </label>
-          </div>
-          {wantFps > srcFps + 1 && (
-            <label className="inline">
-              <input type="checkbox" checked={smooth} onChange={(e) => setSmooth(e.target.checked)} />
-              Interpolation : créer les images manquantes ({srcFps} → {wantFps} i/s, rendu plus long)
-            </label>
-          )}
-          {range && (
-            <label className="inline" title="La zone posée avec I et O sur la timeline">
-              <input type="checkbox" checked={rangeOnly} onChange={(e) => setRangeOnly(e.target.checked)} />
-              Seulement la zone {fmtTime(range.start)} → {fmtTime(range.end)} ({(range.end - range.start).toFixed(1)} s)
-            </label>
-          )}
-          {upscale && <p className="warn small">Tes rushes font {srcH}p : l'export {quality} sera agrandi, pas plus net.</p>}
-          {wantFps > 60 && <p className="muted small">YouTube, TikTok et Instagram lisent jusqu'à 60 i/s ; 100-120 i/s sert aux écrans rapides et au ralenti en montage.</p>}
-          <p className="muted small">Format {project.timeline.format}, H.264 + AAC, sous-titres incrustés, volume normalisé (-14 LUFS). Un fichier .srt est aussi créé.</p>
-          <button className="primary" disabled={busy} onClick={go}>{busy ? "Rendu en cours…" : "Lancer le rendu"}</button>
-          {busy && job && <div className="progress"><div style={{ width: `${job.progress * 100}%` }} /><span>{Math.round(job.progress * 100)} %</span></div>}
-          {last && <p><a href={api.exportUrl(project.id, last)} download>Télécharger « {last} »</a></p>}
-          <div className="export-alt">
-            <h4>Finir dans un logiciel pro</h4>
-            <p className="muted small">Le montage en XML, avec repères pour les textes, bruitages et B-roll.</p>
-            <div className="row-btns">
-              <a className="btn" href={api.xmlUrl(project.id)} download onClick={saveFirst}>XML Premiere · Resolve · Final Cut</a>
-              <a className="btn" href={api.srtUrl(project.id)} download onClick={saveFirst}>Sous-titres .srt</a>
-            </div>
-          </div>
-          <PublishKitPanel />
-          {project.exports.length > 0 && (
-            <details>
-              <summary className="small">Exports précédents ({project.exports.length})</summary>
-              <ul className="small">
-                {[...project.exports].reverse().map((x) => (
-                  <li key={x}><a href={api.exportUrl(project.id, x)} download>{x}</a>
-                    {/\.(mp4|webm|mov)$/.test(x) && <> · <a href={api.exportUrl(project.id, x.replace(/\.(mp4|webm|mov)$/, ".srt"))} download>.srt</a></>}</li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </div>
-      )}
-    </div>
+    <button className="primary" onClick={() => useStore.getState().setExportOpen(true)} disabled={!project.timeline.clips.length}
+      title="Exporter la vidéo (onglet Export)">
+      <Icon name="download" size={16} strokeWidth={2.2} />{busy ? "Rendu…" : "Exporter"}
+    </button>
   );
 }
 
@@ -239,8 +118,17 @@ const LEFT_TABS: { id: LeftTab; label: string; icon: IconName }[] = [
   { id: "modeles", label: "Modèles de style", icon: "grid" },
   { id: "marque", label: "Identité de marque", icon: "palette" },
 ];
-const RIGHT_TABS: { id: RightTab; label: string }[] = [
-  { id: "consigne", label: "Consigne" }, { id: "inspecteur", label: "Inspecteur" }, { id: "texte", label: "Texte" }, { id: "recherche", label: "Recherche" },
+/** Onglets du panneau droit, dans l'ordre des touches 1 à 9. Rien ne disparaît quand on sélectionne un plan. */
+const RIGHT_TABS: { id: RightTab; label: string; icon: IconName }[] = [
+  { id: "consigne", label: "Consigne et commentaires", icon: "message" },
+  { id: "montage", label: "Montage", icon: "film" },
+  { id: "plan", label: "Plan sélectionné", icon: "square" },
+  { id: "habillage", label: "Habillage", icon: "sparkles" },
+  { id: "audio", label: "Audio et voix", icon: "volume" },
+  { id: "qualite", label: "Qualité", icon: "check" },
+  { id: "export", label: "Export", icon: "download" },
+  { id: "texte", label: "Texte de la transcription", icon: "pencil" },
+  { id: "recherche", label: "Recherche web", icon: "globe" },
 ];
 
 /** Poignée de redimensionnement d'un panneau (glisser ; double-clic : taille par défaut). */
@@ -306,6 +194,8 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
   const helpOpen = useStore((s) => s.helpOpen);
   const paletteOpen = useStore((s) => s.paletteOpen);
   const layout = useStore((s) => s.layout);
+  const exportBusy = useStore((s) => isBusy(s, "export"));
+  const openComments = useStore((s) => (s.timeline?.comments || []).filter((c) => c.status === "ouvert").length);
   const { setLeftTab: setLeft, setRightTab: setRight, setLayout } = useStore.getState();
   const dragBase = useRef(layout);
   useAutosave();
@@ -317,8 +207,14 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
     useStore.getState().load(id).catch((e) => useStore.getState().fail("Chargement du projet", e));
   }, [id]);
   useEffect(() => { if (project) setName(project.name); }, [project?.id]); // eslint-disable-line
-  // Sélectionner un plan ou un élément ouvre l'inspecteur (sans rouvrir un panneau replié exprès).
-  useEffect(() => { if (selected || item) setRight("inspecteur"); }, [selected, item]);
+  // Sélectionner un plan ou un élément ouvre l'onglet Plan, mais seulement depuis Consigne, Montage ou Plan :
+  // depuis Audio, Habillage, Qualité ou Export, on reste où on travaille.
+  useEffect(() => {
+    if (!selected && !item) return;
+    if (item?.kind === "comment") return;
+    const cur = useStore.getState().rightTab;
+    if (cur === "consigne" || cur === "montage" || cur === "plan") setRight("plan");
+  }, [selected, item]);
   // La timeline ne peut pas dépasser 70 % de la fenêtre : on recale après un redimensionnement.
   useEffect(() => {
     const onResize = () => setLayout({});
@@ -388,19 +284,33 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
       {layout.rightOpen && (
         <aside className="right">
           <Splitter dir="v" label="Largeur du panneau de droite" onDrag={drag("right", -1)} onReset={() => setLayout({ right: DEFAULT_LAYOUT.right })} />
-          <div className="tabs" role="tablist">
-            {RIGHT_TABS.map((t) => (
-              <button key={t.id} role="tab" aria-selected={right === t.id} className={right === t.id ? "on" : ""} onClick={() => setRight(t.id)}>{t.label}</button>
+          <div className="right-body">
+            <div className="tab-head">
+              <h2>{RIGHT_TABS.find((t) => t.id === right)?.label}</h2>
+              <span className="spacer" />
+              <button className="icon-btn tab-close" title="Replier le panneau" aria-label="Replier le panneau de droite" onClick={() => setLayout({ rightOpen: false })}><Icon name="panel-right" size={14} /></button>
+            </div>
+            <div className="tab-body">
+              {right === "consigne" && <><CommandBar /><CommentsPanel /></>}
+              {right === "montage" && <MontageTab />}
+              {right === "plan" && <PlanTab />}
+              {right === "habillage" && <HabillageTab />}
+              {right === "audio" && <AudioTab />}
+              {right === "qualite" && <QualiteTab />}
+              {right === "export" && <ExportTab />}
+              {right === "texte" && <TranscriptPanel />}
+              {right === "recherche" && <ResearchPanel />}
+            </div>
+          </div>
+          <nav className="rtabs" role="tablist" aria-label="Onglets du panneau droit">
+            {RIGHT_TABS.map((t, i) => (
+              <button key={t.id} role="tab" aria-selected={right === t.id} className={`${right === t.id ? "on" : ""} ${t.id === "export" && exportBusy ? "busy" : ""} ${t.id === "consigne" && openComments > 0 ? "badge" : ""}`}
+                data-badge={t.id === "consigne" && openComments > 0 ? openComments : undefined}
+                title={`${t.label} (${i + 1})`} aria-label={t.label} onClick={() => setRight(t.id)}>
+                <Icon name={t.icon} size={17} />
+              </button>
             ))}
-            <span className="spacer" />
-            <button className="icon-btn tab-close" title="Replier le panneau" aria-label="Replier le panneau de droite" onClick={() => setLayout({ rightOpen: false })}><Icon name="panel-right" size={14} /></button>
-          </div>
-          <div className="tab-body">
-            {right === "consigne" && <><CommandBar /><CommentsPanel /></>}
-            {right === "inspecteur" && <Inspector />}
-            {right === "texte" && <TranscriptPanel />}
-            {right === "recherche" && <ResearchPanel />}
-          </div>
+          </nav>
         </aside>
       )}
       <footer className="bottom">

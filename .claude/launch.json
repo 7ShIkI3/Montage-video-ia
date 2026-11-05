@@ -10,6 +10,16 @@
         "$env:MONTEUR_DATA_DIR = \"$env:USERPROFILE\\Documents\\Monteur IA\"; & backend\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --app-dir backend --port 8000"
       ],
       "port": 8000
+    },
+    {
+      "name": "monteur-dev",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "$env:MONTEUR_DATA_DIR = \"$env:LOCALAPPDATA\\Temp\\monteur-dev\"; & backend\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --app-dir backend --port 8010"
+      ],
+      "port": 8010
     }
   ]
 }
