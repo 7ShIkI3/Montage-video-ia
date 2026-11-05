@@ -40,6 +40,7 @@ function commands(): Command[] {
     { id: "redo", group: "Montage", label: "Rétablir", keys: ["Ctrl", "Y"], icon: "redo", run: () => s.redo(), enabled: () => s.future.length > 0 },
     { id: "text", group: "Ajouter", label: "Texte au curseur", icon: "plus", alt: "titre bandeau", run: () => s.addText() },
     { id: "sfx", group: "Ajouter", label: "Bruitage (whoosh) au curseur", icon: "volume", alt: "son effet", run: () => s.addSfx("whoosh") },
+    { id: "marker", group: "Ajouter", label: "Repère au curseur (chapitre)", keys: ["M"], icon: "dot", alt: "chapitre youtube", run: () => s.addMarker(), enabled: hasClips },
     { id: "fmt-16-9", group: "Format", label: "Format 16:9 paysage", alt: "youtube horizontal", run: () => s.setTimelineProps({ format: "16:9" }) },
     { id: "fmt-9-16", group: "Format", label: "Format 9:16 vertical", alt: "short tiktok reels", run: () => s.setTimelineProps({ format: "9:16" }) },
     { id: "fmt-1-1", group: "Format", label: "Format 1:1 carré", alt: "instagram", run: () => s.setTimelineProps({ format: "1:1" }) },

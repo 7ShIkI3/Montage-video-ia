@@ -259,6 +259,15 @@ export interface MusicSettings {
   start?: number;
 }
 
+/** Repère posé par l'utilisateur (touche M) : chapitre YouTube et repère dans l'export XML. */
+export interface Marker {
+  id: string;
+  t: number;
+  label: string;
+  color: "corail" | "jaune" | "vert" | "bleu" | "violet";
+  chapter: boolean;
+}
+
 export interface Timeline {
   clips: Clip[];
   format: Format;
@@ -288,6 +297,7 @@ export interface Timeline {
   reference_match?: { target_shot: number; result_shot: number; rounds: number; history: number[]; unmatched: string[]; summary: string } | null;
   reframe: boolean;
   comments: Comment[];
+  markers?: Marker[];
 }
 
 export interface EditSettings {

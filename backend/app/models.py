@@ -178,6 +178,15 @@ class TextItem(BaseModel):
     position: Literal["haut", "centre", "bas"] = "centre"
 
 
+class Marker(BaseModel):
+    """Repère posé par l'utilisateur sur la timeline (touche M) : chapitre YouTube et repère dans l'export XML."""
+    id: str = Field(default_factory=lambda: new_id("k_"))
+    t: float = Field(0.0, ge=0.0)  # instant sur la timeline (s)
+    label: str = ""
+    color: Literal["corail", "jaune", "vert", "bleu", "violet"] = "corail"
+    chapter: bool = True  # devient un chapitre du kit de publication
+
+
 class Comment(BaseModel):
     """Commentaire du monteur posé sur un moment précis, que l'IA lit et applique.
 
@@ -378,6 +387,7 @@ class Timeline(BaseModel):
     voice_focus: list[str] = Field(default_factory=list)  # plans calés sur les phrases, projecteurs posés
     reference_match: dict | None = None  # comparaison du rythme obtenu avec celui de la vidéo de référence
     comments: list[Comment] = Field(default_factory=list)
+    markers: list[Marker] = Field(default_factory=list)  # repères de l'utilisateur (chapitres)
     reframe: bool = True  # recadrage automatique sur le visage quand le format est plus étroit que la source
 
     @property

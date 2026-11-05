@@ -80,6 +80,8 @@ def to_xmeml(project: Project, tl: Timeline, name: str | None = None) -> str:
         markers.append((s.start, f"Bruitage : {s.kind}"))
     for o in tl.overlays:
         markers.append((o.start, f"B-roll : {project.media_by_id(o.media_id).filename} {o.src_in:.2f}-{o.src_out:.2f} s"))
+    for k in tl.markers:
+        markers.append((k.t, f"Repère : {k.label or 'sans titre'}"))
     mk = "".join(
         f"<marker><name>{escape(n[:120])}</name><comment>{escape(n)}</comment>"
         f"<in>{round(st * SEQ_FPS)}</in><out>-1</out></marker>"

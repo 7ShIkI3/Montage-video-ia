@@ -17,6 +17,7 @@ export const SHORTCUT_GROUPS: { title: string; items: Shortcut[] }[] = [
     { keys: ["S"], label: "Couper le plan au curseur" },
     { keys: ["I", "O"], label: "Rogner l'entrée / la sortie du plan sélectionné au curseur" },
     { keys: ["Suppr"], label: "Supprimer l'élément sélectionné" },
+    { keys: ["M"], label: "Poser un repère au curseur (chapitre YouTube, repère XML)" },
     { keys: ["Ctrl", "D"], label: "Dupliquer le plan sélectionné" },
     { keys: ["Ctrl", "←", "→"], label: "Déplacer le plan sélectionné d'un cran" },
     { keys: ["Ctrl", "Z"], label: "Annuler" },
