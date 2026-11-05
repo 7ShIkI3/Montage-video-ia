@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ExportPreset, Format, StyleTemplate, Versions } from "../api";
 import { isBusy, jobOf, useStore } from "../store";
+import { Icon } from "../icons";
 
 async function saveIfDirty() {
   await useStore.getState().saveNow();
@@ -55,7 +56,7 @@ export function VersionsPanel() {
 
   return (
     <section className="panel versions">
-      <header><h3>Versions</h3><button className="small-btn" onClick={duplicate} title="Copier la version actuelle">＋ Dupliquer</button></header>
+      <header><h3>Versions</h3><button className="small-btn" onClick={duplicate} title="Copier la version actuelle"><Icon name="plus" size={13} strokeWidth={2.4} />Dupliquer</button></header>
       <ul className="version-list">
         {vs?.versions.map((v) => (
           <li key={v.id} className={v.id === vs.active ? "on" : ""}>
@@ -64,8 +65,8 @@ export function VersionsPanel() {
               <span className="muted small">{Math.round(v.duration)} s{v.note ? ` · ${v.note}` : ""}</span>
             </button>
             {v.score != null && <span className={`score-badge ${v.score >= 70 ? "hi" : v.score >= 50 ? "mid" : ""}`}>{v.score}</span>}
-            <button className="icon-btn" title="Renommer" onClick={() => rename(v.id, v.name)}>✎</button>
-            {vs.versions.length > 1 && <button className="icon-btn" title="Supprimer" onClick={() => remove(v.id, v.name)}>✕</button>}
+            <button className="icon-btn" title="Renommer" onClick={() => rename(v.id, v.name)} aria-label="Renommer"><Icon name="pencil" size={14} /></button>
+            {vs.versions.length > 1 && <button className="icon-btn" title="Supprimer" onClick={() => remove(v.id, v.name)} aria-label="Supprimer"><Icon name="x" size={14} /></button>}
           </li>
         ))}
       </ul>
@@ -77,7 +78,7 @@ export function VersionsPanel() {
           <label>Durée<select value={dur} onChange={(e) => setDur(+e.target.value)}>{[15, 30, 45, 60, 90].map((n) => <option key={n} value={n}>{n} s</option>)}</select></label>
           <label>Format<select value={fmt} onChange={(e) => setFmt(e.target.value as Format)}><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="16:9">16:9</option></select></label>
         </div>
-        <button className="primary small" disabled={busy} onClick={shorts}>✂ Générer les shorts</button>
+        <button className="primary small" disabled={busy} onClick={shorts}><Icon name="scissors" size={14} />Générer les shorts</button>
       </div>
     </section>
   );
@@ -116,7 +117,7 @@ export function TemplatesPanel() {
   };
   return (
     <section className="panel templates">
-      <header><h3>Modèles de style</h3><button className="small-btn" onClick={save}>＋ Enregistrer</button></header>
+      <header><h3>Modèles de style</h3><button className="small-btn" onClick={save}><Icon name="plus" size={13} strokeWidth={2.4} />Enregistrer</button></header>
       {!list.length && <p className="muted small">Enregistre ton habillage (look, sous-titres, format, musique, logo) pour le réutiliser sur tes prochaines vidéos.</p>}
       <ul className="version-list">
         {list.map((t) => (
@@ -125,7 +126,7 @@ export function TemplatesPanel() {
               <span className="v-name">{t.name}</span>
               <span className="muted small">{t.style} · {t.format} · {t.look}{t.images.length ? " · logo" : ""}{t.brand ? " · marque" : ""}</span>
             </button>
-            <button className="icon-btn" title="Supprimer" onClick={() => del(t)}>✕</button>
+            <button className="icon-btn" title="Supprimer" onClick={() => del(t)} aria-label="Supprimer"><Icon name="x" size={14} /></button>
           </li>
         ))}
       </ul>
@@ -151,8 +152,8 @@ export function ImageButtons() {
           addImage(asset, mark);
         } catch (err) { notify((err as Error).message); }
       }} />
-      <button className="small-btn" onClick={() => pick(true)}>＋ Logo / filigrane</button>
-      <button className="small-btn" onClick={() => pick(false)}>＋ Image au curseur</button>
+      <button className="small-btn" onClick={() => pick(true)}><Icon name="image" size={13} />Logo / filigrane</button>
+      <button className="small-btn" onClick={() => pick(false)}><Icon name="plus" size={13} strokeWidth={2.4} />Image au curseur</button>
     </div>
   );
 }

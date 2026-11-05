@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { Icon, IconName } from "../icons";
 import { isBusy, jobOf, useStore } from "../store";
 import { AIPanel, MediaPanel } from "./LeftPanel";
 import { Player } from "./Player";
@@ -69,7 +70,7 @@ function PublishKitPanel() {
     <div className="export-alt kit">
       <h4>Kit de publication</h4>
       <p className="muted small">Titres, description avec chapitres, hashtags et miniature, prêts à coller sur YouTube ou TikTok.</p>
-      <button disabled={busy} onClick={gen}>{busy ? "L'IA rédige…" : kit ? "↻ Régénérer" : "✨ Générer le kit"}</button>
+      <button disabled={busy} onClick={gen}>{busy ? "L'IA rédige…" : <><Icon name="sparkles" />{kit ? "Régénérer" : "Générer le kit"}</>}</button>
       {kit && (
         <>
           <a href={api.exportUrl(project.id, kit.thumbnail)} download>
@@ -130,7 +131,7 @@ function ExportButton() {
 
   return (
     <div className="export-wrap" ref={wrap}>
-      <button className="primary" onClick={() => setOpen(!open)} disabled={!project.timeline.clips.length}>⬇ Exporter</button>
+      <button className="primary" onClick={() => setOpen(!open)} disabled={!project.timeline.clips.length}><Icon name="download" size={16} strokeWidth={2.2} />Exporter</button>
       {open && (
         <div className="popover">
           <h4>Exporter la vidéo</h4>
@@ -193,11 +194,29 @@ function ExportButton() {
   );
 }
 
+type LeftTab = "rushes" | "ia" | "versions" | "modeles" | "marque";
+type RightTab = "consigne" | "inspecteur" | "texte";
+const LEFT_TABS: { id: LeftTab; label: string; icon: IconName }[] = [
+  { id: "rushes", label: "Rushes", icon: "film" },
+  { id: "ia", label: "Réalisation IA", icon: "sparkles" },
+  { id: "versions", label: "Versions et shorts", icon: "branch" },
+  { id: "modeles", label: "Modèles de style", icon: "grid" },
+  { id: "marque", label: "Identité de marque", icon: "palette" },
+];
+const RIGHT_TABS: { id: RightTab; label: string }[] = [
+  { id: "consigne", label: "Consigne" }, { id: "inspecteur", label: "Inspecteur" }, { id: "texte", label: "Texte" },
+];
+
 export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
   const project = useStore((s) => s.project);
   const dirty = useStore((s) => s.dirty);
   const health = useStore((s) => s.caps);
+  const busy = useStore((s) => isBusy(s));
+  const selected = useStore((s) => s.selected);
+  const item = useStore((s) => s.item);
   const [name, setName] = useState("");
+  const [left, setLeft] = useState<LeftTab | null>(null);
+  const [right, setRight] = useState<RightTab>("consigne");
   useAutosave();
   useShortcuts();
 
@@ -205,13 +224,18 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
     useStore.getState().load(id).catch((e) => useStore.getState().fail("Chargement du projet", e));
   }, [id]);
   useEffect(() => { if (project) setName(project.name); }, [project?.id]); // eslint-disable-line
+  // Sélectionner un plan ou un élément ouvre l'inspecteur.
+  useEffect(() => { if (selected || item) setRight("inspecteur"); }, [selected, item]);
 
   if (!project) return <div className="loading">Chargement…</div>;
+  // Sans rush, on commence par l'import ; sinon par la réalisation IA.
+  const leftTab = left ?? (project.media.length ? "ia" : "rushes");
 
   const rename = () => {
     if (name === project.name) return;
     useStore.getState().guard("Renommage impossible", async () => useStore.getState().setProject(await api.patchProject(project.id, { name })));
   };
+  const whisper = health?.whisper_device ? ` · Whisper ${health.whisper_model} (${health.whisper_device === "cuda" ? "GPU" : "CPU"})` : health ? ` · Whisper ${health.whisper_model}` : "";
 
   return (
     <div className="editor">
@@ -219,38 +243,53 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
         <button className="icon-btn" onClick={async () => {
           try { await useStore.getState().saveNow(); } catch (e) { return useStore.getState().notify(`Sauvegarde impossible : ${(e as Error).message}`); }
           onBack();
-        }} title="Projets">←</button>
-        <span className="brand-mark" aria-hidden>▶</span>
-        <input className="project-name" value={name} onChange={(e) => setName(e.target.value)}
+        }} title="Retour aux projets" aria-label="Retour aux projets"><Icon name="back" size={18} /></button>
+        <span className="brand-mark" aria-hidden><Icon name="play" size={11} /></span>
+        <input className="project-name" value={name} aria-label="Nom du projet" onChange={(e) => setName(e.target.value)}
           onBlur={rename} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
-        <span className="muted small">{dirty ? "Enregistrement…" : "Enregistré"}</span>
+        <span className={`saved ${dirty ? "dirty" : ""}`}><Icon name={dirty ? "clock" : "check"} size={12} strokeWidth={3} />{dirty ? "Enregistrement…" : "Enregistré"}</span>
         <span className="spacer" />
         {health && (
           <a href="#/reglages" className={`pill ${health.claude ? "ok" : "warn"}`}
             title={health.claude ? `Réalisateur : ${health.claude_model}. Cliquer pour ouvrir les réglages.` : "Sans clé Claude, le montage utilise l'IA locale (plus simple). Cliquer pour ajouter la clé."}>
-            {health.claude ? "IA Claude active" : "Clé Claude absente · clique pour la régler"} · Whisper {health.whisper_model}
-            {health.whisper_device ? ` (${health.whisper_device === "cuda" ? "GPU" : "CPU"})` : ""} · {health.encoder}
+            {health.claude ? "Claude" : "Clé Claude absente"}{whisper} · {health.encoder}
           </a>
         )}
         <Tasks />
-        <a href="#/reglages" className="icon-btn settings-link" title="Réglages" aria-label="Réglages">⚙</a>
+        <a href="#/reglages" className="icon-btn settings-link" title="Réglages" aria-label="Réglages"><Icon name="settings" size={18} /></a>
         <ExportButton />
       </header>
       <aside className="left">
-        <MediaPanel />
-        <AIPanel />
-        <VersionsPanel />
-        <TemplatesPanel />
-        <BrandPanel />
+        <nav className="rail" aria-label="Sections">
+          {LEFT_TABS.map((t) => (
+            <button key={t.id} className={`${leftTab === t.id ? "on" : ""} ${t.id === "ia" && busy ? "busy" : ""}`} title={t.label} aria-label={t.label}
+              aria-current={leftTab === t.id ? "page" : undefined} onClick={() => setLeft(t.id)}>
+              <Icon name={t.icon} size={20} />
+            </button>
+          ))}
+        </nav>
+        <div className="rail-panel">
+          {leftTab === "rushes" && <MediaPanel />}
+          {leftTab === "ia" && <AIPanel />}
+          {leftTab === "versions" && <VersionsPanel />}
+          {leftTab === "modeles" && <TemplatesPanel />}
+          {leftTab === "marque" && <BrandPanel />}
+        </div>
       </aside>
       <main className="center">
         <Player />
       </main>
       <aside className="right">
-        <CommandBar />
-        <CommentsPanel />
-        <Inspector />
-        <TranscriptPanel />
+        <div className="tabs" role="tablist">
+          {RIGHT_TABS.map((t) => (
+            <button key={t.id} role="tab" aria-selected={right === t.id} className={right === t.id ? "on" : ""} onClick={() => setRight(t.id)}>{t.label}</button>
+          ))}
+        </div>
+        <div className="tab-body">
+          {right === "consigne" && <><CommandBar /><CommentsPanel /></>}
+          {right === "inspecteur" && <Inspector />}
+          {right === "texte" && <TranscriptPanel />}
+        </div>
       </aside>
       <footer className="bottom">
         <TimelineView />

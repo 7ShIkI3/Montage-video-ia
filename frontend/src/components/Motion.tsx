@@ -1,6 +1,7 @@
 // Lot 2 : rampe de vitesse et images clés (zoom et cadrage animés) d'un plan.
 import { Clip, fmtTime, Keyframe } from "../api";
 import { clipDur, clipStarts, kfAt, useStore } from "../store";
+import { Icon } from "../icons";
 
 const RAMPS = [0.25, 0.4, 0.5, 0.75, 1, 1.5, 2, 3, 4];
 
@@ -57,14 +58,14 @@ export function MotionEditor({ c }: { c: Clip }) {
       </div>
       <div className="field-row">
         <button className="small-btn" disabled={!inside} onClick={addKf} title="Ajouter une image clé à l'endroit du curseur">
-          ◆ {near >= 0 ? "Remplacer" : "Ajouter"} au curseur ({fmtTime(local, true)})
+          <Icon name="plus" size={13} strokeWidth={2.4} />{near >= 0 ? "Remplacer" : "Ajouter"} au curseur ({fmtTime(local, true)})
         </button>
         {kfs.length > 0 && <button className="small-btn" onClick={() => setKfs([])}>Tout effacer</button>}
       </div>
       <div className="kf-list">
         {kfs.map((k, i) => (
           <div key={i} className={`kf-row ${i === near ? "on" : ""}`}>
-            <button className="icon-btn" title="Aller à cette image clé" onClick={() => setPlayhead(start + k.t)}>◆</button>
+            <button className="icon-btn" title="Aller à cette image clé" onClick={() => setPlayhead(start + k.t)} aria-label="Aller à cette image clé"><Icon name="dot" size={14} /></button>
             <div>
               <div className="muted small">{fmtTime(k.t, true)} · {k.ease === "doux" ? "doux" : "linéaire"}</div>
               <div className="kf-fields">
@@ -83,7 +84,7 @@ export function MotionEditor({ c }: { c: Clip }) {
                 Arrivée douce
               </label>
             </div>
-            <button className="icon-btn" title="Supprimer" onClick={() => setKfs(kfs.filter((_, j) => j !== i))}>✕</button>
+            <button className="icon-btn" title="Supprimer" onClick={() => setKfs(kfs.filter((_, j) => j !== i))} aria-label="Supprimer"><Icon name="x" size={14} /></button>
           </div>
         ))}
       </div>

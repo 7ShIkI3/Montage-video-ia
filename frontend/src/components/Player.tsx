@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, Clip, fmtTime, ImpactItem, OverlayItem, Timeline } from "../api";
 import { clipAt, clipDur, clipStarts, commentTime, kfAt, localToSrc, rampOf, speedAt, srcToLocal, timelineDuration, useStore } from "../store";
 import { cssFilter, fxClasses, overlaysFor } from "../fxPreview";
+import { Icon } from "../icons";
 
 // Lecture de la timeline en direct, sans rendu : deux lecteurs vidéo alternent
 // pour que les coupes entre fichiers soient instantanées. Les effets, transitions,
@@ -488,7 +489,7 @@ export function Player() {
             <div className="region-box pending" style={regionToFrame(g, pending.region)} />
           )}
           {bubbles.map((c) => (
-            <div key={c.id} className={`cm-bubble s-${c.status}`}>💬 {c.text}</div>
+            <div key={c.id} className={`cm-bubble s-${c.status}`}><Icon name="message" size={13} strokeWidth={2.2} />{c.text}</div>
           ))}
           {picking && (
             <div className="pick-layer"
@@ -547,17 +548,17 @@ export function Player() {
         <audio ref={music} src={api.musicUrl(project.id, tl.music.track)} loop preload="auto" />
       )}
       <div className="transport">
-        <button className="icon-btn" title="Début" onClick={() => setPlayhead(0)}>⏮</button>
+        <button className="icon-btn" title="Début" aria-label="Début" onClick={() => setPlayhead(0)}><Icon name="skip-back" size={18} /></button>
         <button className="play-btn" title="Lecture / pause (Espace)" onClick={() => setPlaying(!playing)}
           disabled={!tl?.clips.length}>
-          {playing ? "❚❚" : "▶"}
+          <Icon name={playing ? "pause" : "play"} size={16} />
         </button>
         <span className="tc">
           {fmtTime(playhead, true)} <span className="muted">/ {fmtTime(total, true)}</span>
         </span>
         {cc && (cc.speed !== 1 || cc.effects.length > 0 || look !== "aucun") && (
           <span className="fx-badge" title="Effets du plan courant">
-            ✨ {[look !== "aucun" ? look : "", cc.speed !== 1 ? `×${cc.speed}` : "", ...cc.effects].filter(Boolean).join(" · ").replace(/_/g, " ")}
+            <Icon name="sparkles" size={13} />{[look !== "aucun" ? look : "", cc.speed !== 1 ? `×${cc.speed}` : "", ...cc.effects].filter(Boolean).join(" · ").replace(/_/g, " ")}
           </span>
         )}
       </div>

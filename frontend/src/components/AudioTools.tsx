@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { CapHint, needClaude } from "../caps";
 import { isBusy, useStore } from "../store";
+import { Icon } from "../icons";
 
 /** Enregistre une voix off pendant que la vidéo défile depuis le curseur, puis la pose sur une piste audio. */
 export function VoiceOverButton() {
@@ -54,9 +55,9 @@ export function VoiceOverButton() {
     setRec(null);
   };
   return rec ? (
-    <button className="rec on" onClick={stop} title="Arrêter l'enregistrement">⏹ {secs.toFixed(0)} s</button>
+    <button className="rec on" onClick={stop} title="Arrêter l'enregistrement"><Icon name="square" size={12} strokeWidth={2.6} />{secs.toFixed(0)} s</button>
   ) : (
-    <button className="rec" onClick={start} title="Enregistrer une voix off au micro, depuis le curseur">🎙 Voix off</button>
+    <button className="rec" onClick={start} title="Enregistrer une voix off au micro, depuis le curseur"><Icon name="mic" size={14} />Voix off</button>
   );
 }
 
@@ -77,7 +78,7 @@ export function AddSoundButton() {
           addAudio(asset, duration, "son", undefined, f.name.replace(/\.[^.]+$/, ""));
         } catch (err) { notify((err as Error).message); }
       }} />
-      <button onClick={() => input.current?.click()} title="Importer un son ou une musique sur une piste audio">＋ Son</button>
+      <button onClick={() => input.current?.click()} title="Importer un son ou une musique sur une piste audio"><Icon name="music" size={14} />Son</button>
     </>
   );
 }
