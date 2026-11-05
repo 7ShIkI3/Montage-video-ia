@@ -28,7 +28,7 @@
   --violet: #8B7CFF;
   --radius: 10px;
   --radius-sm: 8px;
-  --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --display: "Space Grotesk", var(--font);
   --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;
   /* Compatibilité avec les anciens noms utilisés par quelques composants. */
@@ -682,6 +682,15 @@ code.cmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding
 .rate-badge { font: 600 11px var(--mono); padding: 2px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-2); border: 1px solid rgba(255,107,61,0.4); }
 .kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line-2); border-bottom-width: 2px; background: var(--surface-2); font: 500 11px var(--mono); color: var(--text-2); text-align: center; }
 .kbd-q { font: 700 13px var(--mono); }
+/* Dialogues maison (<dialog> natif stylé) */
+dialog.dlg { padding: 0; border: 1px solid var(--line-2); border-radius: 14px; background: var(--surface); color: var(--text); width: 440px; max-width: calc(100vw - 32px); box-shadow: 0 40px 100px -20px rgba(0,0,0,0.9); }
+dialog.dlg::backdrop { background: rgba(10,10,12,0.72); backdrop-filter: blur(4px); }
+dialog.dlg form { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px 18px; }
+dialog.dlg header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+dialog.dlg h2 { margin: 0; font-size: 16px; font-weight: 600; }
+dialog.dlg p { margin: 0; color: var(--text-2); font-size: 14px; line-height: 1.5; }
+dialog.dlg footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+dialog.dlg footer button { min-width: 96px; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 200; background: rgba(10,10,12,0.72); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 24px; }
 .modal { width: 720px; max-width: 100%; max-height: calc(100vh - 48px); overflow-y: auto; background: var(--surface); border: 1px solid var(--line-2); border-radius: 14px; box-shadow: 0 40px 100px -20px rgba(0,0,0,0.9); }
 .modal > header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--surface); z-index: 1; }

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, fmtTime, ProjectSummary } from "../api";
 import { Icon } from "../icons";
 import { useStore } from "../store";
+import { ask } from "./Dialog";
 
 type Sort = "recent" | "nom" | "duree";
 
@@ -101,7 +102,7 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
                     <span className="muted small">{p.media} média{p.media > 1 ? "s" : ""} · {new Date(p.updated_at * 1000).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
                   </div>
                   <button className="icon-btn del" title="Supprimer" aria-label={`Supprimer ${p.name}`} onClick={async () => {
-                    if (confirm(`Supprimer « ${p.name} » et tous ses fichiers ?`))
+                    if (await ask.confirm(`Supprimer « ${p.name} » et tous ses fichiers ?`, { title: "Supprimer le projet", ok: "Supprimer", danger: true }))
                       await useStore.getState().guard("Suppression impossible", async () => { await api.deleteProject(p.id); await refresh(); });
                   }}><Icon name="trash" size={15} /></button>
                 </article>

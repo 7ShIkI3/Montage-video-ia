@@ -4,7 +4,14 @@ import { Editor } from "./components/Editor";
 import { Home } from "./components/Home";
 import { Settings } from "./components/Settings";
 import { Toasts } from "./components/Toasts";
+import { DialogHost } from "./components/Dialog";
 import { useStore } from "./store";
+// Polices embarquées : l'application marche hors ligne (plus de Google Fonts).
+import "@fontsource-variable/inter/index.css";
+import "@fontsource/space-grotesk/500.css";
+import "@fontsource/space-grotesk/600.css";
+import "@fontsource/space-grotesk/700.css";
+import "@fontsource/jetbrains-mono/500.css";
 import "./styles.css";
 
 type Route = { page: "projet"; id: string } | { page: "reglages" } | { page: "accueil" };
@@ -41,6 +48,7 @@ function App() {
         <Home onOpen={(id) => (location.hash = `#/p/${id}`)} />
       )}
       <Toasts />
+      <DialogHost />
     </>
   );
 }

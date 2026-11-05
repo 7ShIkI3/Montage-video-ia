@@ -80,6 +80,8 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
 
 ## L'éditeur
 
+- Hors ligne : polices embarquées (Inter, Space Grotesk, JetBrains Mono), aucune ressource externe ; confirmations
+  et saisies dans des dialogues de l'application (Entrée valide, Échap annule), plus de fenêtres natives.
 - Panneau droit en neuf onglets (touches `1` à `9`) : Consigne et commentaires, Montage, Plan sélectionné,
   Habillage, Audio et voix, Qualité, Export (qualité, cadence, fichier MP4/WebM/MOV/GIF, zone, aperçu du
   résultat, XML/SRT, kit de publication), Texte, Recherche. Sélectionner un plan ouvre l'onglet Plan

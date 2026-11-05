@@ -7,6 +7,7 @@ import { MotionEditor } from "./Motion";
 import { CUTOUTS, CutoutTools } from "./Lot3";
 import { Icon } from "../icons";
 import { MusicLibraryDialog } from "./Library";
+import { ask } from "./Dialog";
 
 export function CommandBar() {
   const project = useStore((s) => s.project);
@@ -673,7 +674,7 @@ export function TranscriptPanel() {
                     else { setSel({ clip: ci, a: wi, b: wi }); setPlayhead(Math.max(0, t)); }
                   }}
                   onDoubleClick={async () => {
-                    const nt = prompt("Corriger le mot :", w.text);
+                    const nt = await ask.prompt("Corriger le mot :", w.text, { title: "Corriger le sous-titre", ok: "Corriger" });
                     if (nt == null || nt === w.text) return;
                     await useStore.getState().guard("Correction impossible", async () => {
                       await api.editWord(project.id, c.media_id, idx, nt);

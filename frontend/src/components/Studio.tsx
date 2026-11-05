@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ExportPreset, Format, StyleTemplate, Versions } from "../api";
 import { isBusy, jobOf, useStore } from "../store";
 import { Icon } from "../icons";
+import { ask } from "./Dialog";
 
 async function saveIfDirty() {
   await useStore.getState().saveNow();
@@ -26,17 +27,17 @@ export function VersionsPanel() {
   });
   const duplicate = () => guard("Duplication impossible", async () => {
     await saveIfDirty();
-    const name = prompt("Nom de la nouvelle version", "Essai");
+    const name = await ask.prompt("Nom de la nouvelle version", "Essai", { title: "Dupliquer la version", ok: "Dupliquer" });
     if (name === null) return;
     await api.duplicateVersion(project.id, name);
     setTimeline(await api.getProject(project.id));
   });
   const rename = (vid: string, old: string) => guard("Renommage impossible", async () => {
-    const name = prompt("Renommer la version", old);
+    const name = await ask.prompt("Renommer la version", old, { title: "Renommer", ok: "Renommer" });
     if (name) setVs(await api.renameVersion(project.id, vid, name));
   });
   const remove = async (vid: string, name: string) => {
-    if (!confirm(`Supprimer la version « ${name} » ?`)) return;
+    if (!await ask.confirm(`Supprimer la version « ${name} » ?`, { title: "Supprimer la version", ok: "Supprimer", danger: true })) return;
     await guard("Suppression impossible", async () => {
       await saveIfDirty();
       setTimeline(await api.deleteVersion(project.id, vid));
@@ -96,7 +97,7 @@ export function TemplatesPanel() {
   }, []);
   if (!project) return null;
   const save = () => guard("Enregistrement du modèle impossible", async () => {
-    const name = prompt("Nom du modèle (look, sous-titres, format, musique, logo)", "Ma chaîne");
+    const name = await ask.prompt("Nom du modèle (look, sous-titres, format, musique, logo)", "Ma chaîne", { title: "Enregistrer un modèle de style", ok: "Enregistrer" });
     if (!name) return;
     await saveIfDirty();
     await api.saveTemplate(project.id, name);
@@ -109,7 +110,7 @@ export function TemplatesPanel() {
     notify(`Modèle « ${t.name} » appliqué.`);
   });
   const del = async (t: StyleTemplate) => {
-    if (!confirm(`Supprimer le modèle « ${t.name} » ?`)) return;
+    if (!await ask.confirm(`Supprimer le modèle « ${t.name} » ?`, { title: "Supprimer le modèle", ok: "Supprimer", danger: true })) return;
     await guard("Suppression impossible", async () => {
       await api.deleteTemplate(t.id);
       setList(await api.templates());

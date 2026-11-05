@@ -3,6 +3,7 @@ import { api, Direction, EditSettings, fmtTime, Style } from "../api";
 import { isBusy, useStore } from "../store";
 import { Icon } from "../icons";
 import { UrlImport } from "./Library";
+import { ask } from "./Dialog";
 
 const STYLES: { id: Style; name: string; desc: string }[] = [
   { id: "youtube", name: "YouTube", desc: "Rythme soutenu, coupes franches" },
@@ -70,7 +71,7 @@ export function MediaPanel() {
               </div>
             </div>
             <button className="icon-btn" title="Retirer" onClick={async () => {
-              if (!confirm(`Retirer ${m.filename} du projet ?`)) return;
+              if (!await ask.confirm(`Retirer ${m.filename} du projet ?`, { title: "Retirer le média", ok: "Retirer", danger: true })) return;
               const st = useStore.getState();
               await st.guard("Retrait impossible", async () => {
                 await st.saveNow();
@@ -99,9 +100,9 @@ export function AIPanel() {
     const settings_ = override ?? settings;
     if (!project.media.length) return notify("Importe d'abord au moins une vidéo.");
     const dirty = useStore.getState().dirty;
-    if (project.timeline.clips.length && !confirm(
+    if (project.timeline.clips.length && !await ask.confirm(
       dirty ? "Remonter remplace le montage actuel et tes retouches non enregistrées. Continuer ?"
-        : "Remonter remplace le montage actuel. Continuer ?")) return;
+        : "Remonter remplace le montage actuel. Continuer ?", { title: "Remonter", ok: "Remonter" })) return;
     const before = useStore.getState().timeline;
     await useStore.getState().runJob("Montage automatique", async () => {
       await api.patchProject(project.id, { settings: settings_ });

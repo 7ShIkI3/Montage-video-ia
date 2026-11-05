@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api, Job, LibraryTrack, MusicResult, waitJob } from "../api";
 import { Icon } from "../icons";
 import { useStore } from "../store";
+import { ask } from "./Dialog";
 
 /** Lance une tâche sans projet (bibliothèque, modèles) et suit son avancement. Null si échec. */
 export async function runStandaloneJob(label: string, start: () => Promise<Job>, onUpdate?: (j: Job) => void): Promise<Job | null> {
@@ -58,7 +59,7 @@ export function MusicLibraryDialog({ current, onPick, onClose }: { current: stri
     if (done) { notify(`Ajouté à la bibliothèque : ${done.result as string}`, { level: "ok" }); setUrl(""); await refresh(); setTab("bibliotheque"); }
   };
   const remove = async (t: LibraryTrack) => {
-    if (!confirm(`Supprimer « ${t.name} » de la bibliothèque ?`)) return;
+    if (!await ask.confirm(`Supprimer « ${t.name} » de la bibliothèque ?`, { title: "Supprimer le morceau", ok: "Supprimer", danger: true })) return;
     await useStore.getState().guard("Suppression impossible", async () => { await api.musicDelete(t.name); await refresh(); });
   };
   const isCurrent = (t: LibraryTrack) => !!current && (current === t.path || current.split(/[\\/]/).pop() === t.name);

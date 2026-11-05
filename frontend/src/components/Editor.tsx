@@ -3,6 +3,7 @@ import { api, fmtTime } from "../api";
 import { Icon, IconName } from "../icons";
 import { DEFAULT_LAYOUT, isBusy, LeftTab, RIGHT_TAB_ORDER, RightTab, useStore } from "../store";
 import { Shortcuts } from "./Shortcuts";
+import { dialogOpen } from "./Dialog";
 import { CommandPalette } from "./CommandPalette";
 import { AIPanel, MediaPanel } from "./LeftPanel";
 import { Player } from "./Player";
@@ -47,6 +48,7 @@ function useShortcuts() {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (dialogOpen()) return;  // un dialogue (confirmation, saisie) a le clavier pour lui
       const s = useStore.getState();
       const mod = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();

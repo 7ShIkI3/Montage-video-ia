@@ -4,6 +4,7 @@ import { api, Job, ModelsStatus, PiperVoice, Settings as ServerSettings } from "
 import { Icon } from "../icons";
 import { useStore } from "../store";
 import { JobLine, runStandaloneJob } from "./Library";
+import { ask } from "./Dialog";
 
 const PIPER_LANGS = [["fr", "Français"], ["en", "Anglais"], ["es", "Espagnol"], ["de", "Allemand"], ["it", "Italien"], ["pt", "Portugais"], ["nl", "Néerlandais"], ["pl", "Polonais"], ["tr", "Turc"], ["ru", "Russe"], ["ar", "Arabe"], ["zh", "Chinois"]];
 
@@ -192,8 +193,8 @@ export function Settings({ onBack }: { onBack: () => void }) {
     ...(/^\d+$/.test(port.trim()) ? { port: Number(port.trim()) } : {}),
   }, "Réglages enregistrés.");
 
-  const clearKey = () => {
-    if (confirm("Effacer la clé Claude enregistrée ?")) save({ anthropic_api_key: "" }, "Clé Claude effacée.");
+  const clearKey = async () => {
+    if (await ask.confirm("Effacer la clé Claude enregistrée ?", { title: "Effacer la clé", ok: "Effacer", danger: true })) save({ anthropic_api_key: "" }, "Clé Claude effacée.");
   };
 
   const testKey = async () => {
