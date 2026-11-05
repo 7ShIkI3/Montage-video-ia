@@ -490,7 +490,7 @@ export function Player() {
           <div ref={fxLayer} className="layer fx-layer" />
           {!tl?.clips.length && (
             <div className="frame-empty">
-              Importe tes rushes puis clique sur <b>Monter avec l'IA</b>
+              Importe tes vidéos puis clique sur <b>Monter automatiquement</b>
             </div>
           )}
           {g && cc && cc.masks?.filter((m) => {

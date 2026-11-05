@@ -129,6 +129,26 @@ export function snapTo(t: number, points: number[], pps: number, px = 8): { t: n
 export type LeftTab = "rushes" | "ia" | "versions" | "modeles" | "marque";
 export type RightTab = "consigne" | "inspecteur" | "texte";
 
+/** Espace de travail : largeur des panneaux, hauteur de la timeline, panneaux repliés. Mémorisé dans le navigateur. */
+export interface Layout { left: number; right: number; bottom: number; leftOpen: boolean; rightOpen: boolean }
+export const DEFAULT_LAYOUT: Layout = { left: 360, right: 340, bottom: 268, leftOpen: true, rightOpen: true };
+export const LAYOUT_LIMITS = { left: [240, 640], right: [260, 640], bottom: [150, 0.7] } as const;  // bottom : fraction de la fenêtre
+const LAYOUT_KEY = "monteur.layout";
+function loadLayout(): Layout {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    if (!raw) return DEFAULT_LAYOUT;
+    const l = { ...DEFAULT_LAYOUT, ...JSON.parse(raw) } as Layout;
+    return clampLayout(l);
+  } catch { return DEFAULT_LAYOUT; }
+}
+export function clampLayout(l: Layout): Layout {
+  const k = (v: number, lo: number, hi: number) => Math.round(Math.max(lo, Math.min(hi, v)));
+  const maxBottom = typeof window !== "undefined" ? window.innerHeight * LAYOUT_LIMITS.bottom[1] : 800;
+  return { ...l, left: k(l.left, LAYOUT_LIMITS.left[0], LAYOUT_LIMITS.left[1]), right: k(l.right, LAYOUT_LIMITS.right[0], LAYOUT_LIMITS.right[1]),
+    bottom: k(l.bottom, LAYOUT_LIMITS.bottom[0], Math.max(LAYOUT_LIMITS.bottom[0], maxBottom)) };
+}
+
 export function clipAt(tl: Timeline, t: number): { index: number; start: number } | null {
   const starts = clipStarts(tl);
   for (let i = 0; i < tl.clips.length; i++) {
@@ -162,9 +182,9 @@ export interface RunJobOpts {
 
 /** Libellé français de chaque type de tâche. */
 export const KIND_LABELS: Record<string, string> = {
-  montage: "Montage IA", export: "Export", doublage: "Doublage", traduction: "Traduction des sous-titres",
+  montage: "Montage automatique", export: "Export", doublage: "Doublage", traduction: "Traduction des sous-titres",
   controle: "Contrôle qualité", relecture: "Relecture", shorts: "Shorts", publication: "Kit de publication",
-  voix_ia: "Voix IA", directions: "3 directions", projecteur: "Projecteur voix", commentaires: "Commentaires",
+  voix_ia: "Voix de synthèse", directions: "3 directions", projecteur: "Projecteur voix", commentaires: "Commentaires",
   consigne: "Consigne",
 };
 export const kindLabel = (kind: string) => KIND_LABELS[kind] ?? kind;
@@ -226,6 +246,9 @@ interface State {
   helpOpen: boolean;
   paletteOpen: boolean;
   exportOpen: boolean;
+  layout: Layout;
+  setLayout: (patch: Partial<Layout>) => void;
+  resetLayout: () => void;
   catalog: EffectsCatalog | null;
   item: Sel | null;
   picking: boolean;
@@ -342,6 +365,13 @@ export const useStore = create<State>((set, get) => ({
   paletteOpen: false,
   exportOpen: false,
   loopRange: false,
+  layout: loadLayout(),
+  setLayout: (patch) => {
+    const layout = clampLayout({ ...get().layout, ...patch });
+    set({ layout });
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch { /* navigation privée : non mémorisé */ }
+  },
+  resetLayout: () => get().setLayout(DEFAULT_LAYOUT),
   catalog: null,
   item: null,
   picking: false,

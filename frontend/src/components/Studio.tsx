@@ -72,7 +72,7 @@ export function VersionsPanel() {
       </ul>
       <div className="shorts-box">
         <div className="fx-title">Shorts automatiques</div>
-        <p className="muted small">L'IA cherche les passages les plus partageables, les monte en vertical et leur donne un score viral.</p>
+        <p className="muted small">Cherche les passages les plus partageables, les monte en vertical et leur donne un score.</p>
         <div className="field-row">
           <label>Nombre<select value={count} onChange={(e) => setCount(+e.target.value)}>{[1, 2, 3, 4, 5, 8].map((n) => <option key={n}>{n}</option>)}</select></label>
           <label>Durée<select value={dur} onChange={(e) => setDur(+e.target.value)}>{[15, 30, 45, 60, 90].map((n) => <option key={n} value={n}>{n} s</option>)}</select></label>

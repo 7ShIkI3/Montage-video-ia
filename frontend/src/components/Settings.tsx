@@ -150,7 +150,7 @@ export function Settings({ onBack }: { onBack: () => void }) {
               <header>
                 <div>
                   <h3>Claude</h3>
-                  <p>Le réalisateur IA : consignes libres, traduction, doublage. Sans clé, l'app utilise l'IA locale, plus simple.</p>
+                  <p>Le réalisateur : consignes libres, traduction, doublage, recherche. Sans clé, l'app utilise le moteur local, plus simple.</p>
                 </div>
                 {cfg.anthropic_api_key_set
                   ? <span className="status-chip ok">Clé définie{cfg.anthropic_api_key_hint ? ` · …${cfg.anthropic_api_key_hint.replace(/^[….*•]+/, "")}` : ""} · {source}</span>
@@ -229,7 +229,7 @@ export function Settings({ onBack }: { onBack: () => void }) {
               <header>
                 <div>
                   <h3>Voix</h3>
-                  <p>Pour le doublage et la voix off IA. Piper sonne naturel, espeak est une voix de secours.</p>
+                  <p>Pour le doublage et la voix de synthèse. Piper sonne naturel, espeak est une voix de secours.</p>
                 </div>
               </header>
               {caps && Object.keys(caps.tts ?? {}).length ? (
@@ -272,7 +272,7 @@ export function Settings({ onBack }: { onBack: () => void }) {
                 <div className="sys-grid">
                   <div className="sys-tile"><span>Encodeur</span><b>{caps.encoder}</b></div>
                   <div className="sys-tile"><span>Whisper</span><b>{caps.whisper_model}{caps.whisper_device ? ` · ${caps.whisper_device === "cuda" ? "GPU" : "CPU"}` : ""}</b></div>
-                  <div className="sys-tile"><span>Réalisateur</span><b>{caps.claude ? caps.claude_model : "IA locale"}</b></div>
+                  <div className="sys-tile"><span>Réalisateur</span><b>{caps.claude ? caps.claude_model : "moteur local"}</b></div>
                   <div className="sys-tile"><span>Musiques</span><b>{caps.music_library} morceau{caps.music_library > 1 ? "x" : ""}</b></div>
                 </div>
               ) : <p className="muted small">Le serveur ne répond pas.</p>}

@@ -97,7 +97,7 @@ export function AIPanel() {
       dirty ? "Remonter remplace le montage actuel et tes retouches non enregistrées. Continuer ?"
         : "Remonter remplace le montage actuel. Continuer ?")) return;
     const before = useStore.getState().timeline;
-    await useStore.getState().runJob("Montage IA", async () => {
+    await useStore.getState().runJob("Montage automatique", async () => {
       await api.patchProject(project.id, { settings: settings_ });
       return api.autoEdit(project.id, settings_);
     }, {
@@ -106,14 +106,14 @@ export function AIPanel() {
         await useStore.getState().load(project.id);
         // load() vide l'historique : Ctrl+Z doit pouvoir revenir au montage d'avant.
         useStore.setState({ past: before ? [before] : [], future: [] });
-        notify("Montage terminé. Tu peux le retoucher ou demander des changements à l'IA.");
+        notify("Montage terminé. Retouche-le à la main ou donne une consigne.");
       },
     });
   };
 
   return (
     <section className="panel ai-panel">
-      <header><h3>Réalisation IA</h3></header>
+      <header><h3>Montage automatique</h3></header>
       <div className="styles">
         {STYLES.map((st) => (
           <button key={st.id} className={`style-card ${settings.style === st.id ? "on" : ""}`}
@@ -151,14 +151,14 @@ export function AIPanel() {
         <label><input type="checkbox" checked={settings.auto_effects ?? true} onChange={(e) => set({ auto_effects: e.target.checked })} /> Habillage auto</label>
         <label><input type="checkbox" checked={settings.music} onChange={(e) => set({ music: e.target.checked })} /> Musique de fond</label>
       </div>
-      <label>Consignes pour l'IA <span className="muted small">(facultatif)</span>
+      <label>Consignes <span className="muted small">(facultatif)</span>
         <textarea rows={2} placeholder="Ex. : garde surtout la partie sur le matériel, ton dynamique"
           value={settings.instructions} onChange={(e) => set({ instructions: e.target.value })} />
       </label>
       <ReferencePicker busy={busy} />
       <DirectionsPicker busy={busy} onPick={(d) => { const next = { ...settings, ...d.settings } as EditSettings; setS(next); run(next); }} />
       <button className="primary big" onClick={() => run()} disabled={busy || !project.media.length}>
-        {busy ? "L'IA travaille…" : <><Icon name="sparkles" size={18} strokeWidth={2} />{project.timeline.clips.length ? "Remonter avec l'IA" : "Monter avec l'IA"}</>}
+        {busy ? "Montage en cours…" : <><Icon name="wand" size={18} strokeWidth={2} />{project.timeline.clips.length ? "Remonter" : "Monter automatiquement"}</>}
       </button>
       {busy && job && (
         <div className="progress-row">
@@ -200,7 +200,7 @@ function DirectionsPicker({ busy, onPick }: { busy: boolean; onPick: (d: Directi
             </label>
             <label>Ton
               <select value={tone} onChange={(e) => setTone(e.target.value)}>
-                <option value="auto">Au choix de l'IA</option><option value="fun">Drôle, énergique</option>
+                <option value="auto">Automatique</option><option value="fun">Drôle, énergique</option>
                 <option value="pro">Sérieux, pro</option><option value="emotion">Émouvant</option>
                 <option value="pedago">Pédagogique</option>
               </select>
@@ -217,14 +217,14 @@ function DirectionsPicker({ busy, onPick }: { busy: boolean; onPick: (d: Directi
               <small>{[d.rhythm, d.tone, d.settings.format, d.settings.target_duration ? `${d.settings.target_duration} s` : "durée libre"].filter(Boolean).join(" · ")}</small>
             </button>
           ))}
-          {dirs.length > 0 && <p className="muted small">Clique une direction : l'IA monte seule dans ce sens.</p>}
+          {dirs.length > 0 && <p className="muted small">Clique une direction : le montage se refait dans ce sens.</p>}
         </>
       )}
     </div>
   );
 }
 
-/** « Monte comme cette vidéo » : l'IA copie le rythme d'une vidéo de référence (pas son look). */
+/** « Monte comme cette vidéo » : le montage copie le rythme d'une vidéo de référence (pas son look). */
 function ReferencePicker({ busy }: { busy: boolean }) {
   const project = useStore((s) => s.project);
   const input = useRef<HTMLInputElement>(null);
@@ -253,7 +253,7 @@ function ReferencePicker({ busy }: { busy: boolean }) {
           notify("Référence analysée : le prochain montage suivra son rythme.");
         } catch (err) { notify(`Référence refusée : ${(err as Error).message}`); } finally { setSending(false); }
       }} />
-      <p className="muted small">{ref ? ref.summary : "Dépose un montage que tu aimes : l'IA copiera son rythme (durée des plans, fondus), pas ses couleurs."}</p>
+      <p className="muted small">{ref ? ref.summary : "Dépose un montage que tu aimes : son rythme (durée des plans, fondus) sera copié, pas ses couleurs."}</p>
     </div>
   );
 }

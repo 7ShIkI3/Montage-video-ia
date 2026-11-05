@@ -36,7 +36,7 @@ export const SHORTCUT_GROUPS: { title: string; items: Shortcut[] }[] = [
     { keys: ["Ctrl", "molette"], label: "Zoomer sous la souris" },
     { keys: ["Maj", "Z"], label: "Zoom ajusté : tout le montage" },
     { keys: ["Ctrl", "K"], label: "Palette de commandes" },
-    { keys: ["C"], label: "Écrire un commentaire pour l'IA" },
+    { keys: ["C"], label: "Écrire un commentaire de montage" },
     { keys: ["Échap"], label: "Désélectionner, fermer" },
     { keys: ["?"], label: "Cette aide" },
   ] },

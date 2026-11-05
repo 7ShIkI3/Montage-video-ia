@@ -99,7 +99,7 @@ export function CutoutTools({ c }: { c: Clip }) {
   };
   return (
     <div className="cutout-box">
-      <p className="muted small">L'IA détoure la personne image par image, sans fond vert. Le fond change à l'export.</p>
+      <p className="muted small">La personne est détourée image par image, sans fond vert. Le fond change à l'export.</p>
       {kind === "detourage_image" && (
         <div className="field-row">
           <span className="small">Fond : {tl.background || "aucune image"}</span>
@@ -145,7 +145,7 @@ export function DubPanel() {
   const current = tl.dub_language ? langs.find((l) => l.code === tl.dub_language)?.name ?? tl.dub_language : null;
   return (
     <div className="fx-section">
-      <div className="fx-title">Doublage IA</div>
+      <div className="fx-title">Doublage</div>
       {current && <p className="small">Doublé en <b>{current}</b> · {(tl.audio ?? []).filter((a) => a.dub).length} phrase(s)</p>}
       <Gate reason={needClaude(caps)}>
         <div className="field-row">
@@ -193,16 +193,16 @@ export function AIVoiceoverPanel() {
   }, []);
   if (!project) return null;
   const voiceReason = needVoice(caps, lang);
-  const run = () => useStore.getState().runJob("Voix off IA", () => api.voiceover(project.id, text, playhead, lang), {
+  const run = () => useStore.getState().runJob("Voix de synthèse", () => api.voiceover(project.id, text, playhead, lang), {
     timeline: true,
     onDone: (done) => {
-      useStore.getState().notify(done.message || "Voix off IA posée.");
+      useStore.getState().notify(done.message || "Voix de synthèse posée.");
       setText("");
     },
   });
   return (
     <div className="fx-section">
-      <div className="fx-title">Voix off IA</div>
+      <div className="fx-title">Voix de synthèse</div>
       <textarea rows={3} placeholder="Texte à lire, par exemple : Et maintenant, le moment que vous attendiez."
         value={text} maxLength={2000} onChange={(e) => setText(e.target.value)} />
       <div className="field-row">
