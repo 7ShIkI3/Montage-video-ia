@@ -204,6 +204,7 @@ interface State {
   rightTab: RightTab;
   helpOpen: boolean;
   paletteOpen: boolean;
+  exportOpen: boolean;
   catalog: EffectsCatalog | null;
   item: Sel | null;
   picking: boolean;
@@ -242,6 +243,7 @@ interface State {
   setRightTab: (t: RightTab) => void;
   setHelp: (open: boolean) => void;
   setPalette: (open: boolean) => void;
+  setExportOpen: (open: boolean) => void;
   /** Curseur sur le plan précédent (-1) ou suivant (+1), qui devient sélectionné. */
   jumpClip: (dir: -1 | 1) => void;
   /** Copie du plan insérée juste après lui. */
@@ -305,6 +307,7 @@ export const useStore = create<State>((set, get) => ({
   rightTab: "consigne",
   helpOpen: false,
   paletteOpen: false,
+  exportOpen: false,
   catalog: null,
   item: null,
   picking: false,
@@ -449,6 +452,7 @@ export const useStore = create<State>((set, get) => ({
   setRightTab: (t) => set({ rightTab: t }),
   setHelp: (open) => set({ helpOpen: open, paletteOpen: open ? false : get().paletteOpen }),
   setPalette: (open) => set({ paletteOpen: open, helpOpen: open ? false : get().helpOpen }),
+  setExportOpen: (open) => set({ exportOpen: open }),
   jumpClip: (dir) => {
     const { timeline, playhead } = get();
     if (!timeline?.clips.length) return;
