@@ -1,8 +1,91 @@
 // Réglages : clé Claude, transcription (GPU/CPU, modèle, langue), voix de synthèse, serveur et état du système.
 import { useEffect, useState } from "react";
-import { api, Settings as ServerSettings } from "../api";
+import { api, Job, ModelsStatus, PiperVoice, Settings as ServerSettings } from "../api";
 import { Icon } from "../icons";
 import { useStore } from "../store";
+import { JobLine, runStandaloneJob } from "./Library";
+
+const PIPER_LANGS = [["fr", "Français"], ["en", "Anglais"], ["es", "Espagnol"], ["de", "Allemand"], ["it", "Italien"], ["pt", "Portugais"], ["nl", "Néerlandais"], ["pl", "Polonais"], ["tr", "Turc"], ["ru", "Russe"], ["ar", "Arabe"], ["zh", "Chinois"]];
+
+/** Modèles Whisper : lesquels sont déjà sur le disque, téléchargement à l'avance. */
+function WhisperModels({ onChanged }: { onChanged: () => void }) {
+  const [models, setModels] = useState<ModelsStatus["whisper"] | null>(null);
+  const [job, setJob] = useState<Job | null>(null);
+  const [which, setWhich] = useState<string | null>(null);
+  const refresh = () => api.models().then((m) => setModels(m.whisper)).catch(() => setModels([]));
+  useEffect(() => { refresh(); }, []);
+  const download = async (size: string) => {
+    setWhich(size);
+    const done = await runStandaloneJob(`Whisper ${size}`, () => api.downloadWhisper(size), setJob);
+    setJob(null);
+    setWhich(null);
+    if (done) { useStore.getState().notify(`Whisper ${size} téléchargé.`, { level: "ok" }); await refresh(); onChanged(); }
+  };
+  if (!models) return <p className="muted small">État des modèles…</p>;
+  return (
+    <div>
+      <table className="settings-table model-table">
+        <thead><tr><th>Modèle</th><th className="right">Taille</th><th className="right">État</th></tr></thead>
+        <tbody>
+          {models.map((m) => (
+            <tr key={m.size}>
+              <td>{m.size}{m.current ? <span className="muted small"> · en service</span> : ""}</td>
+              <td className="right">{m.approx_mb >= 1000 ? `${(m.approx_mb / 1000).toFixed(1)} Go` : `${m.approx_mb} Mo`}</td>
+              <td className="right">{m.downloaded ? <span className="ok"><Icon name="check" size={13} strokeWidth={3} /> téléchargé</span>
+                : <button className="small-btn" disabled={!!which} onClick={() => download(m.size)}>{which === m.size ? "…" : "Télécharger"}</button>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <JobLine job={job} />
+      <p className="muted small" style={{ margin: "6px 0 0" }}>Un modèle absent est téléchargé au premier usage ; le faire ici évite d'attendre pendant un montage. Les modèles viennent de Hugging Face (Systran/faster-whisper).</p>
+    </div>
+  );
+}
+
+/** Voix Piper par langue : catalogue Hugging Face, téléchargement dans le dossier des voix. */
+function PiperVoices({ runtime, onChanged }: { runtime: boolean; onChanged: () => void }) {
+  const [lang, setLang] = useState("fr");
+  const [voices, setVoices] = useState<PiperVoice[] | null>(null);
+  const [job, setJob] = useState<Job | null>(null);
+  const [which, setWhich] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const refresh = (l = lang) => { setVoices(null); setError(null); api.piperCatalog(l).then(setVoices).catch((e) => { setError((e as Error).message); setVoices([]); }); };
+  useEffect(() => { refresh(lang); }, [lang]);  // eslint-disable-line
+  const download = async (v: PiperVoice) => {
+    setWhich(v.key);
+    const done = await runStandaloneJob(`Voix ${v.name}`, () => api.downloadPiper(v.key), setJob);
+    setJob(null);
+    setWhich(null);
+    if (done) { useStore.getState().notify(`Voix ${v.key} installée.`, { level: "ok" }); refresh(); onChanged(); }
+  };
+  return (
+    <div>
+      <div className="field-row" style={{ gridTemplateColumns: "200px 1fr", alignItems: "end" }}>
+        <label>Langue<select value={lang} onChange={(e) => setLang(e.target.value)}>{PIPER_LANGS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>
+        <p className="muted small" style={{ margin: 0 }}>{runtime ? "Piper est prêt : une voix téléchargée est utilisée dès le prochain doublage ou voix de synthèse." : "Piper n'est pas installé dans cette version : les voix téléchargées serviront une fois Piper présent."}</p>
+      </div>
+      {error && <p className="warn small">{error}</p>}
+      {voices === null ? <p className="muted small">Catalogue…</p> : !voices.length ? <p className="muted small">Aucune voix pour cette langue.</p> : (
+        <table className="settings-table model-table">
+          <thead><tr><th>Voix</th><th>Qualité</th><th className="right">Taille</th><th className="right">État</th></tr></thead>
+          <tbody>
+            {voices.map((v) => (
+              <tr key={v.key}>
+                <td>{v.name}{v.region ? <span className="muted small"> · {v.region}</span> : ""}{v.speakers > 1 ? <span className="muted small"> · {v.speakers} voix</span> : ""}</td>
+                <td>{v.quality}</td>
+                <td className="right">{v.approx_mb ? `${v.approx_mb} Mo` : "—"}</td>
+                <td className="right">{v.installed ? <span className="ok"><Icon name="check" size={13} strokeWidth={3} /> installée</span>
+                  : <button className="small-btn" disabled={!!which} onClick={() => download(v)}>{which === v.key ? "…" : "Télécharger"}</button>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <JobLine job={job} />
+    </div>
+  );
+}
 
 const CLAUDE_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
 const EFFORTS = ["low", "medium", "high", "max"];
@@ -52,6 +135,9 @@ export function Settings({ onBack }: { onBack: () => void }) {
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
   const [section, setSection] = useState("claude");
+  const [piperRuntime, setPiperRuntime] = useState(false);
+  const [voicesDir, setVoicesDir] = useState("");
+  useEffect(() => { api.models().then((m) => { setPiperRuntime(m.piper.runtime); setVoicesDir(m.piper.voices_dir); }).catch(() => undefined); }, []);
 
   const fill = (c: ServerSettings) => {
     setCfg(c);
@@ -223,6 +309,8 @@ export function Settings({ onBack }: { onBack: () => void }) {
               </div>
               <p className="muted small" style={{ margin: 0 }}>Auto prend le GPU NVIDIA s'il fonctionne, sinon le processeur. Un modèle plus gros comprend mieux mais est plus lent. Langue vide : détection automatique.</p>
               <div className="row-btns">{saveBtn}</div>
+              <h4 style={{ margin: "18px 0 8px" }}>Modèles sur le disque</h4>
+              <WhisperModels onChanged={() => useStore.getState().refreshCaps()} />
             </section>
 
             <section id="voix" className="settings-section">
@@ -248,7 +336,9 @@ export function Settings({ onBack }: { onBack: () => void }) {
                   </table>
                 </div>
               ) : <p className="muted small">État des voix indisponible.</p>}
-              <p className="muted small" style={{ margin: 0 }}>Ajoute une voix Piper (<code>&lt;langue&gt;*.onnx</code>) dans le dossier des voix pour un rendu naturel.</p>
+              <h4 style={{ margin: "18px 0 8px" }}>Télécharger une voix naturelle (Piper)</h4>
+              <PiperVoices runtime={piperRuntime} onChanged={() => useStore.getState().refreshCaps()} />
+              <p className="muted small" style={{ margin: 0 }}>Les voix sont rangées dans {voicesDir || "le dossier des voix"} ; tu peux aussi y déposer un fichier <code>&lt;langue&gt;*.onnx</code> avec son <code>.json</code>.</p>
             </section>
 
             <section id="serveur" className="settings-section">

@@ -8,3 +8,5 @@ faster-whisper>=1.1
 opencv-python-headless>=4.8,<5
 pillow>=10.1
 ai-edge-litert>=1.2
+yt-dlp>=2025.1
+piper-tts>=1.3

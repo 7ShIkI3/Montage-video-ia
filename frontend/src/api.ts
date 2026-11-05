@@ -441,6 +441,23 @@ export interface Settings {
   env_overrides: string[];
 }
 
+export interface LibraryTrack {
+  name: string; path: string; size: number; title?: string | null; artist?: string | null; license?: string | null;
+  license_url?: string | null; source?: string | null; page?: string | null;
+}
+export interface MusicResult {
+  id: string; title: string; artist: string; license: string; license_url: string; page: string; download_url: string;
+  duration?: string; bpm?: number | null; tags?: string[]; size?: string; filename?: string;
+}
+export interface ModelsStatus {
+  whisper: { size: string; approx_mb: number; downloaded: boolean; current: boolean }[];
+  piper: { runtime: boolean; voices_dir: string; installed: string[] };
+}
+export interface PiperVoice {
+  key: string; name: string; quality: string; lang: string; lang_name?: string; region?: string; speakers: number;
+  approx_mb: number | null; installed: boolean;
+}
+
 /** Corps partiel de PUT /api/settings ("" efface la clé Claude). */
 export type SettingsPatch = Partial<Pick<Settings, "claude_model" | "claude_effort" | "whisper_model" | "whisper_device" | "whisper_language" | "port">>
   & { anthropic_api_key?: string };
@@ -534,6 +551,18 @@ export const api = {
     fd.append("file", file);
     return req<MusicSettings>(`/api/projects/${id}/music`, { method: "POST", body: fd });
   },
+  // Téléchargements : liens (yt-dlp), bibliothèque musicale, musiques libres (ccMixter), modèles.
+  importUrl: (id: string, url: string) => req<Job>(`/api/projects/${id}/media/url`, json("POST", { url })),
+  referenceUrl: (id: string, url: string) => req<Job>(`/api/projects/${id}/reference/url`, json("POST", { url })),
+  musicLibrary: () => req<LibraryTrack[]>("/api/music/library"),
+  musicSearch: (q: string, limit = 20) => req<MusicResult[]>(`/api/music/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+  musicDownload: (item: MusicResult) => req<Job>("/api/music/download", json("POST", item)),
+  musicFromUrl: (url: string) => req<Job>("/api/music/url", json("POST", { url })),
+  musicDelete: (name: string) => req<{ ok: boolean }>(`/api/music/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  models: () => req<ModelsStatus>("/api/models"),
+  downloadWhisper: (size: string) => req<Job>(`/api/models/whisper/${encodeURIComponent(size)}`, { method: "POST" }),
+  piperCatalog: (lang: string) => req<PiperVoice[]>(`/api/models/piper?lang=${encodeURIComponent(lang)}`),
+  downloadPiper: (key: string) => req<Job>(`/api/models/piper/${encodeURIComponent(key)}`, { method: "POST" }),
   export: (id: string, quality: string, fps: number | null = null, smooth = false, rangeOnly = false) =>
     req<Job>(`/api/projects/${id}/export`, json("POST", { quality, fps, smooth, range_only: rangeOnly })),
   applyComments: (id: string) => req<Job>(`/api/projects/${id}/comments/apply`, { method: "POST" }),

@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { api, Direction, EditSettings, fmtTime, Style } from "../api";
-import { useStore } from "../store";
+import { isBusy, useStore } from "../store";
 import { Icon } from "../icons";
+import { UrlImport } from "./Library";
 
 const STYLES: { id: Style; name: string; desc: string }[] = [
   { id: "youtube", name: "YouTube", desc: "Rythme soutenu, coupes franches" },
@@ -17,6 +18,7 @@ export function MediaPanel() {
   const input = useRef<HTMLInputElement>(null);
   const [upload, setUpload] = useState<number | null>(null);
   const [over, setOver] = useState(false);
+  const downloading = useStore((s) => isBusy(s, "telechargement"));
   if (!project) return null;
 
   const send = async (files: File[]) => {
@@ -46,6 +48,10 @@ export function MediaPanel() {
       {upload !== null && (
         <div className="progress"><div style={{ width: `${upload * 100}%` }} /><span>Envoi {Math.round(upload * 100)} %</span></div>
       )}
+      <UrlImport placeholder="Lien d'une vidéo (YouTube, Vimeo, fichier…)" busy={downloading}
+        onSubmit={(url) => useStore.getState().runJob("Téléchargement", () => api.importUrl(project.id, url), {
+          onDone: (j) => notify(`Importé : ${(j.result as { filename?: string })?.filename ?? "vidéo"}`, { level: "ok" }),
+        })} />
       {!project.media.length && upload === null && (
         <div className="dropzone" onClick={() => input.current?.click()}>
           Glisse tes vidéos ici<br /><span className="muted small">MP4, MOV, MKV, WEBM… plusieurs fichiers possibles</span>
@@ -253,6 +259,10 @@ function ReferencePicker({ busy }: { busy: boolean }) {
           notify("Référence analysée : le prochain montage suivra son rythme.");
         } catch (err) { notify(`Référence refusée : ${(err as Error).message}`); } finally { setSending(false); }
       }} />
+      <UrlImport placeholder="Ou le lien d'une vidéo dont copier le rythme" busy={busy || sending}
+        onSubmit={(url) => useStore.getState().runJob("Référence", () => api.referenceUrl(project.id, url), {
+          onDone: () => notify("Référence analysée : le prochain montage suivra son rythme."),
+        })} />
       <p className="muted small">{ref ? ref.summary : "Dépose un montage que tu aimes : son rythme (durée des plans, fondus) sera copié, pas ses couleurs."}</p>
     </div>
   );
