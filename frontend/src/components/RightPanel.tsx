@@ -28,7 +28,7 @@ export function CommandBar() {
         // La consigne IA devient une étape annulable comme une retouche manuelle.
         if (before) useStore.setState((s) => ({ past: [...s.past, before], future: [] }));
         const r = done.result as { message?: string } | null;
-        useStore.getState().notify(r?.message ? `IA : ${r.message}` : "Consigne appliquée.");
+        useStore.getState().notify(r?.message ? `Consigne : ${r.message}` : "Consigne appliquée.");
         setText("");
       },
     });
@@ -36,7 +36,7 @@ export function CommandBar() {
 
   return (
     <section className="panel command">
-      <header><h3>Demande à l'IA</h3></header>
+      <header><h3>Consigne</h3></header>
       <form onSubmit={(e) => { e.preventDefault(); send(text); }}>
         <textarea rows={2} value={text} placeholder="Décris le changement voulu…" disabled={busy}
           onChange={(e) => setText(e.target.value)}
@@ -45,7 +45,7 @@ export function CommandBar() {
           {busy && job?.kind === "consigne" ? "…" : "Appliquer"}
         </button>
       </form>
-      <CapHint reason={caps && !caps.claude ? "Sans Claude, seules les consignes simples (durée, format, sous-titres, musique, zooms…) sont comprises." : null} />
+      <CapHint reason={caps && !caps.claude ? "Sans clé Claude (Réglages), seules les consignes simples sont comprises : durée, format, sous-titres, musique, zooms…" : null} />
       <div className="chips">
         {examples.map((x) => <button key={x} className="chip" onClick={() => setText(x)}>{x}</button>)}
       </div>
@@ -53,7 +53,7 @@ export function CommandBar() {
   );
 }
 
-// Commentaires de montage : posés à un instant (ou sur tout le montage), l'IA les lit et les applique.
+// Commentaires de montage : posés à un instant (ou sur tout le montage), appliqués en une passe.
 export function CommentsPanel() {
   const project = useStore((s) => s.project);
   const tl = useStore((s) => s.timeline);
@@ -83,7 +83,7 @@ export function CommentsPanel() {
       timeline: true,
       onDone: (done) => {
         if (before) useStore.setState((s) => ({ past: [...s.past, before], future: [] }));
-        useStore.getState().notify(`IA : ${(done.result as { message?: string })?.message ?? "commentaires appliqués"}.`);
+        useStore.getState().notify(`Commentaires : ${(done.result as { message?: string })?.message ?? "appliqués"}.`);
       },
     });
   };
@@ -92,7 +92,7 @@ export function CommentsPanel() {
   return (
     <section className="panel comments">
       <header>
-        <h3>Commentaires pour l'IA</h3>
+        <h3>Commentaires de montage</h3>
         <span className="muted small">{open.length} en attente</span>
       </header>
       <textarea id="comment-box" rows={2} value={text} disabled={busy}
@@ -135,16 +135,16 @@ export function CommentsPanel() {
                   <button className="link" title="Supprimer" onClick={(e) => { e.stopPropagation(); deleteItem("comment", c.id); }} aria-label="Supprimer"><Icon name="x" size={13} /></button>
                 </div>
                 <div>{c.region && <span className="zone-tag" title="Commentaire sur une zone de l'image"><Icon name="square" size={11} strokeWidth={2.4} /></span>} {c.text}</div>
-                {c.reply && <div className="cm-reply">IA : {c.reply}</div>}
+                {c.reply && <div className="cm-reply">Réponse : {c.reply}</div>}
               </li>
             );
           })}
         </ul>
       )}
       <button className="primary" disabled={!open.length || busy} onClick={apply}>
-        {busy && job?.kind === "commentaires" ? "L'IA applique…" : `Appliquer les commentaires (${open.length})`}
+        {busy && job?.kind === "commentaires" ? "Application…" : `Appliquer les commentaires (${open.length})`}
       </button>
-      <p className="muted small">Les commentaires restent attachés au moment filmé : l'IA les respecte aussi quand elle refait tout le montage.</p>
+      <p className="muted small">Les commentaires restent attachés au moment filmé : ils sont respectés même quand tout le montage est refait.</p>
     </section>
   );
 }
@@ -168,7 +168,7 @@ export function Inspector() {
       {c ? (
         <>
           <header><h3>Plan sélectionné</h3></header>
-          <p className="why"><b>Pourquoi l'IA l'a gardé :</b> {c.reason || "—"}</p>
+          <p className="why"><b>Pourquoi ce plan est gardé :</b> {c.reason || "—"}</p>
           {segText(c.segment_id) && <p className="quote">« {segText(c.segment_id)} »</p>}
           <div className="score-row">Score <div className="bar"><div style={{ width: `${c.score * 100}%` }} /></div> {Math.round(c.score * 100)}</div>
           <div className="field-row">
@@ -213,9 +213,9 @@ export function Inspector() {
           {tl.title && <p className="title">{tl.title}</p>}
           <p className="muted small">{tl.summary || "Aucun montage pour l'instant."}</p>
           {tl.director && (
-            <p className="muted small">Réalisé par : {tl.director === "claude" ? "Claude (IA)" : "moteur local"}</p>
+            <p className="muted small">Réalisé par : {tl.director === "claude" ? "Claude" : "moteur local"}</p>
           )}
-          <p className="muted small">Clique un plan dans la timeline pour voir pourquoi l'IA l'a choisi.</p>
+          <p className="muted small">Clique un plan dans la timeline pour voir pourquoi il a été choisi.</p>
           <PlanPanel />
           <QualityPanel />
           <div className="field-row">
@@ -268,7 +268,7 @@ export function Inspector() {
       {tl.rejected.length > 0 && (
         <div className="rejected">
           <button className="link" onClick={() => setShowRejected(!showRejected)}>
-            <Icon name={showRejected ? "chevron-down" : "chevron-right"} size={13} /> Passages écartés par l'IA ({tl.rejected.length})
+            <Icon name={showRejected ? "chevron-down" : "chevron-right"} size={13} /> Passages écartés ({tl.rejected.length})
           </button>
           {showRejected && (
             <ul>
@@ -339,7 +339,7 @@ function ClipEffects({ c, catalog }: { c: Clip; catalog: EffectsCatalog }) {
 }
 
 const GROUP_LABELS: Record<string, string> = {
-  couleur: "Couleur", style: "Style", mouvement: "Mouvement", "3d": "3D", ia: "Détourage IA (sans fond vert)",
+  couleur: "Couleur", style: "Style", mouvement: "Mouvement", "3d": "3D", ia: "Détourage (sans fond vert)",
 };
 
 function GlobalFx({ tl, catalog }: { tl: Timeline; catalog: EffectsCatalog }) {
@@ -660,7 +660,7 @@ export function TranscriptPanel() {
 
   if (!tl || !project) return null;
   if (!Object.keys(transcripts).length)
-    return <section className="panel transcript"><header><h3>Texte</h3></header><p className="muted small">La transcription apparaîtra après le montage IA.</p></section>;
+    return <section className="panel transcript"><header><h3>Texte</h3></header><p className="muted small">La transcription apparaîtra après le montage automatique.</p></section>;
 
   const cut = () => {
     if (!sel) return;

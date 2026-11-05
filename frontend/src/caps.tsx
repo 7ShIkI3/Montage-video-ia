@@ -4,7 +4,7 @@ import type { Health } from "./api";
 
 /** Raison pour laquelle une fonction qui exige Claude est indisponible (null si elle l'est, ou si l'état est encore inconnu). */
 export function needClaude(caps: Health | null): string | null {
-  return caps && !caps.claude ? "Nécessite Claude : ajoute ta clé dans Réglages" : null;
+  return caps && !caps.claude ? "Nécessite une clé Claude : ajoute-la dans Réglages" : null;
 }
 
 /** Raison pour laquelle aucune voix de synthèse n'est disponible dans cette langue. */

@@ -80,6 +80,9 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
 
 ## L'éditeur
 
+- Espace de travail modulable : panneaux de gauche et de droite redimensionnables par leurs poignées (double-clic :
+  taille par défaut) et repliables, hauteur de la timeline réglable, barre d'état en bas (moteurs, position, zoom,
+  zone). Tout est mémorisé dans le navigateur ; « Espace de travail par défaut » remet tout en place.
 - Lecture de la timeline en direct (sans rendu), sous-titres en surimpression, aperçu du format.
 - Timeline : glisser-déposer pour réordonner, poignées pour raccourcir, `S` pour couper, `Suppr`,
   `Ctrl+Z` / `Ctrl+Y`, zoom, forme d'onde. Aimantation aux frontières des plans, au curseur et aux repères

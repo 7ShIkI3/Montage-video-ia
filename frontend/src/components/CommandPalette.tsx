@@ -1,4 +1,4 @@
-// Palette de commandes (Ctrl+K) : toute action de l'éditeur au clavier ; sans correspondance, le texte part en consigne à l'IA.
+// Palette de commandes (Ctrl+K) : toute action de l'éditeur au clavier ; sans correspondance, le texte devient une consigne de montage.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { Icon, IconName } from "../icons";
@@ -55,7 +55,7 @@ function commands(): Command[] {
     { id: "cap-classic", group: "Format", label: "Sous-titres classiques", run: () => s.setTimelineProps({ captions: "classique" }) },
     { id: "cap-none", group: "Format", label: "Sans sous-titres", alt: "aucun", run: () => s.setTimelineProps({ captions: "aucun" }) },
     { id: "tab-rushes", group: "Ouvrir", label: "Rushes", icon: "film", alt: "import vidéos médias", run: () => s.setLeftTab("rushes") },
-    { id: "tab-ia", group: "Ouvrir", label: "Réalisation IA", icon: "sparkles", alt: "monter style durée", run: () => s.setLeftTab("ia") },
+    { id: "tab-ia", group: "Ouvrir", label: "Montage automatique", icon: "wand", alt: "monter style durée ia", run: () => s.setLeftTab("ia") },
     { id: "tab-versions", group: "Ouvrir", label: "Versions et shorts", icon: "branch", run: () => s.setLeftTab("versions") },
     { id: "tab-modeles", group: "Ouvrir", label: "Modèles de style", icon: "grid", run: () => s.setLeftTab("modeles") },
     { id: "tab-marque", group: "Ouvrir", label: "Identité de marque", icon: "palette", alt: "logo couleurs", run: () => s.setLeftTab("marque") },
@@ -70,6 +70,9 @@ function commands(): Command[] {
     { id: "zoom-in", group: "Affichage", label: "Zoomer la timeline", keys: ["+"], run: () => s.setZoom(s.pxPerSec * 1.25) },
     { id: "zoom-out", group: "Affichage", label: "Dézoomer la timeline", keys: ["-"], run: () => s.setZoom(s.pxPerSec / 1.25) },
     { id: "help", group: "Affichage", label: "Raccourcis clavier", keys: ["?"], run: () => s.setHelp(true) },
+    { id: "panel-left", group: "Affichage", label: s.layout.leftOpen ? "Replier le panneau de gauche" : "Afficher le panneau de gauche", icon: "panel-left", alt: "panneau masquer", run: () => s.setLayout({ leftOpen: !s.layout.leftOpen }) },
+    { id: "panel-right", group: "Affichage", label: s.layout.rightOpen ? "Replier le panneau de droite" : "Afficher le panneau de droite", icon: "panel-right", alt: "panneau masquer inspecteur", run: () => s.setLayout({ rightOpen: !s.layout.rightOpen }) },
+    { id: "layout-reset", group: "Affichage", label: "Espace de travail par défaut", icon: "layout", alt: "panneaux taille réinitialiser", run: () => s.resetLayout() },
   ];
 }
 
@@ -118,7 +121,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       onDone: (done) => {
         if (before) useStore.setState((x) => ({ past: [...x.past, before], future: [] }));
         const r = done.result as { message?: string } | null;
-        useStore.getState().notify(r?.message ? `IA : ${r.message}` : "Consigne appliquée.");
+        useStore.getState().notify(r?.message ? `Consigne : ${r.message}` : "Consigne appliquée.");
       },
     });
   };
@@ -141,7 +144,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       <div className="modal palette" role="dialog" aria-modal="true" aria-label="Palette de commandes">
         <div className="palette-input">
           <Icon name="search" size={18} />
-          <input ref={input} value={q} placeholder="Une action, ou une consigne pour l'IA : « fais une version de 30 secondes »" aria-label="Commande"
+          <input ref={input} value={q} placeholder="Une action, ou une consigne : « fais une version de 30 secondes »" aria-label="Commande"
             onChange={(e) => setQ(e.target.value)} onKeyDown={onKey} spellCheck={false} />
           <Kbd k="Échap" />
         </div>
@@ -152,8 +155,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
             <li key="ai" data-i={row.i} role="option" aria-selected={cursor === row.i} className={`palette-row ai ${cursor === row.i ? "on" : ""}`}
               onMouseEnter={() => setCursor(row.i)} onMouseDown={(e) => { e.preventDefault(); pick(row.i); }}>
               <span className="palette-icon"><Icon name="sparkles" size={16} /></span>
-              <span className="palette-label">Demander à l'IA : « {q.trim()} »</span>
-              <span className="palette-hint">{caps && !caps.claude ? "IA locale : consignes simples" : "Claude"}</span>
+              <span className="palette-label">Consigne : « {q.trim()} »</span>
+              <span className="palette-hint">{caps && !caps.claude ? "Moteur local : consignes simples" : "Claude"}</span>
             </li>
           ) : (
             <li key={row.c.id} data-i={row.i} role="option" aria-selected={cursor === row.i} className={`palette-row ${cursor === row.i ? "on" : ""}`}
@@ -163,7 +166,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
               {row.c.keys && <span className="palette-keys">{row.c.keys.map((k, j) => <Kbd key={j} k={k} />)}</span>}
             </li>
           ))}
-          {!rows.length && <li className="palette-empty">Aucune commande. Importe une vidéo et monte-la pour envoyer des consignes à l'IA.</li>}
+          {!rows.length && <li className="palette-empty">Aucune commande. Importe une vidéo et monte-la pour donner des consignes.</li>}
         </ul>
       </div>
     </div>

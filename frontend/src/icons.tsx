@@ -41,6 +41,14 @@ const PATHS: Record<string, string> = {
   music: "M9 18V5l12-2v13M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 19a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
   square: "M4 4h16v16H4z",
   dot: "M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0-6 0",
+  "panel-left": "M3 5h18v14H3zM9 5v14",
+  "panel-right": "M3 5h18v14H3zM15 5v14",
+  "panel-bottom": "M3 5h18v14H3zM3 14h18",
+  wand: "M15 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1zM5 5l.6 1.4L7 7l-1.4.6L5 9l-.6-1.4L3 7l1.4-.6zM19 13l.6 1.4L21 15l-1.4.6L19 17l-.6-1.4L17 15l1.4-.6zM13.5 10.5L3 21M11 8l5 5",
+  folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+  layout: "M3 5h18v14H3zM3 10h18M9 10v9",
+  globe: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18",
+  link: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
 };
 
 export type IconName = keyof typeof PATHS;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, fmtTime } from "../api";
 import { Icon, IconName } from "../icons";
-import { isBusy, jobOf, LeftTab, RightTab, useStore } from "../store";
+import { DEFAULT_LAYOUT, isBusy, jobOf, LeftTab, RightTab, useStore } from "../store";
 import { Shortcuts } from "./Shortcuts";
 import { CommandPalette } from "./CommandPalette";
 import { AIPanel, MediaPanel } from "./LeftPanel";
@@ -98,7 +98,7 @@ function PublishKitPanel() {
     <div className="export-alt kit">
       <h4>Kit de publication</h4>
       <p className="muted small">Titres, description avec chapitres, hashtags et miniature, prêts à coller sur YouTube ou TikTok.</p>
-      <button disabled={busy} onClick={gen}>{busy ? "L'IA rédige…" : <><Icon name="sparkles" />{kit ? "Régénérer" : "Générer le kit"}</>}</button>
+      <button disabled={busy} onClick={gen}>{busy ? "Rédaction…" : <><Icon name="pencil" />{kit ? "Régénérer" : "Générer le kit"}</>}</button>
       {kit && (
         <>
           <a href={api.exportUrl(project.id, kit.thumbnail)} download>
@@ -109,7 +109,7 @@ function PublishKitPanel() {
           </ul>
           <textarea rows={6} readOnly value={kit.description} />
           <button className="small-btn" onClick={() => copy(kit.description)}>Copier la description</button>
-          <p className="muted small">Rédigé par : {kit.by === "claude" ? "Claude (IA)" : "moteur local"}</p>
+          <p className="muted small">Rédigé par : {kit.by === "claude" ? "Claude" : "moteur local"}</p>
         </>
       )}
     </div>
@@ -190,7 +190,7 @@ function ExportButton() {
           {wantFps > srcFps + 1 && (
             <label className="inline">
               <input type="checkbox" checked={smooth} onChange={(e) => setSmooth(e.target.checked)} />
-              Fluidité IA : créer les images manquantes ({srcFps} → {wantFps} i/s, rendu plus long)
+              Interpolation : créer les images manquantes ({srcFps} → {wantFps} i/s, rendu plus long)
             </label>
           )}
           {range && (
@@ -207,7 +207,7 @@ function ExportButton() {
           {last && <p><a href={api.exportUrl(project.id, last)} download>Télécharger « {last} »</a></p>}
           <div className="export-alt">
             <h4>Finir dans un logiciel pro</h4>
-            <p className="muted small">Le montage de l'IA en XML, avec repères pour les textes, bruitages et B-roll.</p>
+            <p className="muted small">Le montage en XML, avec repères pour les textes, bruitages et B-roll.</p>
             <div className="row-btns">
               <a className="btn" href={api.xmlUrl(project.id)} download onClick={saveFirst}>XML Premiere · Resolve · Final Cut</a>
               <a className="btn" href={api.srtUrl(project.id)} download onClick={saveFirst}>Sous-titres .srt</a>
@@ -232,8 +232,8 @@ function ExportButton() {
 }
 
 const LEFT_TABS: { id: LeftTab; label: string; icon: IconName }[] = [
-  { id: "rushes", label: "Rushes", icon: "film" },
-  { id: "ia", label: "Réalisation IA", icon: "sparkles" },
+  { id: "rushes", label: "Médias", icon: "film" },
+  { id: "ia", label: "Montage automatique", icon: "wand" },
   { id: "versions", label: "Versions et shorts", icon: "branch" },
   { id: "modeles", label: "Modèles de style", icon: "grid" },
   { id: "marque", label: "Identité de marque", icon: "palette" },
@@ -242,10 +242,60 @@ const RIGHT_TABS: { id: RightTab; label: string }[] = [
   { id: "consigne", label: "Consigne" }, { id: "inspecteur", label: "Inspecteur" }, { id: "texte", label: "Texte" },
 ];
 
+/** Poignée de redimensionnement d'un panneau (glisser ; double-clic : taille par défaut). */
+function Splitter({ dir, onDrag, onReset, label }: { dir: "v" | "h"; onDrag: (delta: number, first: boolean) => void; onReset: () => void; label: string }) {
+  const start = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const x0 = e.clientX, y0 = e.clientY;
+    let first = true;
+    document.body.classList.add(dir === "v" ? "resizing-v" : "resizing-h");
+    const move = (ev: MouseEvent) => { onDrag(dir === "v" ? ev.clientX - x0 : ev.clientY - y0, first); first = false; };
+    const up = () => {
+      document.body.classList.remove("resizing-v", "resizing-h");
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+  return <div className={`splitter ${dir}`} role="separator" aria-label={label} aria-orientation={dir === "v" ? "vertical" : "horizontal"}
+    title={`${label} (double-clic : taille par défaut)`} onMouseDown={start} onDoubleClick={onReset} />;
+}
+
+/** Barre d'état : moteurs, position, zoom, espace de travail. */
+function StatusBar() {
+  const health = useStore((s) => s.caps);
+  const playhead = useStore((s) => s.playhead);
+  const pps = useStore((s) => s.pxPerSec);
+  const range = useStore((s) => s.timeline?.range ?? null);
+  const layout = useStore((s) => s.layout);
+  const { setLayout, resetLayout } = useStore.getState();
+  const whisper = health ? `Whisper ${health.whisper_model}${health.whisper_device ? ` · ${health.whisper_device === "cuda" ? "GPU" : "CPU"}` : health.cuda ? " · GPU prêt" : ""}` : "";
+  return (
+    <footer className="statusbar">
+      {health && (
+        <a href="#/reglages" className={`status-item ${health.claude ? "" : "warn"}`} title={health.claude ? `Réalisateur : ${health.claude_model}. Ouvrir les réglages.` : "Sans clé Claude : consignes simples, moteur local. Ouvrir les réglages."}>
+          <span className={`led ${health.claude ? "ok" : "warn"}`} />{health.claude ? health.claude_model : "Moteur local"}
+        </a>
+      )}
+      {health && <span className="status-item" title="Transcription">{whisper}</span>}
+      {health && <span className="status-item" title="Encodeur vidéo">{health.encoder}</span>}
+      <span className="spacer" />
+      {range && <span className="status-item accent" title="Zone d'entrée/sortie">Zone {fmtTime(range.start, true)} → {fmtTime(range.end, true)}</span>}
+      <span className="status-item mono" title="Position du curseur">{fmtTime(playhead, true)}</span>
+      <span className="status-item" title="Zoom de la timeline">{Math.round(pps)} px/s</span>
+      <span className="status-item panels">
+        <button className={layout.leftOpen ? "on" : ""} title="Panneau de gauche" aria-label="Panneau de gauche" aria-pressed={layout.leftOpen} onClick={() => setLayout({ leftOpen: !layout.leftOpen })}><Icon name="panel-left" size={14} /></button>
+        <button className={layout.rightOpen ? "on" : ""} title="Panneau de droite" aria-label="Panneau de droite" aria-pressed={layout.rightOpen} onClick={() => setLayout({ rightOpen: !layout.rightOpen })}><Icon name="panel-right" size={14} /></button>
+        <button title="Espace de travail par défaut" aria-label="Espace de travail par défaut" onClick={resetLayout}><Icon name="layout" size={14} /></button>
+      </span>
+    </footer>
+  );
+}
+
 export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
   const project = useStore((s) => s.project);
   const dirty = useStore((s) => s.dirty);
-  const health = useStore((s) => s.caps);
   const busy = useStore((s) => isBusy(s));
   const selected = useStore((s) => s.selected);
   const item = useStore((s) => s.item);
@@ -254,16 +304,26 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
   const right = useStore((s) => s.rightTab);
   const helpOpen = useStore((s) => s.helpOpen);
   const paletteOpen = useStore((s) => s.paletteOpen);
-  const { setLeftTab: setLeft, setRightTab: setRight } = useStore.getState();
+  const layout = useStore((s) => s.layout);
+  const { setLeftTab: setLeft, setRightTab: setRight, setLayout } = useStore.getState();
+  const dragBase = useRef(layout);
   useAutosave();
   useShortcuts();
+  // Un panneau replié se rouvre quand on choisit une de ses sections.
+  const openLeft = (t: LeftTab) => { setLeft(t); if (!useStore.getState().layout.leftOpen) setLayout({ leftOpen: true }); };
 
   useEffect(() => {
     useStore.getState().load(id).catch((e) => useStore.getState().fail("Chargement du projet", e));
   }, [id]);
   useEffect(() => { if (project) setName(project.name); }, [project?.id]); // eslint-disable-line
-  // Sélectionner un plan ou un élément ouvre l'inspecteur.
+  // Sélectionner un plan ou un élément ouvre l'inspecteur (sans rouvrir un panneau replié exprès).
   useEffect(() => { if (selected || item) setRight("inspecteur"); }, [selected, item]);
+  // La timeline ne peut pas dépasser 70 % de la fenêtre : on recale après un redimensionnement.
+  useEffect(() => {
+    const onResize = () => setLayout({});
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   if (!project) return <div className="loading">Chargement…</div>;
   // Sans rush, on commence par l'import ; sinon par la réalisation IA.
@@ -273,10 +333,18 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
     if (name === project.name) return;
     useStore.getState().guard("Renommage impossible", async () => useStore.getState().setProject(await api.patchProject(project.id, { name })));
   };
-  const whisper = health?.whisper_device ? ` · Whisper ${health.whisper_model} (${health.whisper_device === "cuda" ? "GPU" : "CPU"})` : health ? ` · Whisper ${health.whisper_model}` : "";
+  const vars = {
+    "--left-w": layout.leftOpen ? `${layout.left}px` : "56px",
+    "--right-w": layout.rightOpen ? `${layout.right}px` : "0px",
+    "--bottom-h": `${layout.bottom}px`,
+  } as React.CSSProperties;
+  const drag = (key: "left" | "right" | "bottom", sign: 1 | -1) => (delta: number, first: boolean) => {
+    if (first) dragBase.current = useStore.getState().layout;
+    setLayout({ [key]: dragBase.current[key] + sign * delta });
+  };
 
   return (
-    <div className="editor">
+    <div className={`editor ${layout.leftOpen ? "" : "left-closed"} ${layout.rightOpen ? "" : "right-closed"}`} style={vars}>
       <header className="topbar">
         <button className="icon-btn" onClick={async () => {
           try { await useStore.getState().saveNow(); } catch (e) { return useStore.getState().notify(`Sauvegarde impossible : ${(e as Error).message}`); }
@@ -287,51 +355,57 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
           onBlur={rename} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
         <span className={`saved ${dirty ? "dirty" : ""}`}><Icon name={dirty ? "clock" : "check"} size={12} strokeWidth={3} />{dirty ? "Enregistrement…" : "Enregistré"}</span>
         <span className="spacer" />
-        {health && (
-          <a href="#/reglages" className={`pill ${health.claude ? "ok" : "warn"}`}
-            title={health.claude ? `Réalisateur : ${health.claude_model}. Cliquer pour ouvrir les réglages.` : "Sans clé Claude, le montage utilise l'IA locale (plus simple). Cliquer pour ajouter la clé."}>
-            {health.claude ? "Claude" : "Clé Claude absente"}{whisper} · {health.encoder}
-          </a>
-        )}
         <Tasks />
+        <button className="icon-btn" title="Palette de commandes (Ctrl+K)" aria-label="Palette de commandes" onClick={() => useStore.getState().setPalette(true)}><Icon name="search" size={18} /></button>
         <a href="#/reglages" className="icon-btn settings-link" title="Réglages" aria-label="Réglages"><Icon name="settings" size={18} /></a>
         <ExportButton />
       </header>
       <aside className="left">
         <nav className="rail" aria-label="Sections">
           {LEFT_TABS.map((t) => (
-            <button key={t.id} className={`${leftTab === t.id ? "on" : ""} ${t.id === "ia" && busy ? "busy" : ""}`} title={t.label} aria-label={t.label}
-              aria-current={leftTab === t.id ? "page" : undefined} onClick={() => setLeft(t.id)}>
+            <button key={t.id} className={`${leftTab === t.id && layout.leftOpen ? "on" : ""} ${t.id === "ia" && busy ? "busy" : ""}`} title={t.label} aria-label={t.label}
+              aria-current={leftTab === t.id ? "page" : undefined}
+              onClick={() => (leftTab === t.id && layout.leftOpen ? setLayout({ leftOpen: false }) : openLeft(t.id))}>
               <Icon name={t.icon} size={20} />
             </button>
           ))}
         </nav>
-        <div className="rail-panel">
-          {leftTab === "rushes" && <MediaPanel />}
-          {leftTab === "ia" && <AIPanel />}
-          {leftTab === "versions" && <VersionsPanel />}
-          {leftTab === "modeles" && <TemplatesPanel />}
-          {leftTab === "marque" && <BrandPanel />}
-        </div>
+        {layout.leftOpen && (
+          <div className="rail-panel">
+            {leftTab === "rushes" && <MediaPanel />}
+            {leftTab === "ia" && <AIPanel />}
+            {leftTab === "versions" && <VersionsPanel />}
+            {leftTab === "modeles" && <TemplatesPanel />}
+            {leftTab === "marque" && <BrandPanel />}
+          </div>
+        )}
+        {layout.leftOpen && <Splitter dir="v" label="Largeur du panneau de gauche" onDrag={drag("left", 1)} onReset={() => setLayout({ left: DEFAULT_LAYOUT.left })} />}
       </aside>
       <main className="center">
         <Player />
       </main>
-      <aside className="right">
-        <div className="tabs" role="tablist">
-          {RIGHT_TABS.map((t) => (
-            <button key={t.id} role="tab" aria-selected={right === t.id} className={right === t.id ? "on" : ""} onClick={() => setRight(t.id)}>{t.label}</button>
-          ))}
-        </div>
-        <div className="tab-body">
-          {right === "consigne" && <><CommandBar /><CommentsPanel /></>}
-          {right === "inspecteur" && <Inspector />}
-          {right === "texte" && <TranscriptPanel />}
-        </div>
-      </aside>
+      {layout.rightOpen && (
+        <aside className="right">
+          <Splitter dir="v" label="Largeur du panneau de droite" onDrag={drag("right", -1)} onReset={() => setLayout({ right: DEFAULT_LAYOUT.right })} />
+          <div className="tabs" role="tablist">
+            {RIGHT_TABS.map((t) => (
+              <button key={t.id} role="tab" aria-selected={right === t.id} className={right === t.id ? "on" : ""} onClick={() => setRight(t.id)}>{t.label}</button>
+            ))}
+            <span className="spacer" />
+            <button className="icon-btn tab-close" title="Replier le panneau" aria-label="Replier le panneau de droite" onClick={() => setLayout({ rightOpen: false })}><Icon name="panel-right" size={14} /></button>
+          </div>
+          <div className="tab-body">
+            {right === "consigne" && <><CommandBar /><CommentsPanel /></>}
+            {right === "inspecteur" && <Inspector />}
+            {right === "texte" && <TranscriptPanel />}
+          </div>
+        </aside>
+      )}
       <footer className="bottom">
+        <Splitter dir="h" label="Hauteur de la timeline" onDrag={drag("bottom", -1)} onReset={() => setLayout({ bottom: DEFAULT_LAYOUT.bottom })} />
         <TimelineView />
       </footer>
+      <StatusBar />
       {helpOpen && <Shortcuts onClose={() => useStore.getState().setHelp(false)} />}
       {paletteOpen && <CommandPalette onClose={() => useStore.getState().setPalette(false)} />}
     </div>

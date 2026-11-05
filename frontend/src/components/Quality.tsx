@@ -6,7 +6,7 @@ import { Icon, IconName } from "../icons";
 
 const CHECK_LABELS: Record<string, string> = {
   accroche: "Accroche", moment_fort: "Moment fort", plan_long: "Rythme", texte: "Texte", lecture: "Lecture",
-  flashs: "Flashs", duree: "Durée", bruitage: "Bruitage", synchro: "Synchro son/image", son: "Son", image: "Image", voix_ia: "Voix IA", affirmation: "Affirmation",
+  flashs: "Flashs", duree: "Durée", bruitage: "Bruitage", synchro: "Synchro son/image", son: "Son", image: "Image", voix_ia: "Voix de synthèse", affirmation: "Affirmation",
 };
 
 export function QualityPanel() {
@@ -111,7 +111,7 @@ export function QualityPanel() {
             <button className="small-btn primary" disabled={busy} onClick={() => run("review")}>Faire relire</button>
           </div>
           <p className="muted small">
-            Le relecteur n'a pas vu la construction du montage. Sous 7/10, l'IA retouche et refait relire (3 tours au plus).{" "}
+            Le relecteur n'a pas vu la construction du montage. Sous 7/10, le montage est retouché et relu de nouveau (3 tours au plus).{" "}
             <a href={api.soundsheetUrl(project.id)} target="_blank" rel="noreferrer">Feuille son/image</a>
           </p>
         </>
@@ -135,7 +135,7 @@ export function PlanPanel() {
           <li key={st.role} className={st.ok === false ? "plan-warn" : st.ok ? "plan-good" : ""}>
             <button className="link-like plan-head" onClick={() => setOpen(open === st.role ? null : st.role)}>
               <span><Icon name={ROLE_ICON[st.role] ?? "dot"} size={13} /> <b>{st.title}</b></span>
-              <small>{st.by === "claude" ? "Claude" : st.by === "heuristique" ? "IA locale" : "local"}
+              <small>{st.by === "claude" ? "Claude" : st.by === "heuristique" ? "moteur local" : "local"}
                 {st.ok === false ? ` · ${st.notes.length} à revoir` : st.ok ? " · ok" : ""} <Icon name={open === st.role ? "chevron-down" : "chevron-right"} size={12} /></small>
             </button>
             {open === st.role && (
