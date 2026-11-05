@@ -279,8 +279,9 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
                 spec = fx.AUDIO_EFFECTS.get(e)
                 if spec:
                     achain.append(spec["filter"])
-            fin = c.transition_duration if c.transition in ("fondu_noir", "fondu_blanc") else 0.02
-            fout = td_out if out_color else 0.03
+            # Fondus audio : ceux de la transition ou les micro-fondus anti-clic, allongés par les réglages du plan.
+            fin = max(c.transition_duration if c.transition in ("fondu_noir", "fondu_blanc") else 0.02, min(c.fade_in, d / 2))
+            fout = max(td_out if out_color else 0.03, min(c.fade_out, d / 2))
             achain.append(f"volume={c.volume:.2f},apad,atrim=duration={d:.3f}")
             achain.append(f"afade=t=in:d={fin:.2f},afade=t=out:st={max(0.0, d - fout):.3f}:d={fout:.2f}[a{i}]")
             filters.append(",".join(achain))

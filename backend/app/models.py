@@ -109,6 +109,8 @@ class Clip(BaseModel):
     reason: str = ""
     zoom: float = 1.0
     volume: float = 1.0
+    fade_in: float = Field(0.0, ge=0.0, le=5.0)  # fondu audio d'entrée (s), en plus des micro-fondus
+    fade_out: float = Field(0.0, ge=0.0, le=5.0)  # fondu audio de sortie (s)
     speed: float = 1.0  # 0.25 à 4 : ralenti / accéléré (vitesse au début du plan si rampe)
     speed_end: float | None = None  # rampe de vitesse : vitesse à la fin du plan (variation progressive)
     transition: str = "aucune"  # transition d'entrée (voir render/effects.py)
