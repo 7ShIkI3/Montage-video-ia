@@ -58,3 +58,30 @@ def test_redirect_std_writes_a_dated_header(tmp_path):
         sys.stdout, sys.stderr = out, err
     text = (tmp_path / "monteur.log").read_text(encoding="utf-8")
     assert "démarrage" in text and "bonjour" in text
+
+
+def test_redirect_std_rotates_a_big_log(tmp_path):
+    launcher = _launcher()
+    log = tmp_path / "monteur.log"
+    log.write_bytes(b"x" * (launcher.LOG_MAX_BYTES + 1))
+    (tmp_path / "monteur.log.1").write_text("ancien", encoding="utf-8")  # écrasé
+    out, err = sys.stdout, sys.stderr
+    try:
+        sys.stdout = sys.stderr = None
+        launcher.redirect_std(log)
+        sys.stdout.flush()
+    finally:
+        f, sys.stdout, sys.stderr = sys.stdout, out, err
+        f.close()
+    assert (tmp_path / "monteur.log.1").stat().st_size == launcher.LOG_MAX_BYTES + 1
+    assert "démarrage" in log.read_text(encoding="utf-8") and log.stat().st_size < 200
+    # Un petit journal n'est pas touché : on écrit à la suite.
+    log.write_text("court\n", encoding="utf-8")
+    try:
+        sys.stdout = sys.stderr = None
+        launcher.redirect_std(log)
+        sys.stdout.flush()
+    finally:
+        f, sys.stdout, sys.stderr = sys.stdout, out, err
+        f.close()
+    assert log.read_text(encoding="utf-8").startswith("court\n") and (tmp_path / "monteur.log.1").stat().st_size > 1000

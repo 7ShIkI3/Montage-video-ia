@@ -4,6 +4,7 @@ import { api, Job, ModelsStatus, PiperVoice, Settings as ServerSettings } from "
 import { Icon } from "../icons";
 import { useStore } from "../store";
 import { JobLine, runStandaloneJob } from "./Library";
+import { SystemBar } from "./SystemBar";
 
 const PIPER_LANGS = [["fr", "Français"], ["en", "Anglais"], ["es", "Espagnol"], ["de", "Allemand"], ["it", "Italien"], ["pt", "Portugais"], ["nl", "Néerlandais"], ["pl", "Polonais"], ["tr", "Turc"], ["ru", "Russe"], ["ar", "Arabe"], ["zh", "Chinois"]];
 
@@ -358,14 +359,7 @@ export function Settings({ onBack }: { onBack: () => void }) {
 
             <section id="systeme" className="settings-section">
               <header><div><h3>Système</h3></div></header>
-              {caps ? (
-                <div className="sys-grid">
-                  <div className="sys-tile"><span>Encodeur</span><b>{caps.encoder}</b></div>
-                  <div className="sys-tile"><span>Whisper</span><b>{caps.whisper_model}{caps.whisper_device ? ` · ${caps.whisper_device === "cuda" ? "GPU" : "CPU"}` : ""}</b></div>
-                  <div className="sys-tile"><span>Réalisateur</span><b>{caps.claude ? caps.claude_model : "moteur local"}</b></div>
-                  <div className="sys-tile"><span>Musiques</span><b>{caps.music_library} morceau{caps.music_library > 1 ? "x" : ""}</b></div>
-                </div>
-              ) : <p className="muted small">Le serveur ne répond pas.</p>}
+              <SystemBar />
             </section>
           </div>
         </div>
