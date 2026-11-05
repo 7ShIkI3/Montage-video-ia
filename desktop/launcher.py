@@ -48,8 +48,22 @@ def setup_env() -> None:
     if backend.is_dir() and str(backend) not in sys.path:
         sys.path.insert(0, str(backend))
     Path(os.environ["MONTEUR_DATA_DIR"]).mkdir(parents=True, exist_ok=True)
+    redirect_std(Path(os.environ["MONTEUR_DATA_DIR"]) / "monteur.log")
     from app import cuda
     cuda.add_dll_dirs()  # DLL CUDA de pip, avant tout import de ctranslate2
+
+
+def redirect_std(log: Path) -> None:
+    """Exécutable fenêtré (sans console) : sys.stdout et sys.stderr valent None, et uvicorn plante en
+    configurant ses logs (`sys.stdout.isatty()`). On les envoie dans un journal du dossier de données."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    f = open(log, "a", encoding="utf-8", buffering=1)
+    f.write(f"\n--- {APP_NAME} : démarrage {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+    if sys.stdout is None:
+        sys.stdout = f
+    if sys.stderr is None:
+        sys.stderr = f
 
 
 def free_port() -> int:
