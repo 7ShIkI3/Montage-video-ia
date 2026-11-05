@@ -48,6 +48,8 @@ def setup_env() -> None:
     if backend.is_dir() and str(backend) not in sys.path:
         sys.path.insert(0, str(backend))
     Path(os.environ["MONTEUR_DATA_DIR"]).mkdir(parents=True, exist_ok=True)
+    from app import cuda
+    cuda.add_dll_dirs()  # DLL CUDA de pip, avant tout import de ctranslate2
 
 
 def free_port() -> int:
@@ -56,13 +58,31 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def port_is_free(port: int) -> bool:
+    with socket.socket() as s:
+        try:
+            s.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
+def choose_port(wanted: int) -> int:
+    """Port demandé (--port), sinon celui des Réglages (settings.json), sinon 8000 ; un port libre si occupé."""
+    if not wanted:
+        from app import settings
+        wanted = settings.load().port
+    return wanted if port_is_free(wanted) else free_port()
+
+
 def serve(port: int):
     import uvicorn
 
     from app.main import app
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    threading.Thread(target=server.run, daemon=True).start()
-    return server
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    return server, thread
 
 
 def wait_ready(url: str, timeout: float = 30.0) -> bool:
@@ -82,9 +102,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=0)
     args = ap.parse_args(argv)
     setup_env()
-    port = args.port or free_port()
+    port = choose_port(args.port)
     url = f"http://127.0.0.1:{port}"
-    server = serve(port)
+    server, server_thread = serve(port)
     if not wait_ready(url):
         print("Le serveur ne répond pas.", file=sys.stderr)
         return 1
@@ -107,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             pass
     server.should_exit = True
+    server_thread.join(timeout=5)  # laisse le serveur annuler les tâches en cours (ffmpeg compris) avant de quitter
     return 0
 
 

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { api, Health, waitJob } from "../api";
-import { useStore } from "../store";
+import { api } from "../api";
+import { isBusy, jobOf, useStore } from "../store";
 import { AIPanel, MediaPanel } from "./LeftPanel";
 import { Player } from "./Player";
 import { CommandBar, CommentsPanel, Inspector, TranscriptPanel } from "./RightPanel";
 import { TimelineView } from "./Timeline";
 import { PresetExport, BrandPanel, TemplatesPanel, VersionsPanel } from "./Studio";
+import { Tasks } from "./Tasks";
 
 function useAutosave() {
   const tl = useStore((s) => s.timeline);
@@ -58,23 +59,12 @@ function useShortcuts() {
 
 function PublishKitPanel() {
   const project = useStore((s) => s.project);
-  const job = useStore((s) => s.job);
-  const { setJob, notify } = useStore.getState();
+  const busy = useStore((s) => isBusy(s, "publication"));
+  const { notify, runJob } = useStore.getState();
   if (!project) return null;
   const kit = project.publish_kit;
-  const busy = job?.kind === "publication" && job.status !== "termine" && job.status !== "erreur";
   const copy = (t: string) => navigator.clipboard?.writeText(t).then(() => notify("Copié !"), () => undefined);
-  const gen = async () => {
-    try {
-      await useStore.getState().saveNow();
-      await waitJob(await api.publishKit(project.id), setJob);
-      await useStore.getState().refreshProject();
-    } catch (e) {
-      notify(`Kit impossible : ${(e as Error).message}`);
-    } finally {
-      setJob(null);
-    }
-  };
+  const gen = () => runJob("Kit de publication", () => api.publishKit(project.id));
   return (
     <div className="export-alt kit">
       <h4>Kit de publication</h4>
@@ -99,16 +89,25 @@ function PublishKitPanel() {
 
 function ExportButton() {
   const project = useStore((s) => s.project);
-  const job = useStore((s) => s.job);
-  const { setJob, notify } = useStore.getState();
+  const job = useStore((s) => jobOf(s, "export"));
+  const busy = useStore((s) => isBusy(s, "export"));
   const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
   const [quality, setQuality] = useState("1080p");
   const [fps, setFps] = useState<number | null>(null);
   const [smooth, setSmooth] = useState(false);
   const [last, setLast] = useState<string | null>(null);
   const [lastMany, setLastMany] = useState<string[]>([]);
+  // Le popover se ferme au clic à l'extérieur et sur Échap.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [open]);
   if (!project) return null;
-  const busy = job?.kind === "export" && job.status !== "termine" && job.status !== "erreur";
   const used = new Set(project.timeline.clips.map((c) => c.media_id));
   const vids = project.media.filter((m) => used.has(m.id) && m.has_video);
   const srcFps = Math.round(Math.max(0, ...vids.map((m) => m.fps)) || 30);
@@ -122,26 +121,15 @@ function ExportButton() {
     if (!st.dirty || !st.timeline) return;
     e.preventDefault();
     const href = e.currentTarget.href;
-    await st.saveNow();
-    window.location.href = href;
+    if (await st.guard("Sauvegarde impossible", async () => { await st.saveNow(); return true; })) window.location.href = href;
   };
 
-  const go = async () => {
-    try {
-      await useStore.getState().saveNow();
-      const j = await api.export(project.id, quality, fps, smooth);
-      const done = await waitJob(j, setJob);
-      setLast(done.result as string);
-      await useStore.getState().refreshProject();
-    } catch (e) {
-      notify(`Export impossible : ${(e as Error).message}`);
-    } finally {
-      setJob(null);
-    }
-  };
+  const go = () => useStore.getState().runJob("Export", () => api.export(project.id, quality, fps, smooth), {
+    onDone: (j) => setLast(j.result as string),
+  });
 
   return (
-    <div className="export-wrap">
+    <div className="export-wrap" ref={wrap}>
       <button className="primary" onClick={() => setOpen(!open)} disabled={!project.timeline.clips.length}>⬇ Exporter</button>
       {open && (
         <div className="popover">
@@ -208,24 +196,22 @@ function ExportButton() {
 export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
   const project = useStore((s) => s.project);
   const dirty = useStore((s) => s.dirty);
-  const toast = useStore((s) => s.toast);
-  const [health, setHealth] = useState<Health | null>(null);
+  const health = useStore((s) => s.caps);
   const [name, setName] = useState("");
   useAutosave();
   useShortcuts();
 
   useEffect(() => {
-    useStore.getState().load(id).catch((e) => useStore.getState().notify(e.message));
-    api.health().then(setHealth).catch(() => undefined);
+    useStore.getState().load(id).catch((e) => useStore.getState().fail("Chargement du projet", e));
   }, [id]);
   useEffect(() => { if (project) setName(project.name); }, [project?.id]); // eslint-disable-line
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => useStore.getState().notify(null), 5000);
-    return () => clearTimeout(t);
-  }, [toast]);
 
   if (!project) return <div className="loading">Chargement…</div>;
+
+  const rename = () => {
+    if (name === project.name) return;
+    useStore.getState().guard("Renommage impossible", async () => useStore.getState().setProject(await api.patchProject(project.id, { name })));
+  };
 
   return (
     <div className="editor">
@@ -236,15 +222,18 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
         }} title="Projets">←</button>
         <span className="brand-mark" aria-hidden>▶</span>
         <input className="project-name" value={name} onChange={(e) => setName(e.target.value)}
-          onBlur={() => name !== project.name && api.patchProject(project.id, { name }).then(useStore.getState().setProject)} />
+          onBlur={rename} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
         <span className="muted small">{dirty ? "Enregistrement…" : "Enregistré"}</span>
         <span className="spacer" />
         {health && (
-          <span className={`pill ${health.claude ? "ok" : ""}`}
-            title={health.claude ? `Réalisateur : ${health.claude_model}` : "Ajoute ANTHROPIC_API_KEY pour activer Claude comme réalisateur"}>
-            {health.claude ? "IA Claude active" : "IA locale"} · Whisper {health.whisper_model} · {health.encoder}
-          </span>
+          <a href="#/reglages" className={`pill ${health.claude ? "ok" : "warn"}`}
+            title={health.claude ? `Réalisateur : ${health.claude_model}. Cliquer pour ouvrir les réglages.` : "Sans clé Claude, le montage utilise l'IA locale (plus simple). Cliquer pour ajouter la clé."}>
+            {health.claude ? "IA Claude active" : "Clé Claude absente · clique pour la régler"} · Whisper {health.whisper_model}
+            {health.whisper_device ? ` (${health.whisper_device === "cuda" ? "GPU" : "CPU"})` : ""} · {health.encoder}
+          </a>
         )}
+        <Tasks />
+        <a href="#/reglages" className="icon-btn settings-link" title="Réglages" aria-label="Réglages">⚙</a>
         <ExportButton />
       </header>
       <aside className="left">
@@ -266,7 +255,6 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
       <footer className="bottom">
         <TimelineView />
       </footer>
-      {toast && <div className="toast" onClick={() => useStore.getState().notify(null)}>{toast}</div>}
     </div>
   );
 }

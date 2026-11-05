@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from app import storage
+from app import config, storage
 from app.ai import translate
 from app.main import app
 from app.media import ffmpeg
@@ -119,6 +119,7 @@ def test_caption_translation(rush, monkeypatch):
         calls.append(list(texts))
         return {t: "EN: " + t.upper() for t in texts}
     monkeypatch.setattr(translate, "translate_lines", fake)
+    monkeypatch.setattr(config, "claude_available", lambda: True)
     assert {"code": "en", "name": "anglais"} in c.get("/api/languages").json()
     j = _wait(c.post(f"/api/projects/{pid}/translate", json={"language": "en"}).json())
     assert j["status"] == "termine", j
@@ -133,5 +134,7 @@ def test_caption_translation(rush, monkeypatch):
     assert "Bonjour" in c.get(f"/api/projects/{pid}/captions.srt").text
     # Sans Claude configuré, la traduction explique ce qu'il faut faire.
     monkeypatch.undo()
-    j = _wait(c.post(f"/api/projects/{pid}/translate", json={"language": "es"}).json())
-    assert j["status"] == "erreur" and "ANTHROPIC_API_KEY" in j["error"]
+    r = c.post(f"/api/projects/{pid}/translate", json={"language": "es"})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "claude_required"
+    with pytest.raises(ValueError, match="Réglages"):
+        translate.translate_lines(["Bonjour"], "es")

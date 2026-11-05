@@ -1,7 +1,7 @@
 // Contrôle qualité du montage et note du relecteur indépendant.
 import { useState } from "react";
-import { api, fmtTime, waitJob } from "../api";
-import { clipStarts, useStore } from "../store";
+import { api, fmtTime } from "../api";
+import { clipStarts, isBusy, useStore } from "../store";
 
 const CHECK_LABELS: Record<string, string> = {
   accroche: "Accroche", moment_fort: "Moment fort", plan_long: "Rythme", texte: "Texte", lecture: "Lecture",
@@ -11,26 +11,20 @@ const CHECK_LABELS: Record<string, string> = {
 export function QualityPanel() {
   const project = useStore((s) => s.project);
   const tl = useStore((s) => s.timeline);
-  const job = useStore((s) => s.job);
+  const busy = useStore((s) => isBusy(s, "controle", "relecture", "projecteur"));
   const [open, setOpen] = useState(true);
   if (!project || !tl || !tl.clips.length) return null;
   const q = tl.quality;
   const r = tl.review;
-  const busy = !!job && ["controle", "relecture", "projecteur"].includes(job.kind) && job.status !== "termine" && job.status !== "erreur";
   const spots = tl.clips.flatMap((c, i) => c.masks.filter((m) => m.kind === "projecteur").map((m) => ({ m, i })));
   const starts = clipStarts(tl);
-  const run = async (kind: "check" | "fix" | "review" | "focus") => {
-    const st = useStore.getState();
-    try {
-      await st.saveNow();
-      const j = kind === "review" ? await api.review(project.id) : kind === "focus" ? await api.voiceFocus(project.id)
-        : await api.quality(project.id, kind === "fix");
-      const done = await waitJob(j, st.setJob);
-      await st.refreshProject({ timeline: true });
-      st.notify(done.message || "Contrôle terminé.");
-    } catch (e) {
-      st.notify(`Contrôle impossible : ${(e as Error).message}`);
-    } finally { st.setJob(null); }
+  const run = (kind: "check" | "fix" | "review" | "focus") => {
+    const label = kind === "review" ? "Relecture" : kind === "focus" ? "Projecteur voix" : "Contrôle qualité";
+    return useStore.getState().runJob(label, () => kind === "review" ? api.review(project.id) : kind === "focus" ? api.voiceFocus(project.id)
+      : api.quality(project.id, kind === "fix"), {
+      timeline: true,
+      onDone: (done) => useStore.getState().notify(done.message || "Contrôle terminé."),
+    });
   };
   const tone = (v: number, max: number) => (v / max >= 0.8 ? "good" : v / max >= 0.6 ? "mid" : "bad");
   const issues = (q?.issues ?? []).filter((i) => i.level !== "ok");

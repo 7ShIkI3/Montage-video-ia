@@ -49,7 +49,14 @@ def _piper_cmd() -> list[str] | None:
 
 
 def _espeak() -> str | None:
-    return shutil.which("espeak-ng") or shutil.which("espeak")
+    found = shutil.which("espeak-ng") or shutil.which("espeak")
+    if found or os.name != "nt":
+        return found
+    # Sous Windows, l'installeur espeak-ng n'ajoute pas toujours son dossier au PATH.
+    for base in (os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("ProgramFiles(x86)", "")):
+        if base and (Path(base) / "eSpeak NG" / "espeak-ng.exe").is_file():
+            return str(Path(base) / "eSpeak NG" / "espeak-ng.exe")
+    return None
 
 
 def engine_for(lang: str) -> str | None:

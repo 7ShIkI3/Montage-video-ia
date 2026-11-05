@@ -4,7 +4,9 @@ from __future__ import annotations
 import logging
 import re
 import shutil
+import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import anyio
@@ -14,7 +16,8 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, pipeline, storage
+from . import config, cuda, pipeline, settings, storage
+from .analysis import transcribe as tr_mod
 from .jobs import manager
 from .media import ffmpeg
 from .models import EditSettings, Project, Timeline
@@ -25,7 +28,16 @@ from .render import xml_export
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-app = FastAPI(title="Monteur IA", version="0.1.0")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    yield
+    # À l'arrêt, les tâches encore actives sont annulées : ffmpeg et Whisper ne doivent pas survivre à l'app.
+    n = manager.cancel_all()
+    if n:
+        logging.getLogger(__name__).info("Arrêt : %d tâche(s) annulée(s)", n)
+
+
+app = FastAPI(title="Monteur IA", version="0.1.0", lifespan=_lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _PROJECT_ROUTE = re.compile(r"^/api/projects/([A-Za-z0-9_]+)(/.*)?$")
@@ -68,9 +80,29 @@ async def _save_upload(f: UploadFile, dst: Path) -> None:
 
 # --- Santé ------------------------------------------------------------------
 
+_tts_cache: tuple[float, dict] | None = None
+
+
+def _tts_status() -> dict:
+    """Moteur de voix par langue, mis en cache 30 s (la recherche des voix touche au disque)."""
+    global _tts_cache
+    if _tts_cache is None or time.monotonic() - _tts_cache[0] > 30:
+        from .ai import tts
+        _tts_cache = (time.monotonic(), tts.status())
+    return _tts_cache[1]
+
+
 @app.get("/api/health")
 def health():
     enc, _ = ffmpeg.best_h264_encoder()
+    dll = cuda.add_dll_dirs()  # avant tout import de ctranslate2
+    try:
+        import ctranslate2
+        has_cuda = ctranslate2.get_cuda_device_count() > 0
+    except Exception:
+        has_cuda = False
+    whisper = tr_mod.whisper_status()
+    pub = settings.public()
     return {
         "ok": True,
         "claude": config.claude_available(),
@@ -78,7 +110,54 @@ def health():
         "whisper_model": config.WHISPER_MODEL,
         "encoder": enc,
         "music_library": len([p for p in config.MUSIC_DIR.iterdir() if p.suffix.lower() in pipeline.MUSIC_EXT]),
+        "whisper_device": whisper["device_used"],
+        "whisper_fallback": whisper["fallback_reason"],
+        "cuda": has_cuda,
+        "cublas": dll["cublas"],
+        "claude_key_set": pub["anthropic_api_key_set"],
+        "key_source": pub["key_source"],
+        "tts": _tts_status(),
     }
+
+
+# --- Réglages -----------------------------------------------------------------
+
+def _require_claude(feature: str) -> None:
+    """409 explicite si la fonction a besoin de Claude et qu'aucune clé n'est configurée."""
+    if not config.claude_available():
+        raise HTTPException(409, {"code": "claude_required", "message": (
+            f"{feature} utilise Claude : ajoute ta clé dans Réglages (engrenage en haut à droite).")})
+
+
+@app.get("/api/settings")
+def get_settings():
+    return settings.public()
+
+
+@app.put("/api/settings")
+def put_settings(body: dict):
+    """Met à jour les réglages envoyés (les autres restent). Une clé vide efface la clé Claude."""
+    try:
+        settings.apply(body)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return settings.public()
+
+
+def _ping_claude() -> None:
+    import anthropic
+    anthropic.Anthropic(timeout=10, max_retries=0).models.list(limit=1)
+
+
+@app.post("/api/settings/test-claude")
+async def test_claude():
+    """Vérifie la clé Claude par un appel léger (liste des modèles)."""
+    _require_claude("Le test de connexion")
+    try:
+        await anyio.to_thread.run_sync(_ping_claude)
+    except Exception as e:
+        return {"ok": False, "error": (getattr(e, "message", None) or str(e))[:200], "model": config.CLAUDE_MODEL}
+    return {"ok": True, "error": None, "model": config.CLAUDE_MODEL}
 
 
 # --- Projets ------------------------------------------------------------------
@@ -355,6 +434,8 @@ def translate_captions(pid: str, body: TranslateReq):
     _project(pid)
     if body.language and body.language not in LANGUAGES:
         raise HTTPException(400, "Langue inconnue")
+    if body.language:
+        _require_claude("La traduction des sous-titres")
     return manager.submit(pid, "traduction", lambda ctx: pipeline.translate_captions(pid, body.language, ctx))
 
 
@@ -373,9 +454,11 @@ def tts_status():
 @app.post("/api/projects/{pid}/dub")
 def dub(pid: str, body: DubReq):
     from .ai.translate import LANGUAGES
-    _project(pid)
+    project = _project(pid)
     if body.language and body.language not in LANGUAGES:
         raise HTTPException(400, "Langue inconnue")
+    if body.language and pipeline.dub_needs_claude(project, body.language):
+        _require_claude("Le doublage")
     vol = max(0.0, min(1.0, body.original_volume))
     return manager.submit(pid, "doublage", lambda ctx: pipeline.dub_voice(pid, body.language, ctx, vol))
 
@@ -884,9 +967,18 @@ def get_job(job_id: str):
     return job
 
 
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str):
+    job = manager.cancel(job_id)
+    if not job:
+        raise HTTPException(404, "Tâche introuvable")
+    return job
+
+
 @app.get("/api/projects/{pid}/jobs")
-def project_jobs(pid: str):
-    return [j for j in manager.for_project(pid) if j.status in ("en_attente", "en_cours")]
+def project_jobs(pid: str, all: bool = False):
+    """Tâches actives du projet ; avec `all=1`, les 20 dernières tous statuts confondus."""
+    return manager.for_project(pid, all)
 
 
 # --- Interface web ------------------------------------------------------------------

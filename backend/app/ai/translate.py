@@ -37,8 +37,8 @@ def translate_lines(texts: list[str], lang: str) -> dict[str, str]:
     if not texts:
         return {}
     if not config.claude_available():
-        raise ValueError("La traduction des sous-titres utilise Claude : ajoute ta clé ANTHROPIC_API_KEY "
-                         "dans backend/.env puis relance l'app.")
+        raise ValueError("La traduction des sous-titres utilise Claude : "
+                         "ajoute ta clé Claude dans Réglages (engrenage en haut à droite).")
     import anthropic
 
     client = anthropic.Anthropic()

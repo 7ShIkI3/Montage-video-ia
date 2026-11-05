@@ -382,11 +382,18 @@ export interface Job {
   id: string;
   project_id: string;
   kind: string;
-  status: "en_attente" | "en_cours" | "termine" | "erreur";
+  status: "en_attente" | "en_cours" | "termine" | "erreur" | "annulee";
   progress: number;
   message: string;
   error: string | null;
   result: unknown;
+  created_at: number;
+  started_at: number | null;
+  updated_at: number;
+  finished_at: number | null;
+  stage: string | null;
+  steps: { t: number; message: string; progress: number }[];
+  cancel_requested: boolean;
 }
 
 export interface Health {
@@ -396,19 +403,64 @@ export interface Health {
   whisper_model: string;
   encoder: string;
   music_library: number;
+  whisper_device: "cuda" | "cpu" | null;
+  whisper_fallback: string | null;
+  cuda: boolean;
+  cublas: boolean;
+  claude_key_set: boolean;
+  key_source: "env" | "fichier" | null;
+  tts: Record<string, "piper" | "espeak" | null>;
+}
+
+export interface Settings {
+  claude_model: string;
+  claude_effort: string;
+  whisper_model: string;
+  whisper_device: "auto" | "cuda" | "cpu";
+  whisper_language: string | null;
+  port: number;
+  anthropic_api_key_set: boolean;
+  anthropic_api_key_hint: string | null;
+  key_source: "env" | "fichier" | null;
+  /** Champs forcés par une variable d'environnement (MONTEUR_…) : la valeur saisie dans l'app est ignorée. */
+  env_overrides: string[];
+}
+
+/** Corps partiel de PUT /api/settings ("" efface la clé Claude). */
+export type SettingsPatch = Partial<Pick<Settings, "claude_model" | "claude_effort" | "whisper_model" | "whisper_device" | "whisper_language" | "port">>
+  & { anthropic_api_key?: string };
+
+/** Erreur du serveur ; `code` vient d'un `detail` structuré (ex. « claude_required »), « cancelled » pour une tâche annulée. */
+export class ApiError extends Error {
+  code?: string;
+  status: number;
+  constructor(message: string, status = 0, code?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
 }
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init);
   if (!r.ok) {
     let msg = `${r.status} ${r.statusText}`;
+    let code: string | undefined;
     try {
       const body = await r.json();
-      if (body?.detail) msg = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+      const d = body?.detail;
+      if (d) {
+        if (typeof d === "string") msg = d;
+        else if (typeof d === "object" && typeof d.code === "string") {
+          code = d.code;
+          msg = typeof d.message === "string" ? d.message : JSON.stringify(d);
+        } else msg = JSON.stringify(d);
+      }
     } catch {
       /* corps non JSON */
     }
-    throw new Error(msg);
+    throw new ApiError(msg, r.status, code);
   }
   return r.json() as Promise<T>;
 }
@@ -421,6 +473,9 @@ const json = (method: string, body: unknown): RequestInit => ({
 
 export const api = {
   health: () => req<Health>("/api/health"),
+  settings: () => req<Settings>("/api/settings"),
+  saveSettings: (patch: SettingsPatch) => req<Settings>("/api/settings", json("PUT", patch)),
+  testClaude: () => req<{ ok: boolean; error: string | null; model: string }>("/api/settings/test-claude", { method: "POST" }),
   effects: () => req<EffectsCatalog>("/api/effects"),
   sfxUrl: (kind: string) => `/api/sfx/${kind}`,
   listProjects: () => req<ProjectSummary[]>("/api/projects"),
@@ -534,6 +589,8 @@ export const api = {
   srtUrl: (id: string) => `/api/projects/${id}/captions.srt`,
   job: (jobId: string) => req<Job>(`/api/jobs/${jobId}`),
   activeJobs: (id: string) => req<Job[]>(`/api/projects/${id}/jobs`),
+  jobsHistory: (id: string) => req<Job[]>(`/api/projects/${id}/jobs?all=1`),
+  cancelJob: (jobId: string) => req<Job>(`/api/jobs/${jobId}/cancel`, { method: "POST" }),
   proxyUrl: (id: string, mid: string) => `/api/projects/${id}/media/${mid}/proxy`,
   thumbUrl: (id: string, mid: string) => `/api/projects/${id}/media/${mid}/thumb`,
   musicUrl: (id: string, v: string) => `/api/projects/${id}/music/current?v=${encodeURIComponent(v)}`,
@@ -548,6 +605,7 @@ export async function waitJob(job: Job, onUpdate: (j: Job) => void): Promise<Job
     j = await api.job(j.id);
     onUpdate(j);
   }
+  if (j.status === "annulee") throw new ApiError("Tâche annulée", 0, "cancelled");
   if (j.status === "erreur") throw new Error(j.error || "La tâche a échoué");
   return j;
 }

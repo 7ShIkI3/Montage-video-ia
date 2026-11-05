@@ -1,7 +1,8 @@
 // Lot 3 : étalonnage par LUT, détourage IA sans fond vert, doublage IA, et aperçu image fixe du rendu.
 import { useEffect, useRef, useState } from "react";
-import { api, Clip, waitJob } from "../api";
-import { clipAt, clipStarts, localToSrc, useStore } from "../store";
+import { api, Clip } from "../api";
+import { CapHint, Gate, needClaude, needVoice } from "../caps";
+import { clipAt, clipStarts, isBusy, localToSrc, useStore } from "../store";
 
 type Lut = { id: string; label: string; builtin: boolean };
 export const CUTOUTS = ["detourage_flou", "detourage_studio", "detourage_noir", "detourage_blanc", "detourage_image"];
@@ -124,7 +125,8 @@ export function CutoutTools({ c }: { c: Clip }) {
 export function DubPanel() {
   const project = useStore((s) => s.project);
   const tl = useStore((s) => s.timeline);
-  const job = useStore((s) => s.job);
+  const busy = useStore((s) => isBusy(s, "doublage"));
+  const caps = useStore((s) => s.caps);
   const [langs, setLangs] = useState<{ code: string; name: string }[]>([]);
   const [voices, setVoices] = useState<Record<string, string | null>>({});
   const [lang, setLang] = useState("en");
@@ -134,40 +136,39 @@ export function DubPanel() {
     api.ttsStatus().then(setVoices).catch(() => undefined);
   }, []);
   if (!project || !tl) return null;
-  const busy = job?.kind === "doublage" && job.status !== "termine" && job.status !== "erreur";
-  const run = async (code: string | null) => {
-    const st = useStore.getState();
-    try {
-      await st.saveNow();
-      await waitJob(await api.dub(project.id, code, vol), st.setJob);
-      await st.refreshProject({ timeline: true });
-      st.notify(code ? `Doublage en ${langs.find((l) => l.code === code)?.name ?? code} posé sur la piste audio 4.` : "Voix d'origine rétablie.");
-    } catch (e) {
-      st.notify(`Doublage impossible : ${(e as Error).message}`);
-    } finally { st.setJob(null); }
-  };
+  const run = (code: string | null) => useStore.getState().runJob("Doublage", () => api.dub(project.id, code, vol), {
+    timeline: true,
+    onDone: () => useStore.getState().notify(code ? `Doublage en ${langs.find((l) => l.code === code)?.name ?? code} posé sur la piste audio 4.` : "Voix d'origine rétablie."),
+  });
   const engine = voices[lang];
+  const voiceReason = needVoice(caps, lang);
   const current = tl.dub_language ? langs.find((l) => l.code === tl.dub_language)?.name ?? tl.dub_language : null;
   return (
     <div className="fx-section">
       <div className="fx-title">Doublage IA</div>
       {current && <p className="small">Doublé en <b>{current}</b> · {(tl.audio ?? []).filter((a) => a.dub).length} phrase(s)</p>}
-      <div className="field-row">
-        <label>Langue
-          <select value={lang} onChange={(e) => setLang(e.target.value)}>
-            {langs.map((l) => <option key={l.code} value={l.code}>{l.name}{voices[l.code] ? "" : " (pas de voix)"}</option>)}
-          </select>
-        </label>
-        <label>Voix d'origine {Math.round(vol * 100)} %
-          <input type="range" min={0} max={0.6} step={0.02} value={vol} onChange={(e) => setVol(+e.target.value)} />
-        </label>
-      </div>
-      <div className="field-row">
-        <button className="small-btn primary" disabled={busy || !engine} onClick={() => run(lang)}>
-          {busy ? "Doublage…" : current ? "Refaire le doublage" : "Doubler la vidéo"}
-        </button>
-        {current && <button className="small-btn" disabled={busy} onClick={() => run(null)}>Retirer le doublage</button>}
-      </div>
+      <Gate reason={needClaude(caps)}>
+        <div className="field-row">
+          <label>Langue
+            <select value={lang} onChange={(e) => setLang(e.target.value)}>
+              {langs.map((l) => <option key={l.code} value={l.code}>{l.name}{voices[l.code] ? "" : " (pas de voix)"}</option>)}
+            </select>
+          </label>
+          <label>Voix d'origine {Math.round(vol * 100)} %
+            <input type="range" min={0} max={0.6} step={0.02} value={vol} onChange={(e) => setVol(+e.target.value)} />
+          </label>
+        </div>
+        <div className="field-row">
+          <button className="small-btn primary" disabled={busy || !engine || !!voiceReason} title={voiceReason ?? undefined} onClick={() => run(lang)}>
+            {busy ? "Doublage…" : current ? "Refaire le doublage" : "Doubler la vidéo"}
+          </button>
+        </div>
+      </Gate>
+      {current && (
+        <div className="field-row">
+          <button className="small-btn" disabled={busy} onClick={() => run(null)}>Retirer le doublage</button>
+        </div>
+      )}
       <p className="muted small">
         {engine === "piper" ? "Voix naturelle Piper." : engine === "espeak" ? "Voix de synthèse simple (espeak). Ajoute une voix Piper pour un rendu naturel." : "Aucune voix installée pour cette langue."}
         {" "}Chaque phrase est traduite par Claude puis calée sur l'instant où elle est dite.
@@ -179,7 +180,8 @@ export function DubPanel() {
 /** Voix off IA : un texte lu par une voix de synthèse, réécouté, calé au mot près (sous-titres compris). */
 export function AIVoiceoverPanel() {
   const project = useStore((s) => s.project);
-  const job = useStore((s) => s.job);
+  const busy = useStore((s) => isBusy(s, "voix_ia"));
+  const caps = useStore((s) => s.caps);
   const playhead = useStore((s) => s.playhead);
   const [text, setText] = useState("");
   const [lang, setLang] = useState("fr");
@@ -190,19 +192,14 @@ export function AIVoiceoverPanel() {
     api.ttsStatus().then(setVoices).catch(() => undefined);
   }, []);
   if (!project) return null;
-  const busy = job?.kind === "voix_ia" && job.status !== "termine" && job.status !== "erreur";
-  const run = async () => {
-    const st = useStore.getState();
-    try {
-      await st.saveNow();
-      const done = await waitJob(await api.voiceover(project.id, text, playhead, lang), st.setJob);
-      await st.refreshProject({ timeline: true });
-      st.notify(done.message || "Voix off IA posée.");
+  const voiceReason = needVoice(caps, lang);
+  const run = () => useStore.getState().runJob("Voix off IA", () => api.voiceover(project.id, text, playhead, lang), {
+    timeline: true,
+    onDone: (done) => {
+      useStore.getState().notify(done.message || "Voix off IA posée.");
       setText("");
-    } catch (e) {
-      st.notify(`Voix off IA impossible : ${(e as Error).message}`);
-    } finally { st.setJob(null); }
-  };
+    },
+  });
   return (
     <div className="fx-section">
       <div className="fx-title">Voix off IA</div>
@@ -214,10 +211,11 @@ export function AIVoiceoverPanel() {
             {langs.map((l) => <option key={l.code} value={l.code}>{l.name}{voices[l.code] ? "" : " (pas de voix)"}</option>)}
           </select>
         </label>
-        <button className="small-btn primary" disabled={busy || !text.trim() || !voices[lang]} onClick={run}>
+        <button className="small-btn primary" disabled={busy || !text.trim() || !voices[lang] || !!voiceReason} title={voiceReason ?? undefined} onClick={run}>
           {busy ? "Lecture…" : `Poser à ${playhead.toFixed(1)} s`}
         </button>
       </div>
+      <CapHint reason={voiceReason} />
       <p className="muted small">La voix est réécoutée : si elle se comprend mal, le contrôle qualité le signale. Chaque mot est horodaté, les sous-titres animés la suivent.</p>
     </div>
   );

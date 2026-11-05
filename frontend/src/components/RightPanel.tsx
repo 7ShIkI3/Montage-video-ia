@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
-import { api, Clip, EffectsCatalog, fmtTime, Opt, Timeline, waitJob } from "../api";
+import { api, Clip, EffectsCatalog, fmtTime, Opt, Timeline } from "../api";
+import { CapHint } from "../caps";
 import { clipAt, clipStarts, commentTime, ItemKind, srcToLocal, useStore } from "../store";
 import { ImageButtons } from "./Studio";
 import { CaptionLanguage } from "./AudioTools";
@@ -10,7 +11,7 @@ import { PlanPanel, QualityPanel } from "./Quality";
 export function CommandBar() {
   const project = useStore((s) => s.project);
   const job = useStore((s) => s.job);
-  const { setJob, notify } = useStore.getState();
+  const caps = useStore((s) => s.caps);
   const [text, setText] = useState("");
   const busy = !!job && (job.status === "en_cours" || job.status === "en_attente");
   if (!project) return null;
@@ -19,22 +20,17 @@ export function CommandBar() {
 
   const send = async (instruction: string) => {
     if (!instruction.trim()) return;
-    try {
-      await useStore.getState().saveNow();
-      const j = await api.command(project.id, instruction);
-      const done = await waitJob(j, setJob);
-      const before = useStore.getState().timeline;
-      await useStore.getState().refreshProject({ timeline: true });
-      // La consigne IA devient une étape annulable comme une retouche manuelle.
-      if (before) useStore.setState((s) => ({ past: [...s.past, before], future: [] }));
-      const r = done.result as { message?: string } | null;
-      notify(r?.message ? `IA : ${r.message}` : "Consigne appliquée.");
-      setText("");
-    } catch (e) {
-      notify((e as Error).message);
-    } finally {
-      setJob(null);
-    }
+    const before = useStore.getState().timeline;
+    await useStore.getState().runJob("Consigne", () => api.command(project.id, instruction), {
+      timeline: true,
+      onDone: (done) => {
+        // La consigne IA devient une étape annulable comme une retouche manuelle.
+        if (before) useStore.setState((s) => ({ past: [...s.past, before], future: [] }));
+        const r = done.result as { message?: string } | null;
+        useStore.getState().notify(r?.message ? `IA : ${r.message}` : "Consigne appliquée.");
+        setText("");
+      },
+    });
   };
 
   return (
@@ -48,6 +44,7 @@ export function CommandBar() {
           {busy && job?.kind === "consigne" ? "…" : "Appliquer"}
         </button>
       </form>
+      <CapHint reason={caps && !caps.claude ? "Sans Claude, seules les consignes simples (durée, format, sous-titres, musique, zooms…) sont comprises." : null} />
       <div className="chips">
         {examples.map((x) => <button key={x} className="chip" onClick={() => setText(x)}>{x}</button>)}
       </div>
@@ -62,7 +59,7 @@ export function CommentsPanel() {
   const playhead = useStore((s) => s.playhead);
   const job = useStore((s) => s.job);
   const item = useStore((s) => s.item);
-  const { addComment, deleteItem, setPlayhead, selectItem, setJob, notify, setPicking, setPendingRegion } = useStore.getState();
+  const { addComment, deleteItem, setPlayhead, selectItem, setPicking, setPendingRegion } = useStore.getState();
   const picking = useStore((s) => s.picking);
   const pending = useStore((s) => s.pendingRegion);
   const [text, setText] = useState("");
@@ -79,18 +76,15 @@ export function CommentsPanel() {
     if (addComment(text, general || !hit)) setText("");
   };
   const apply = async () => {
-    try {
-      await useStore.getState().saveNow();
-      const before = useStore.getState().timeline;
-      const done = await waitJob(await api.applyComments(project.id), setJob);
-      await useStore.getState().refreshProject({ timeline: true });
-      if (before) useStore.setState((s) => ({ past: [...s.past, before], future: [] }));
-      notify(`IA : ${(done.result as { message?: string })?.message ?? "commentaires appliqués"}.`);
-    } catch (e) {
-      notify((e as Error).message);
-    } finally {
-      setJob(null);
-    }
+    await useStore.getState().guard("Enregistrement impossible", () => useStore.getState().saveNow());
+    const before = useStore.getState().timeline;
+    await useStore.getState().runJob("Commentaires", () => api.applyComments(project.id), {
+      timeline: true,
+      onDone: (done) => {
+        if (before) useStore.setState((s) => ({ past: [...s.past, before], future: [] }));
+        useStore.getState().notify(`IA : ${(done.result as { message?: string })?.message ?? "commentaires appliqués"}.`);
+      },
+    });
   };
   const label = { ouvert: "En attente", applique: "Appliqué", incompris: "Pas compris" } as const;
 
@@ -660,8 +654,10 @@ export function TranscriptPanel() {
                   onDoubleClick={async () => {
                     const nt = prompt("Corriger le mot :", w.text);
                     if (nt == null || nt === w.text) return;
-                    await api.editWord(project.id, c.media_id, idx, nt);
-                    await useStore.getState().refreshDerived();
+                    await useStore.getState().guard("Correction impossible", async () => {
+                      await api.editWord(project.id, c.media_id, idx, nt);
+                      await useStore.getState().refreshDerived();
+                    });
                   }}>
                   {w.text}{" "}
                 </span>

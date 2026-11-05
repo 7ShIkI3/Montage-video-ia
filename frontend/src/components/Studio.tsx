@@ -1,7 +1,7 @@
 // Versions du montage, shorts automatiques, modèles de style et images (logo, stickers).
 import { useEffect, useRef, useState } from "react";
-import { api, ExportPreset, Format, StyleTemplate, Versions, waitJob } from "../api";
-import { useStore } from "../store";
+import { api, ExportPreset, Format, StyleTemplate, Versions } from "../api";
+import { isBusy, jobOf, useStore } from "../store";
 
 async function saveIfDirty() {
   await useStore.getState().saveNow();
@@ -9,53 +9,48 @@ async function saveIfDirty() {
 
 export function VersionsPanel() {
   const project = useStore((s) => s.project);
-  const job = useStore((s) => s.job);
-  const { setJob, notify, setTimeline } = useStore.getState();
+  const { notify, setTimeline, guard, runJob } = useStore.getState();
   const [vs, setVs] = useState<Versions | null>(null);
   const [count, setCount] = useState(3);
   const [dur, setDur] = useState(30);
   const [fmt, setFmt] = useState<Format>("9:16");
-  const busy = !!job && (job.status === "en_cours" || job.status === "en_attente");
+  const busy = useStore((s) => isBusy(s, "shorts"));
   const reload = () => project && api.versions(project.id).then(setVs).catch(() => undefined);
   useEffect(() => { reload(); }, [project?.id, project?.active_version, project?.updated_at]); // eslint-disable-line
   if (!project) return null;
 
-  const activate = async (vid: string) => {
-    try {
-      await saveIfDirty();
-      setTimeline(await api.activateVersion(project.id, vid));
-    } catch (e) { notify((e as Error).message); }
-  };
-  const duplicate = async () => {
+  const activate = (vid: string) => guard("Changement de version impossible", async () => {
+    await saveIfDirty();
+    setTimeline(await api.activateVersion(project.id, vid));
+  });
+  const duplicate = () => guard("Duplication impossible", async () => {
     await saveIfDirty();
     const name = prompt("Nom de la nouvelle version", "Essai");
     if (name === null) return;
     await api.duplicateVersion(project.id, name);
     setTimeline(await api.getProject(project.id));
-  };
-  const rename = async (vid: string, old: string) => {
+  });
+  const rename = (vid: string, old: string) => guard("Renommage impossible", async () => {
     const name = prompt("Renommer la version", old);
     if (name) setVs(await api.renameVersion(project.id, vid, name));
-  };
+  });
   const remove = async (vid: string, name: string) => {
     if (!confirm(`Supprimer la version « ${name} » ?`)) return;
-    try {
+    await guard("Suppression impossible", async () => {
       await saveIfDirty();
       setTimeline(await api.deleteVersion(project.id, vid));
-    } catch (e) { notify((e as Error).message); }
+    });
   };
-  const shorts = async () => {
+  const shorts = () => {
     if (!project.media.length) return notify("Importe d'abord une vidéo.");
-    try {
-      await saveIfDirty();
-      const j = await api.makeShorts(project.id, count, dur, fmt);
-      const done = await waitJob(j, setJob);
-      const made = done.result as { name: string }[];
-      notify(`${made.length} short(s) créé(s) : ${made.map((m) => m.name).join(", ")}`);
-      reload();
-    } catch (e) {
-      notify(`Shorts impossibles : ${(e as Error).message}`);
-    } finally { setJob(null); }
+    return runJob("Shorts", () => api.makeShorts(project.id, count, dur, fmt), {
+      refresh: false,
+      onDone: (done) => {
+        const made = done.result as { name: string }[];
+        notify(`${made.length} short(s) créé(s) : ${made.map((m) => m.name).join(", ")}`);
+        reload();
+      },
+    });
   };
 
   return (
@@ -90,7 +85,7 @@ export function VersionsPanel() {
 
 export function TemplatesPanel() {
   const project = useStore((s) => s.project);
-  const { notify, setTimeline } = useStore.getState();
+  const { notify, setTimeline, guard } = useStore.getState();
   const [list, setList] = useState<StyleTemplate[]>([]);
   useEffect(() => {
     const load = () => api.templates().then(setList).catch(() => undefined);
@@ -99,23 +94,25 @@ export function TemplatesPanel() {
     return () => window.removeEventListener("templates-changed", load);
   }, []);
   if (!project) return null;
-  const save = async () => {
+  const save = () => guard("Enregistrement du modèle impossible", async () => {
     const name = prompt("Nom du modèle (look, sous-titres, format, musique, logo)", "Ma chaîne");
     if (!name) return;
     await saveIfDirty();
     await api.saveTemplate(project.id, name);
     setList(await api.templates());
     notify(`Modèle « ${name} » enregistré.`);
-  };
-  const apply = async (t: StyleTemplate) => {
+  });
+  const apply = (t: StyleTemplate) => guard("Application du modèle impossible", async () => {
     await saveIfDirty();
     setTimeline(await api.applyTemplate(project.id, t.id));
     notify(`Modèle « ${t.name} » appliqué.`);
-  };
+  });
   const del = async (t: StyleTemplate) => {
     if (!confirm(`Supprimer le modèle « ${t.name} » ?`)) return;
-    await api.deleteTemplate(t.id);
-    setList(await api.templates());
+    await guard("Suppression impossible", async () => {
+      await api.deleteTemplate(t.id);
+      setList(await api.templates());
+    });
   };
   return (
     <section className="panel templates">
@@ -162,8 +159,7 @@ export function ImageButtons() {
 
 export function PresetExport({ onDone }: { onDone: (names: string[]) => void }) {
   const project = useStore((s) => s.project);
-  const job = useStore((s) => s.job);
-  const { setJob, notify } = useStore.getState();
+  const job = useStore((s) => jobOf(s, "export"));
   const [presets, setPresets] = useState<ExportPreset[]>([]);
   const [preset, setPreset] = useState("tiktok");
   const [vs, setVs] = useState<Versions | null>(null);
@@ -174,18 +170,10 @@ export function PresetExport({ onDone }: { onDone: (names: string[]) => void }) 
     api.versions(project.id).then((v) => { setVs(v); setSel([v.active]); }).catch(() => undefined);
   }, [project?.id, project?.active_version]); // eslint-disable-line
   if (!project) return null;
-  const busy = job?.kind === "export" && job.status !== "termine" && job.status !== "erreur";
-  const go = async () => {
-    try {
-      await saveIfDirty();
-      const j = await api.exportPreset(project.id, preset, sel.length ? sel : null);
-      const done = await waitJob(j, setJob);
-      onDone(done.result as string[]);
-      await useStore.getState().refreshProject();
-    } catch (e) {
-      notify(`Export impossible : ${(e as Error).message}`);
-    } finally { setJob(null); }
-  };
+  const busy = !!job && (job.status === "en_cours" || job.status === "en_attente");
+  const go = () => useStore.getState().runJob("Export", () => api.exportPreset(project.id, preset, sel.length ? sel : null), {
+    onDone: (done) => onDone(done.result as string[]),
+  });
   const p = presets.find((x) => x.id === preset);
   return (
     <div className="export-alt">
@@ -238,12 +226,11 @@ export function BrandPanel() {
       st.notify(`Identité de marque impossible : ${(e as Error).message}`);
     } finally { setBusy(false); }
   };
-  const clear = async () => {
-    const st = useStore.getState();
+  const clear = () => useStore.getState().guard("Retrait impossible", async () => {
     await saveIfDirty();
     await api.clearBrand(project.id);
-    await st.refreshProject({ timeline: true });
-  };
+    await useStore.getState().refreshProject({ timeline: true });
+  });
   return (
     <section className="panel brand">
       <header><h3>Identité de marque</h3>{b && <button className="small-btn" onClick={clear}>Retirer</button>}</header>

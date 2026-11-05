@@ -1,6 +1,7 @@
 """Configuration globale, lue depuis les variables d'environnement."""
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -25,7 +26,7 @@ ANALYSIS_FPS = 5
 AUDIO_SR = 16000
 ENVELOPE_HOP = 0.05  # 50 ms
 
-MAX_WORKERS = int(os.environ.get("MONTEUR_WORKERS", "2"))
+MAX_WORKERS = int(os.environ.get("MONTEUR_WORKERS", "3"))
 
 
 def claude_available() -> bool:
@@ -36,3 +37,10 @@ def claude_available() -> bool:
 
 for d in (PROJECTS_DIR, MUSIC_DIR):
     d.mkdir(parents=True, exist_ok=True)
+
+# Réglages enregistrés dans l'app (settings.json) : import tardif, settings.py a besoin de ce module.
+# settings.py se charge lui-même à l'import, quel que soit celui des deux importé en premier.
+try:
+    from . import settings as _s  # noqa: F401
+except Exception as e:  # des réglages illisibles ne doivent pas empêcher l'app de démarrer
+    logging.getLogger(__name__).warning("Réglages non chargés : %s", e)

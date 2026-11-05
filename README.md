@@ -141,6 +141,10 @@ Au premier détourage, le modèle de segmentation (250 Ko) est téléchargé dep
 
 Au premier montage, Whisper télécharge son modèle (« small » ≈ 480 Mo) depuis Hugging Face.
 
+**Transcription sur GPU (NVIDIA)** : `pip install -r backend/requirements-cuda.txt` installe les bibliothèques
+CUDA (cuBLAS, cuDNN) dont Whisper a besoin pour utiliser la carte graphique. Sans elles, ou si le GPU échoue au
+chargement, l'app retombe toute seule sur le processeur (plus lent) et l'indique dans les avertissements du projet.
+
 ## Réglages (variables d'environnement)
 
 | Variable | Défaut | Rôle |
@@ -153,10 +157,14 @@ Au premier montage, Whisper télécharge son modèle (« small » ≈ 480 Mo) de
 | `MONTEUR_WHISPER_LANGUAGE` | auto | Forcer une langue (`fr`, `en`…) |
 | `MONTEUR_DATA_DIR` | `./data` | Projets, caches et exports |
 | `MONTEUR_MUSIC_DIR` | `./data/music` | Bibliothèque de musiques libres de droits |
-| `MONTEUR_WORKERS` | `2` | Tâches en parallèle |
+| `MONTEUR_WORKERS` | `3` | Tâches en parallèle |
 | `MONTEUR_PIPER_VOICES` | `./data/voices` | Voix Piper du doublage (`<langue>*.onnx`) |
 | `MONTEUR_SEGMENTER_MODEL` | téléchargé | Modèle de détourage `selfie_segmenter.tflite` |
 | `MONTEUR_FFMPEG`, `MONTEUR_FFPROBE` | PATH | Chemin de FFmpeg (appli de bureau) |
+
+La clé Claude, les modèles, l'appareil Whisper et le port peuvent aussi se régler dans l'app (Réglages,
+engrenage en haut à droite). Ils sont stockés dans `Documents/Monteur IA/settings.json`, hors dépôt ; une
+variable d'environnement a toujours priorité sur ce fichier.
 
 **Musique** : dépose des fichiers audio libres de droits dans `data/music/`. Un fichier dont le nom contient
 le style (`vlog`, `short`…) est choisi en priorité. Tu peux aussi choisir une musique par projet dans l'éditeur.
