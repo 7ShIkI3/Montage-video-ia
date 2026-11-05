@@ -176,6 +176,10 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         b = project.timeline.brand
         settings = settings.model_copy(update={"instructions": (settings.instructions + f"\nTon de la marque {b.name} : "
                                                                 f"{b.tone}.").strip()})
+    if project.research:
+        from .ai import research as research_mod
+        settings = settings.model_copy(update={"instructions": (settings.instructions + "\n" +
+                                                                research_mod.notes_as_instructions(project.research)).strip()})
     from .ai import roles
     ctx.step("Stratège et directeur créatif : objectif, public, accroche, moment fort", 0.88)
     brief, brief_by = roles.brief(project, segments, settings)
@@ -302,10 +306,13 @@ def ai_command(project_id: str, instruction: str, ctx: JobContext) -> dict:
     order = [m.id for m in project.media]
     music = project.timeline.music.track or (pick_music(project, project.settings.style)
                                               if project.settings.music else None)
-    ctx.step("L'IA applique ta consigne", 0.2)
+    ctx.step("Application de la consigne", 0.2)
     director = dir_mod.get_director()
     msg = ""
     if director.name == "claude":
+        if project.research:  # les faits trouvés sur le web guident aussi les retouches
+            from .ai import research as research_mod
+            instruction = research_mod.notes_as_instructions(project.research) + "\n\nConsigne : " + instruction
         tl = director.command(instruction, project.timeline, segments, project.settings, music)
         msg = tl.summary
     else:

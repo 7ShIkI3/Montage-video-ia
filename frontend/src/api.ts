@@ -329,6 +329,11 @@ export interface Project {
   active_version: string | null;
   directions?: Direction[];
   reference?: { filename: string; summary: string; mean_shot: number; shots: number; duration: number } | null;
+  research?: ResearchNote[];
+}
+
+export interface ResearchNote {
+  id: string; question: string; answer: string; sources: { title: string; url: string }[]; by: string; created_at: number;
 }
 
 export interface Direction {
@@ -551,6 +556,8 @@ export const api = {
     fd.append("file", file);
     return req<MusicSettings>(`/api/projects/${id}/music`, { method: "POST", body: fd });
   },
+  research: (id: string, question: string) => req<Job>(`/api/projects/${id}/research`, json("POST", { question })),
+  deleteResearch: (id: string, nid: string) => req<{ ok: boolean }>(`/api/projects/${id}/research/${encodeURIComponent(nid)}`, { method: "DELETE" }),
   // Téléchargements : liens (yt-dlp), bibliothèque musicale, musiques libres (ccMixter), modèles.
   importUrl: (id: string, url: string) => req<Job>(`/api/projects/${id}/media/url`, json("POST", { url })),
   referenceUrl: (id: string, url: string) => req<Job>(`/api/projects/${id}/reference/url`, json("POST", { url })),

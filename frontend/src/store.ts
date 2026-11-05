@@ -127,7 +127,7 @@ export function snapTo(t: number, points: number[], pps: number, px = 8): { t: n
 }
 
 export type LeftTab = "rushes" | "ia" | "versions" | "modeles" | "marque";
-export type RightTab = "consigne" | "inspecteur" | "texte";
+export type RightTab = "consigne" | "inspecteur" | "texte" | "recherche";
 
 /** Espace de travail : largeur des panneaux, hauteur de la timeline, panneaux repliés. Mémorisé dans le navigateur. */
 export interface Layout { left: number; right: number; bottom: number; leftOpen: boolean; rightOpen: boolean }
@@ -185,7 +185,7 @@ export const KIND_LABELS: Record<string, string> = {
   montage: "Montage automatique", export: "Export", doublage: "Doublage", traduction: "Traduction des sous-titres",
   controle: "Contrôle qualité", relecture: "Relecture", shorts: "Shorts", publication: "Kit de publication",
   voix_ia: "Voix de synthèse", directions: "3 directions", projecteur: "Projecteur voix", commentaires: "Commentaires",
-  consigne: "Consigne", telechargement: "Téléchargement",
+  consigne: "Consigne", telechargement: "Téléchargement", recherche: "Recherche web",
 };
 export const kindLabel = (kind: string) => KIND_LABELS[kind] ?? kind;
 

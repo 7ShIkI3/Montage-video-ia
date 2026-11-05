@@ -100,6 +100,9 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
   yt-dlp), une bibliothèque musicale avec recherche de musiques libres de droits (ccMixter, licence gardée
   à côté du fichier) ou le son d'un lien, et dans les réglages le téléchargement à l'avance des modèles Whisper
   et des voix naturelles Piper (Hugging Face).
+- Recherche web (onglet « Recherche ») : une question, une réponse rédigée et sourcée par Claude (recherche web
+  d'Anthropic) ou, sans clé, les premiers résultats DuckDuckGo. Les notes restent dans le projet et le
+  réalisateur s'en sert au montage et dans les consignes ; une phrase se pose en bandeau d'un clic.
 - Zone d'entrée/sortie : `I` / `O` sans plan sélectionné (ou `X` pour le plan au curseur) posent une zone,
   glissable par ses bornes. `Ctrl+L` la lit en boucle, `Maj+Suppr` retire son contenu et referme le trou,
   et l'export propose « seulement la zone » (plans coupés, textes, sons, musique et repères recalés).

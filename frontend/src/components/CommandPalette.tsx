@@ -62,6 +62,7 @@ function commands(): Command[] {
     { id: "tab-consigne", group: "Ouvrir", label: "Consigne et commentaires", icon: "message", run: () => s.setRightTab("consigne") },
     { id: "tab-inspecteur", group: "Ouvrir", label: "Inspecteur", run: () => s.setRightTab("inspecteur") },
     { id: "tab-texte", group: "Ouvrir", label: "Texte de la transcription", alt: "mots paroles", run: () => s.setRightTab("texte") },
+    { id: "tab-recherche", group: "Ouvrir", label: "Recherche web", icon: "globe", alt: "chercher info internet faits", run: () => { s.setRightTab("recherche"); if (!s.layout.rightOpen) s.setLayout({ rightOpen: true }); } },
     { id: "export", group: "Ouvrir", label: "Exporter…", icon: "download", alt: "rendu télécharger mp4", run: () => s.setExportOpen(true), enabled: hasClips },
     { id: "settings", group: "Ouvrir", label: "Réglages", icon: "settings", alt: "clé claude whisper", run: () => { location.hash = "#/reglages"; } },
     { id: "projects", group: "Ouvrir", label: "Retour aux projets", icon: "back", alt: "accueil",

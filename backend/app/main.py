@@ -20,7 +20,7 @@ from . import config, cuda, downloads, pipeline, settings, storage, timeline_ops
 from .analysis import transcribe as tr_mod
 from .jobs import manager
 from .media import ffmpeg
-from .models import EditSettings, Project, Timeline
+from .models import EditSettings, Project, ResearchNote, Timeline
 from .render import captions as cap
 from .render import effects as fx
 from .render import render as render_mod
@@ -414,6 +414,42 @@ def command(pid: str, body: Command):
     if not body.instruction.strip():
         raise HTTPException(400, "Consigne vide.")
     return manager.submit(pid, "consigne", lambda ctx: pipeline.ai_command(pid, body.instruction.strip(), ctx))
+
+
+class ResearchReq(BaseModel):
+    question: str
+
+
+@app.post("/api/projects/{pid}/research")
+def research_web(pid: str, body: ResearchReq):
+    """Cherche une information sur le web pour la vidéo ; la note est gardée dans le projet et guide le réalisateur."""
+    from .ai import research as research_mod
+    p = _project(pid)
+    q = body.question.strip()
+    if not q:
+        raise HTTPException(400, "Question vide.")
+    context = f"Projet « {p.name} »" + (f", montage intitulé « {p.timeline.title} »" if p.timeline.title else "")
+    if p.settings.instructions:
+        context += f". Consignes du monteur : {p.settings.instructions[:300]}"
+
+    def run(ctx):
+        r = research_mod.research(q, context, ctx)
+        note = ResearchNote(question=q, answer=r["answer"], sources=r["sources"], by=r["by"])
+        storage.update_project(pid, lambda pr: pr.research.append(note))
+        ctx.step("Note enregistrée", 1.0)
+        return note.model_dump()
+    return manager.submit(pid, "recherche", run)
+
+
+@app.delete("/api/projects/{pid}/research/{nid}")
+def research_delete(pid: str, nid: str):
+    p = _project(pid)
+    before = len(p.research)
+    p.research = [n for n in p.research if n.id != nid]
+    if len(p.research) == before:
+        raise HTTPException(404, "Note introuvable")
+    storage.save_project(p)
+    return {"ok": True}
 
 
 @app.post("/api/projects/{pid}/comments/apply")

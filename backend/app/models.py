@@ -431,6 +431,16 @@ class Direction(BaseModel):
     recommended: bool = False
 
 
+class ResearchNote(BaseModel):
+    """Résultat d'une recherche web faite pour la vidéo : question, réponse, sources. Donné au réalisateur."""
+    id: str = Field(default_factory=lambda: new_id("r_"))
+    question: str
+    answer: str
+    sources: list[dict] = Field(default_factory=list)  # {"title", "url"}
+    by: str = "local"  # "claude" ou "local" (DuckDuckGo)
+    created_at: float = Field(default_factory=time.time)
+
+
 class Project(BaseModel):
     id: str = Field(default_factory=lambda: new_id("p_"))
     name: str = "Nouveau projet"
@@ -444,6 +454,7 @@ class Project(BaseModel):
     publish_kit: dict | None = None  # titres, description, chapitres, hashtags, miniature
     directions: list[Direction] = Field(default_factory=list)  # 3 directions proposées avant le montage
     reference: dict | None = None  # profil de rythme d'une vidéo de référence (« monte comme ça »)
+    research: list[ResearchNote] = Field(default_factory=list)  # notes de recherche web pour cette vidéo
     versions: list[Version] = Field(default_factory=lambda: [Version()])
     active_version: str | None = None
 
