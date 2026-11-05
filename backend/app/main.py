@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, cuda, downloads, pipeline, settings, storage, timeline_ops
+from . import config, cuda, doctor, downloads, pipeline, settings, storage, timeline_ops
 from .analysis import transcribe as tr_mod
 from .jobs import manager
 from .media import ffmpeg
@@ -35,6 +35,7 @@ async def _lifespan(_app: FastAPI):
     n = manager.cancel_all()
     if n:
         logging.getLogger(__name__).info("Arrêt : %d tâche(s) annulée(s)", n)
+    manager.flush()
 
 
 app = FastAPI(title="Monteur IA", version="0.1.0", lifespan=_lifespan)
@@ -118,6 +119,12 @@ def health():
         "key_source": pub["key_source"],
         "tts": _tts_status(),
     }
+
+
+@app.get("/api/system")
+def system(refresh: bool = False):
+    """Diagnostic du poste (FFmpeg, GPU, Whisper, voix, Claude, dossiers), gardé 30 s ; `?refresh=1` le recalcule."""
+    return doctor.report(refresh)
 
 
 # --- Réglages -----------------------------------------------------------------

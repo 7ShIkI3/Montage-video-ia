@@ -1,10 +1,13 @@
-"""Tâches : annulation, surveillance des tâches bloquées, historique et étapes."""
+"""Tâches : annulation, surveillance des tâches bloquées, historique, étapes et persistance."""
+import json
 import threading
 import time
 
 from fastapi.testclient import TestClient
 
-from app.jobs import MAX_STEPS, manager
+from app import config
+from app import main as main_mod
+from app.jobs import MAX_STEPS, Job, JobManager, manager
 from app.main import app
 
 c = TestClient(app)
@@ -108,3 +111,69 @@ def test_shutdown_cancels_active_jobs():
     _wait(job.id, ("annulee",), 2)
     assert c.get(f"/api/jobs/{waiting.id}").json()["status"] == "annulee"
     assert manager.cancel_all() == 0
+
+
+def _wait_file(path, pred, timeout=4):
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if pred(data):
+                return data
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.05)
+    raise TimeoutError(str(path))
+
+
+def test_jobs_are_persisted_and_interrupted_ones_fail_on_restart(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    mgr = JobManager()
+    done = mgr.submit("p_persist", "test", lambda ctx: "ok")
+    path = tmp_path / "jobs.json"
+    data = _wait_file(path, lambda d: any(j["id"] == done.id and j["status"] == "termine" for j in d))
+    assert [j["id"] for j in data] == [done.id] and not path.with_suffix(".json.tmp").exists()
+
+    release = threading.Event()
+
+    def run(ctx):
+        ctx.step("en route", 0.3)
+        release.wait(10)
+
+    live = mgr.submit("p_persist", "montage", run)
+    try:
+        _wait_file(path, lambda d: any(j["id"] == live.id and j["status"] == "en_cours" and j["message"] == "en route" for j in d))
+        # Redémarrage : un gestionnaire neuf relit le fichier.
+        fresh = JobManager()
+        got = fresh.get(live.id)
+        assert got.status == "erreur" and got.error == "Interrompue par un redémarrage de l'application"
+        assert got.finished_at is not None and got.message == "en route"
+        assert fresh.get(done.id).status == "termine" and fresh.get(done.id).result == "ok"  # l'historique reste tel quel
+        assert [j.id for j in fresh.for_project("p_persist")] == []  # rien n'est relancé
+        assert {j.id for j in fresh.for_project("p_persist", all=True)} == {done.id, live.id}
+        # Le fichier est mis à jour tout de suite : plus aucune tâche active dedans.
+        assert all(j["status"] != "en_cours" for j in json.loads(path.read_text(encoding="utf-8")))
+    finally:
+        release.set()
+
+
+def test_persisted_history_keeps_last_100(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    mgr = JobManager()
+    for k in range(105):
+        mgr.jobs[f"j_{k:03d}"] = Job(id=f"j_{k:03d}", project_id="p", kind="test", status="termine", created_at=1000 + k)
+    mgr.flush()
+    data = json.loads((tmp_path / "jobs.json").read_text(encoding="utf-8"))
+    assert len(data) == 100 and data[0]["id"] == "j_005" and data[-1]["id"] == "j_104"
+    assert len(JobManager().jobs) == 100
+
+
+def test_restored_jobs_are_served_by_the_route(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    old = Job(id="j_old", project_id="p_restore", kind="montage", status="en_cours", started_at=1.0)
+    (tmp_path / "jobs.json").write_text(json.dumps([old.model_dump(mode="json")]), encoding="utf-8")
+    fresh = JobManager()
+    monkeypatch.setattr(main_mod, "manager", fresh)
+    hist = c.get("/api/projects/p_restore/jobs?all=1").json()
+    assert [(j["id"], j["status"], j["error"]) for j in hist] == [("j_old", "erreur", "Interrompue par un redémarrage de l'application")]
+    assert c.get("/api/projects/p_restore/jobs").json() == []

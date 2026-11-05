@@ -4,6 +4,7 @@ import { api, fmtTime, ProjectSummary } from "../api";
 import { Icon } from "../icons";
 import { useStore } from "../store";
 import { ask } from "./Dialog";
+import { SystemBar } from "./SystemBar";
 
 type Sort = "recent" | "nom" | "duree";
 
@@ -14,7 +15,6 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
   const [over, setOver] = useState(false);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<Sort>("recent");
-  const caps = useStore((s) => s.caps);
   const input = useRef<HTMLInputElement>(null);
 
   const refresh = () => api.listProjects().then(setProjects).catch((e) => setError(e.message));
@@ -62,13 +62,8 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
           <p className="hint">Ou glisse des fichiers vidéo n'importe où sur cette page.</p>
           <input ref={input} type="file" multiple accept="video/*,audio/*" hidden onChange={(e) => quickStart([...(e.target.files ?? [])])} />
           {error && <p className="warn small">{error}</p>}
-          <h2>Moteurs</h2>
-          <div className="engine">
-            <div><span>Réalisateur</span><b>{caps ? (caps.claude ? caps.claude_model : <a href="#/reglages" title="Ajouter une clé Claude dans les réglages">local · ajouter une clé</a>) : "…"}</b></div>
-            <div><span>Transcription</span><b>{caps ? `Whisper ${caps.whisper_model}${caps.cuda ? " · GPU" : ""}` : "…"}</b></div>
-            <div><span>Encodeur</span><b>{caps?.encoder ?? "…"}</b></div>
-            <div><span>Musiques</span><b>{caps ? `${caps.music_library} morceau${caps.music_library > 1 ? "x" : ""}` : "…"}</b></div>
-          </div>
+          <h2>État du poste</h2>
+          <SystemBar />
           <h2>Raccourcis</h2>
           <p className="hint">Dans l'éditeur : <kbd className="kbd">?</kbd> affiche tous les raccourcis, <kbd className="kbd">Ctrl</kbd><kbd className="kbd">K</kbd> la palette de commandes.</p>
         </aside>

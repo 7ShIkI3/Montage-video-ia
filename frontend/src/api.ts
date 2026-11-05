@@ -432,6 +432,35 @@ export interface Health {
   tts: Record<string, "piper" | "espeak" | null>;
 }
 
+/** Gravité d'une vérification : « warn » = une fonction en moins, « error » = l'application ne peut pas travailler. */
+export type SystemLevel = "ok" | "warn" | "error";
+interface SystemCheck {
+  ok: boolean;
+  level: SystemLevel;
+  /** Ce qu'il faut faire pour corriger (ou une précision quand tout fonctionne). */
+  fix: string | null;
+  error?: string;
+}
+/** GET /api/system : une vérification par bloc, plus un résumé. */
+export interface SystemReport {
+  generated_at: number;
+  summary: { ok: boolean; problems: string[] };
+  ffmpeg: SystemCheck & { path: string; ffprobe: string; version: string | null; libass: boolean; ffprobe_ok?: boolean };
+  gpu: SystemCheck & { name: string | null; memory: string | null };
+  encoder: SystemCheck & { name: string; hardware: boolean };
+  whisper: SystemCheck & {
+    model: string; device_requested: string; cuda: boolean; cublas: boolean;
+    device_used: "cuda" | "cpu" | null; fallback_reason: string | null; model_cached: boolean;
+  };
+  voices: SystemCheck & { espeak: string | null; piper: boolean; voices_dir: string; installed: string[] };
+  claude: SystemCheck & { key_set: boolean; key_source: "env" | "fichier" | null; model: string };
+  folders: SystemCheck & {
+    data: string; projects: string; music: string; voices: string; project_count: number; free_gb: number | null; writable: boolean;
+  };
+  jobs: SystemCheck & { active: number };
+  system: { platform: string; python: string };
+}
+
 export interface Settings {
   claude_model: string;
   claude_effort: string;
@@ -510,6 +539,8 @@ const json = (method: string, body: unknown): RequestInit => ({
 
 export const api = {
   health: () => req<Health>("/api/health"),
+  /** Diagnostic du poste, gardé 30 s par le serveur ; `refresh` force un nouveau contrôle. */
+  system: (refresh = false) => req<SystemReport>(`/api/system${refresh ? "?refresh=1" : ""}`),
   settings: () => req<Settings>("/api/settings"),
   saveSettings: (patch: SettingsPatch) => req<Settings>("/api/settings", json("PUT", patch)),
   testClaude: () => req<{ ok: boolean; error: string | null; model: string }>("/api/settings/test-claude", { method: "POST" }),
