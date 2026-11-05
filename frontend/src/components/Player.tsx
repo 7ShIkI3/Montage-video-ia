@@ -381,6 +381,12 @@ export function Player() {
       const t = starts[cur.current] + loc;
       const want = speedAt(c, loc) * useStore.getState().rate;
       if (Math.abs(el.playbackRate - want) > 0.01) el.playbackRate = want;
+      // Fondus audio du plan, comme au rendu.
+      const fi = c.fade_in || 0, fo = c.fade_out || 0;
+      if (fi > 0 || fo > 0) {
+        const cd = clipDur(c);
+        el.volume = Math.max(0, Math.min(1, c.volume * (fi > 0 ? Math.min(1, loc / fi) : 1) * (fo > 0 ? Math.min(1, (cd - loc) / fo) : 1)));
+      }
       syncAudio(t, true);
       for (const s of sfx) if (s.start > reported.current && s.start <= t) playSfx(s.kind, s.volume);
       for (const im of impacts) if (im.start > reported.current && im.start <= t) fireImpact(im);

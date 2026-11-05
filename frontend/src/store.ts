@@ -59,8 +59,8 @@ export function kfAt(c: Clip, t: number): { zoom: number; x: number; y: number }
 }
 const rid = (p: string) => p + Math.random().toString(36).slice(2, 12);
 
-export type Sel = { kind: "clip" | "text" | "sfx" | "overlay" | "comment" | "impact" | "image" | "audio"; id: string };
-export type ItemKind = "text" | "sfx" | "overlay" | "comment" | "impact" | "image" | "audio";
+export type Sel = { kind: "clip" | "text" | "sfx" | "overlay" | "comment" | "impact" | "image" | "audio" | "marker"; id: string };
+export type ItemKind = "text" | "sfx" | "overlay" | "comment" | "impact" | "image" | "audio" | "marker";
 
 /** Position sur la timeline d'un commentaire ancré sur un rush (null si le passage n'est plus monté). */
 export function commentTime(tl: Timeline, c: Comment): number | null {
@@ -91,7 +91,7 @@ export function timelineDuration(tl: Timeline): number {
 /** Instants « aimantés » de la timeline : début, fin et frontières de chaque plan. */
 export function snapPoints(tl: Timeline): number[] {
   const starts = clipStarts(tl);
-  return [0, ...starts, timelineDuration(tl)];
+  return [0, ...starts, timelineDuration(tl), ...(tl.markers || []).map((m) => m.t)];
 }
 
 /** Rapproche `t` du point le plus proche s'il est à moins de `px` pixels (au zoom `pps`). */
@@ -204,6 +204,7 @@ interface State {
   rightTab: RightTab;
   helpOpen: boolean;
   paletteOpen: boolean;
+  exportOpen: boolean;
   catalog: EffectsCatalog | null;
   item: Sel | null;
   picking: boolean;
@@ -242,6 +243,7 @@ interface State {
   setRightTab: (t: RightTab) => void;
   setHelp: (open: boolean) => void;
   setPalette: (open: boolean) => void;
+  setExportOpen: (open: boolean) => void;
   /** Curseur sur le plan précédent (-1) ou suivant (+1), qui devient sélectionné. */
   jumpClip: (dir: -1 | 1) => void;
   /** Copie du plan insérée juste après lui. */
@@ -250,6 +252,8 @@ interface State {
   nudgeClip: (id: string, dir: -1 | 1) => void;
   /** Rogne l'entrée (« in ») ou la sortie (« out ») du plan au curseur. */
   trimToPlayhead: (id: string, side: "in" | "out") => void;
+  /** Pose un repère au curseur (ou sélectionne celui qui s'y trouve déjà). */
+  addMarker: () => void;
 
   edit: (fn: (tl: Timeline) => void) => void;
   undo: () => void;
@@ -280,7 +284,7 @@ interface State {
 const listOf = (tl: Timeline, kind: ItemKind) =>
   (kind === "text" ? tl.texts : kind === "sfx" ? tl.sfx : kind === "comment" ? tl.comments
     : kind === "impact" ? (tl.impacts ??= []) : kind === "image" ? (tl.images ??= [])
-    : kind === "audio" ? (tl.audio ??= []) : tl.overlays) as Array<{ id: string }>;
+    : kind === "audio" ? (tl.audio ??= []) : kind === "marker" ? (tl.markers ??= []) : tl.overlays) as Array<{ id: string }>;
 
 export const useStore = create<State>((set, get) => ({
   project: null,
@@ -305,6 +309,7 @@ export const useStore = create<State>((set, get) => ({
   rightTab: "consigne",
   helpOpen: false,
   paletteOpen: false,
+  exportOpen: false,
   catalog: null,
   item: null,
   picking: false,
@@ -449,6 +454,7 @@ export const useStore = create<State>((set, get) => ({
   setRightTab: (t) => set({ rightTab: t }),
   setHelp: (open) => set({ helpOpen: open, paletteOpen: open ? false : get().paletteOpen }),
   setPalette: (open) => set({ paletteOpen: open, helpOpen: open ? false : get().helpOpen }),
+  setExportOpen: (open) => set({ exportOpen: open }),
   jumpClip: (dir) => {
     const { timeline, playhead } = get();
     if (!timeline?.clips.length) return;
@@ -495,6 +501,15 @@ export const useStore = create<State>((set, get) => ({
     const src = c.src_in + localToSrc(c, loc);
     get().trimClip(id, side, src);
     if (side === "in") set({ playhead: start });
+  },
+  addMarker: () => {
+    const { timeline, playhead } = get();
+    if (!timeline) return;
+    const here = (timeline.markers || []).find((m) => Math.abs(m.t - playhead) < 0.15);
+    if (here) { set({ item: { kind: "marker", id: here.id }, selected: null }); return; }
+    const id = rid("k_");
+    get().edit((tl) => { (tl.markers ??= []).push({ id, t: +playhead.toFixed(3), label: "", color: "corail", chapter: true }); });
+    set({ item: { kind: "marker", id }, selected: null });
   },
 
   edit: (fn) => {
@@ -690,6 +705,7 @@ export const useStore = create<State>((set, get) => ({
       else if (kind === "impact") tl.impacts = (tl.impacts || []).filter((x) => x.id !== id);
       else if (kind === "image") tl.images = (tl.images || []).filter((x) => x.id !== id);
       else if (kind === "audio") tl.audio = (tl.audio || []).filter((x) => x.id !== id);
+      else if (kind === "marker") tl.markers = (tl.markers || []).filter((x) => x.id !== id);
       else tl.overlays = tl.overlays.filter((x) => x.id !== id);
     });
     set({ item: null });

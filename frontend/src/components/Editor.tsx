@@ -3,6 +3,7 @@ import { api } from "../api";
 import { Icon, IconName } from "../icons";
 import { isBusy, jobOf, LeftTab, RightTab, useStore } from "../store";
 import { Shortcuts } from "./Shortcuts";
+import { CommandPalette } from "./CommandPalette";
 import { AIPanel, MediaPanel } from "./LeftPanel";
 import { Player } from "./Player";
 import { CommandBar, CommentsPanel, Inspector, TranscriptPanel } from "./RightPanel";
@@ -64,6 +65,7 @@ function useShortcuts() {
       else if (mod && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); if (clip) s.nudgeClip(clip, e.key === "ArrowLeft" ? -1 : 1); }
       else if (k === "i" && !mod) { if (clip) s.trimToPlayhead(clip, "in"); }
       else if (k === "o" && !mod) { if (clip) s.trimToPlayhead(clip, "out"); }
+      else if (k === "m" && !mod) { s.addMarker(); }
       else if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); s.undo(); }
       else if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); s.redo(); }
       else if (e.key.toLowerCase() === "s" && !mod) { s.splitAtPlayhead(); }
@@ -115,7 +117,8 @@ function ExportButton() {
   const project = useStore((s) => s.project);
   const job = useStore((s) => jobOf(s, "export"));
   const busy = useStore((s) => isBusy(s, "export"));
-  const [open, setOpen] = useState(false);
+  const open = useStore((s) => s.exportOpen);
+  const setOpen = useStore.getState().setExportOpen;
   const wrap = useRef<HTMLDivElement>(null);
   const [quality, setQuality] = useState("1080p");
   const [fps, setFps] = useState<number | null>(null);
@@ -239,6 +242,7 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
   const left = useStore((s) => s.leftTab);
   const right = useStore((s) => s.rightTab);
   const helpOpen = useStore((s) => s.helpOpen);
+  const paletteOpen = useStore((s) => s.paletteOpen);
   const { setLeftTab: setLeft, setRightTab: setRight } = useStore.getState();
   useAutosave();
   useShortcuts();
@@ -318,6 +322,7 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
         <TimelineView />
       </footer>
       {helpOpen && <Shortcuts onClose={() => useStore.getState().setHelp(false)} />}
+      {paletteOpen && <CommandPalette onClose={() => useStore.getState().setPalette(false)} />}
     </div>
   );
 }

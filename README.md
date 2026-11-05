@@ -82,7 +82,17 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
 
 - Lecture de la timeline en direct (sans rendu), sous-titres en surimpression, aperçu du format.
 - Timeline : glisser-déposer pour réordonner, poignées pour raccourcir, `S` pour couper, `Suppr`,
-  `Ctrl+Z` / `Ctrl+Y`, zoom, forme d'onde.
+  `Ctrl+Z` / `Ctrl+Y`, zoom, forme d'onde. Aimantation aux frontières des plans, au curseur et aux repères
+  (`Alt` pour l'ignorer).
+- Au clavier, comme dans un logiciel pro : `J` / `K` / `L` (reculer, pause, lecture à ×1, ×2, ×4), `↑` / `↓`
+  plan précédent / suivant, `I` / `O` rognent le plan au curseur, `Ctrl+D` duplique, `Ctrl+←` / `→` déplace,
+  `+` / `-` et `Ctrl+molette` zooment, `Maj+Z` ajuste le zoom, `?` affiche tous les raccourcis.
+- Palette de commandes `Ctrl+K` : toute action de l'éditeur par son nom ; une phrase qui n'en est pas une
+  part en consigne à l'IA.
+- Repères `M` : libellé, couleur, glissables. Ceux marqués « chapitre » deviennent les chapitres YouTube du
+  kit de publication (règles YouTube respectées) et tous passent en repères dans l'export XML.
+- Audio par plan : volume, fondus d'entrée et de sortie, coupure du son, dessinés sur la timeline et
+  identiques au rendu.
 - Panneau « Pourquoi » : raison et score de chaque plan, passages écartés réintégrables en un clic.
 - Texte : cliquer un mot pour y aller, Maj+clic pour sélectionner et couper des mots, double-clic pour
   corriger un sous-titre.

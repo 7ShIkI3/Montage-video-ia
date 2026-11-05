@@ -187,6 +187,21 @@ export function Inspector() {
           <label>Volume {Math.round(c.volume * 100)} %
             <input type="range" min={0} max={2} step={0.05} value={c.volume} onChange={(e) => updateClip(c.id, { volume: +e.target.value })} />
           </label>
+          <label className="inline">
+            <input type="checkbox" checked={c.audio_effects.includes("muet")}
+              onChange={(e) => updateClip(c.id, { audio_effects: e.target.checked ? [...c.audio_effects.filter((x) => x !== "muet"), "muet"] : c.audio_effects.filter((x) => x !== "muet") })} />
+            Couper le son de ce plan
+          </label>
+          <div className="field-row">
+            <label>Fondu d'entrée (s)
+              <input type="number" min={0} max={5} step={0.1} value={c.fade_in ?? 0}
+                onChange={(e) => updateClip(c.id, { fade_in: Math.max(0, Math.min(5, +e.target.value || 0)) })} />
+            </label>
+            <label>Fondu de sortie (s)
+              <input type="number" min={0} max={5} step={0.1} value={c.fade_out ?? 0}
+                onChange={(e) => updateClip(c.id, { fade_out: Math.max(0, Math.min(5, +e.target.value || 0)) })} />
+            </label>
+          </div>
           <MotionEditor c={c} />
           {catalog && <ClipEffects c={c} catalog={catalog} />}
         </>
@@ -524,6 +539,32 @@ function ItemEditor() {
           </select>
         </label>
         <button className="small-btn danger" onClick={del}>Retirer l'image</button>
+      </>
+    );
+  }
+  if (it.kind === "marker") {
+    const x = (tl.markers ?? []).find((t) => t.id === it.id);
+    if (!x) return null;
+    return (
+      <>
+        <header><h3>Repère</h3>{back}</header>
+        <label>Libellé
+          <input value={x.label} placeholder="Ex. : Intro, Le marché, Conclusion" onChange={(e) => up({ label: e.target.value })} />
+        </label>
+        <div className="field-row">
+          <label>Position (s)<input type="number" step={0.05} value={x.t.toFixed(2)} onChange={(e) => up({ t: Math.max(0, +e.target.value) })} /></label>
+          <label>Couleur
+            <select value={x.color} onChange={(e) => up({ color: e.target.value })}>
+              {(["corail", "jaune", "vert", "bleu", "violet"] as const).map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+        </div>
+        <label className="inline"><input type="checkbox" checked={x.chapter} onChange={(e) => up({ chapter: e.target.checked })} /> Chapitre YouTube (kit de publication)</label>
+        <p className="muted small">Les repères « chapitre » deviennent les chapitres de la description du kit (premier à 0:00, 10 s minimum, au moins 3). Tous passent en repères dans l'export XML.</p>
+        <div className="field-row">
+          <button className="small-btn" onClick={() => useStore.getState().setPlayhead(x.t)}>Aller au repère</button>
+          <button className="small-btn danger" onClick={del}>Supprimer</button>
+        </div>
       </>
     );
   }
