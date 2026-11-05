@@ -37,6 +37,8 @@ def main() -> int:
         "--collect-submodules", "app", "--collect-submodules", "uvicorn",
         "--collect-all", "faster_whisper", "--collect-all", "ctranslate2",
         "--collect-data", "cv2", "--hidden-import", "ai_edge_litert.interpreter",
+        # Téléchargements (yt-dlp charge ses extracteurs à la demande) et voix Piper (modèle ONNX + données espeak).
+        "--collect-all", "yt_dlp", "--collect-all", "piper", "--collect-binaries", "onnxruntime", "--collect-data", "onnxruntime",
     ]
     # DLL CUDA installées par pip (requirements-cuda.txt) : embarquées si présentes, pour que la
     # transcription Whisper garde le GPU dans l'application installée (voir backend/app/cuda.py).

@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, cuda, pipeline, settings, storage, timeline_ops
+from . import config, cuda, downloads, pipeline, settings, storage, timeline_ops
 from .analysis import transcribe as tr_mod
 from .jobs import manager
 from .media import ffmpeg
@@ -319,6 +319,66 @@ async def upload_reference(pid: str, file: UploadFile = File(...)):
     return prof
 
 
+class UrlReq(BaseModel):
+    url: str
+
+
+def _ingest_downloaded(pid: str, path: Path):
+    added = []
+
+    def apply(p: Project) -> None:
+        try:
+            added.append(pipeline.ingest(p, path, path.name))
+        except Exception as e:
+            path.unlink(missing_ok=True)
+            raise RuntimeError(str(e))
+    storage.update_project(pid, apply)
+    return added[0]
+
+
+@app.post("/api/projects/{pid}/media/url")
+def import_media_url(pid: str, body: UrlReq):
+    """Rush depuis un lien (YouTube, Vimeo, fichier direct…) : téléchargé par yt-dlp puis analysé comme un import."""
+    _project(pid)
+
+    def run(ctx):
+        if Path(body.url).suffix.lower() in VIDEO_EXT and not body.url.startswith("http"):
+            raise ValueError("Donne un lien http(s)")
+        path = downloads.fetch_url(body.url, storage.media_dir(pid), ctx)
+        if path.suffix.lower() not in VIDEO_EXT:
+            path.unlink(missing_ok=True)
+            raise ValueError(f"Format non pris en charge : {path.suffix}")
+        ctx.step("Analyse du fichier", 0.97)
+        return _ingest_downloaded(pid, path)
+    return manager.submit(pid, "telechargement", run)
+
+
+@app.post("/api/projects/{pid}/reference/url")
+def reference_from_url(pid: str, body: UrlReq):
+    """Vidéo de référence depuis un lien : « monte comme cette vidéo »."""
+    from .ai import reference as ref_mod
+    _project(pid)
+
+    def run(ctx):
+        d = storage.project_dir(pid) / "reference"
+        tmp = storage.cache_dir(pid) / "reference_dl"
+        shutil.rmtree(tmp, ignore_errors=True)
+        path = downloads.fetch_url(body.url, tmp, ctx, max_height=720)
+        ctx.step("Analyse du rythme", 0.96)
+        prof = ref_mod.analyze(path)
+        d.mkdir(parents=True, exist_ok=True)
+        for old in d.iterdir():
+            old.unlink(missing_ok=True)
+        dst = d / _safe_name(path.name)
+        shutil.move(str(path), dst)
+        shutil.rmtree(tmp, ignore_errors=True)
+        prof["filename"] = dst.name
+        prof["summary"] = ref_mod.describe(prof)
+        storage.update_project(pid, lambda p: setattr(p, "reference", prof))
+        return prof
+    return manager.submit(pid, "telechargement", run)
+
+
 @app.delete("/api/projects/{pid}/reference")
 def delete_reference(pid: str):
     p = _project(pid)  # requête déjà sous le verrou du projet (middleware)
@@ -550,6 +610,96 @@ def sfx_file(name: str):
 @app.get("/api/music")
 def music_library():
     return sorted(p.name for p in config.MUSIC_DIR.iterdir() if p.suffix.lower() in pipeline.MUSIC_EXT)
+
+
+LIBRARY_PID = "_bibliotheque"  # tâches de la bibliothèque et des modèles, sans projet
+
+
+@app.get("/api/music/library")
+def music_library_detailed():
+    """Morceaux de la bibliothèque avec leur origine et leur licence quand on les connaît."""
+    out = []
+    for p in sorted(config.MUSIC_DIR.iterdir()):
+        if p.suffix.lower() not in pipeline.MUSIC_EXT:
+            continue
+        info = downloads.library_info(p.name) or {}
+        out.append({"name": p.name, "path": str(p.resolve()), "size": p.stat().st_size, "title": info.get("title"),
+                    "artist": info.get("artist"), "license": info.get("license"), "license_url": info.get("license_url"),
+                    "source": info.get("source"), "page": info.get("page")})
+    return out
+
+
+@app.get("/api/music/search")
+def music_search(q: str = "", limit: int = 20):
+    try:
+        return downloads.search_music(q, limit)
+    except Exception as e:
+        raise HTTPException(502, f"ccMixter injoignable : {e}")
+
+
+class MusicItem(BaseModel):
+    id: str = ""
+    title: str = ""
+    artist: str = ""
+    license: str = ""
+    license_url: str = ""
+    page: str = ""
+    download_url: str
+    bpm: int | None = None
+    tags: list[str] = []
+
+
+@app.post("/api/music/download")
+def music_download(item: MusicItem):
+    if not item.download_url.startswith("https://ccmixter.org/") and not item.download_url.startswith("http://ccmixter.org/"):
+        raise HTTPException(400, "Seuls les morceaux ccMixter passent par ici")
+    return manager.submit(LIBRARY_PID, "telechargement", lambda ctx: downloads.download_music(item.model_dump(), ctx).name)
+
+
+@app.post("/api/music/url")
+def music_from_url(body: UrlReq):
+    return manager.submit(LIBRARY_PID, "telechargement", lambda ctx: downloads.music_from_url(body.url, ctx).name)
+
+
+@app.delete("/api/music/{name}")
+def music_delete(name: str):
+    p = config.MUSIC_DIR / _safe_name(name)
+    if not p.is_file() or p.suffix.lower() not in pipeline.MUSIC_EXT:
+        raise HTTPException(404, "Morceau introuvable")
+    p.unlink()
+    p.with_suffix(p.suffix + ".json").unlink(missing_ok=True)
+    return {"ok": True}
+
+
+# --- Modèles (Whisper, voix Piper) -------------------------------------------------------------
+
+@app.get("/api/models")
+def models_status():
+    from .ai import tts as tts_mod
+    return {"whisper": downloads.whisper_models(), "piper": {"runtime": downloads.piper_runtime(),
+            "voices_dir": str(tts_mod.voices_dir()), "installed": [p.name for p in downloads.installed_piper_voices()]}}
+
+
+@app.post("/api/models/whisper/{size}")
+def models_whisper(size: str):
+    if size not in {s for s, _ in downloads.WHISPER_SIZES}:
+        raise HTTPException(400, "Modèle inconnu")
+    return manager.submit(LIBRARY_PID, "telechargement", lambda ctx: downloads.download_whisper(size, ctx))
+
+
+@app.get("/api/models/piper")
+def models_piper(lang: str | None = None):
+    try:
+        return downloads.piper_catalog(lang)
+    except Exception as e:
+        raise HTTPException(502, f"Catalogue des voix injoignable : {e}")
+
+
+@app.post("/api/models/piper/{key}")
+def models_piper_download(key: str):
+    if not re.fullmatch(r"[a-zA-Z_]+-[a-zA-Z0-9_]+-[a-z_]+", key):
+        raise HTTPException(400, "Nom de voix invalide")
+    return manager.submit(LIBRARY_PID, "telechargement", lambda ctx: downloads.download_piper(key, ctx).name)
 
 
 @app.post("/api/projects/{pid}/music")

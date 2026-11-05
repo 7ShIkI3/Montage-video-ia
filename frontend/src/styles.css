@@ -710,6 +710,23 @@ code.cmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding
 .range-stat b { font-weight: 600; font-family: var(--mono); }
 .timeline-toolbar .range-tools button.icon-btn.on { color: var(--ok); background: rgba(61,214,140,0.12); }
 
+/* ---------- Bibliothèque musicale, liens ---------- */
+.modal.library { width: 640px; }
+.library-body { padding: 14px 20px 20px; display: flex; flex-direction: column; gap: 12px; }
+.search-row { display: flex; gap: 6px; margin-top: 8px; }
+.search-row input { flex: 1; min-width: 0; min-height: 34px; }
+.search-row button { flex: none; min-height: 34px; padding: 0 12px; white-space: nowrap; }
+.track-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.track-list li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); }
+.track-list li.on { border-color: var(--accent); }
+.track-list li > svg { flex: none; color: var(--muted); }
+.track-list .meta { flex: 1; min-width: 0; }
+.track-list .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-list a { color: var(--muted); }
+.track-list .small-btn { flex: none; }
+.model-table td.right { text-align: right; }
+.model-table .ok { color: var(--ok); }
+
 /* ---------- Repères sur la règle ---------- */
 .marker-flag { position: absolute; top: 2px; height: 20px; padding: 0 6px 0 10px; max-width: 160px; display: flex; align-items: center; transform: translateX(-1px);
   border-left: 2px solid var(--mk); color: var(--mk); font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; z-index: 5; --mk: var(--accent); }

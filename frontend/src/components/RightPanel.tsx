@@ -8,6 +8,7 @@ import { MotionEditor } from "./Motion";
 import { CUTOUTS, CutoutTools, DubPanel, AIVoiceoverPanel, LutPicker } from "./Lot3";
 import { PlanPanel, QualityPanel } from "./Quality";
 import { Icon } from "../icons";
+import { MusicLibraryDialog } from "./Library";
 
 export function CommandBar() {
   const project = useStore((s) => s.project);
@@ -159,12 +160,15 @@ export function Inspector() {
   const segments = useStore((s) => s.segments);
   const [showRejected, setShowRejected] = useState(false);
   const musicInput = useRef<HTMLInputElement>(null);
+  const [libOpen, setLibOpen] = useState(false);
   if (!tl || !project) return null;
   const c = tl.clips.find((x) => x.id === selected);
   const segText = (id: string | null) => segments.find((s) => s.id === id)?.text ?? "";
 
   return (
     <section className="panel inspector">
+      {libOpen && <MusicLibraryDialog current={tl.music.track} onClose={() => setLibOpen(false)}
+        onPick={(path) => setTimelineProps({ music: { ...tl.music, track: path } })} />}
       {c ? (
         <>
           <header><h3>Plan sélectionné</h3></header>
@@ -241,7 +245,8 @@ export function Inspector() {
           {catalog && <GlobalFx tl={tl} catalog={catalog} />}
           <div className="music-row">
             <span>Musique : {tl.music.track ? tl.music.track.split(/[\\/]/).pop() : "aucune"}</span>
-            <button className="small-btn" onClick={() => musicInput.current?.click()}>Choisir…</button>
+            <button className="small-btn" onClick={() => setLibOpen(true)} title="Bibliothèque, musiques libres de droits, son d'un lien"><Icon name="music" size={13} />Bibliothèque…</button>
+            <button className="small-btn" onClick={() => musicInput.current?.click()}>Fichier…</button>
             {tl.music.track && <button className="small-btn" onClick={() => setTimelineProps({ music: { ...tl.music, track: null } })}>Retirer</button>}
             <input ref={musicInput} type="file" accept="audio/*" hidden onChange={async (e) => {
               const f = e.target.files?.[0];
