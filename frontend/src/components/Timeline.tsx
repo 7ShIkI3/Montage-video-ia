@@ -58,6 +58,7 @@ export function TimelineView() {
   const item = useStore((s) => s.item);
   const captions = useStore((s) => s.captions);
   const catalog = useStore((s) => s.catalog);
+  const loopRange = useStore((s) => s.loopRange);
   const { setPlayhead, select, moveClip, trimClip, setZoom, splitAtPlayhead, deleteClip, selectItem, deleteItem, addText } =
     useStore.getState();
   const scroller = useRef<HTMLDivElement>(null);
@@ -182,6 +183,34 @@ export function TimelineView() {
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
   };
+  // Glisser une borne de la zone d'entrée/sortie (aimantée ; une seule étape d'annulation).
+  const startMoveRange = (e: React.MouseEvent, side: "in" | "out") => {
+    e.stopPropagation();
+    e.preventDefault();
+    const r0 = tl.range;
+    if (!r0) return;
+    const x0 = e.clientX;
+    const base = side === "in" ? r0.start : r0.end;
+    const points = [...snapPoints(tl), useStore.getState().playhead];
+    let first = true;
+    const move = (ev: MouseEvent) => {
+      let v = Math.max(0, Math.min(total, base + (ev.clientX - x0) / pps));
+      if (!ev.altKey) { const s = snapTo(v, points, pps); v = s.t; setSnapAt(s.snapped); } else setSnapAt(null);
+      const next = side === "in" ? { start: Math.min(v, r0.end - 0.1), end: r0.end } : { start: r0.start, end: Math.max(v, r0.start + 0.1) };
+      const st = useStore.getState();
+      const past = st.past;
+      st.setRange({ start: +next.start.toFixed(3), end: +next.end.toFixed(3) });
+      if (!first) useStore.setState({ past });
+      first = false;
+    };
+    const up = () => {
+      setSnapAt(null);
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
   const isSel = (k: Sel["kind"], id: string) => item?.kind === k && item.id === id;
   const labelOf = (list: { id: string; label: string }[] | undefined, id: string) =>
     list?.find((x) => x.id === id)?.label ?? id.replace(/_/g, " ");
@@ -208,6 +237,19 @@ export function TimelineView() {
         </button>
         <button onClick={() => useStore.getState().addMarker()} title="Poser un repère au curseur (M) : chapitre YouTube, repère XML"><Icon name="dot" size={14} />Repère</button>
         <span className="sep" />
+        {tl.range ? (
+          <span className="range-tools">
+            <span className="range-stat" title="Zone d'entrée/sortie : I et O (sans plan sélectionné), X = le plan au curseur">
+              Zone <b>{fmtTime(tl.range.start)}</b> → <b>{fmtTime(tl.range.end)}</b>
+            </span>
+            <button className={`icon-btn ${loopRange ? "on" : ""}`} onClick={() => useStore.getState().setLoopRange(!loopRange)}
+              title="Lecture en boucle de la zone (Ctrl+L)" aria-label="Boucle sur la zone" aria-pressed={loopRange}><Icon name="redo" size={14} /></button>
+            <button className="icon-btn" onClick={() => useStore.getState().deleteRange()} title="Supprimer le contenu de la zone et refermer (Maj+Suppr)" aria-label="Supprimer la zone"><Icon name="trash" size={14} /></button>
+            <button className="icon-btn" onClick={() => useStore.getState().setRange(null)} title="Effacer la zone (Maj+X)" aria-label="Effacer la zone"><Icon name="x" size={14} /></button>
+          </span>
+        ) : (
+          <button onClick={() => useStore.getState().rangeFromClip()} title="Zone d'entrée/sortie sur le plan au curseur (X) ; I et O la posent au curseur" disabled={!tl.clips.length}><Icon name="square" size={14} />Zone</button>
+        )}
         <button className="icon-btn" onClick={() => useStore.getState().undo()} title="Annuler (Ctrl+Z)" aria-label="Annuler"><Icon name="undo" size={15} /></button>
         <button className="icon-btn" onClick={() => useStore.getState().redo()} title="Rétablir (Ctrl+Y)" aria-label="Rétablir"><Icon name="redo" size={15} /></button>
         <span className="spacer" />
@@ -384,6 +426,13 @@ export function TimelineView() {
               </div>
             )}
           </div>
+          {tl.range && (
+            <div className={`range-zone ${loopRange ? "loop" : ""}`} style={{ left: tl.range.start * pps, width: Math.max(2, (tl.range.end - tl.range.start) * pps) }}
+              title={`Zone ${fmtTime(tl.range.start, true)} → ${fmtTime(tl.range.end, true)}`}>
+              <div className="range-handle in" onMouseDown={(e) => startMoveRange(e, "in")} title="Entrée de la zone (glisser)" />
+              <div className="range-handle out" onMouseDown={(e) => startMoveRange(e, "out")} title="Sortie de la zone (glisser)" />
+            </div>
+          )}
           {snapAt != null && <div className="snap-line" style={{ left: snapAt * pps }} />}
           <div className="playhead" style={{ left: playhead * pps }} />
         </div>

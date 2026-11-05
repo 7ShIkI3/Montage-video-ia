@@ -5,7 +5,7 @@ import time
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def new_id(prefix: str = "") -> str:
@@ -185,6 +185,19 @@ class Marker(BaseModel):
     label: str = ""
     color: Literal["corail", "jaune", "vert", "bleu", "violet"] = "corail"
     chapter: bool = True  # devient un chapitre du kit de publication
+
+
+class Range(BaseModel):
+    """Zone d'entrée/sortie (touches I/O sans sélection) : lecture en boucle, export de la zone seule,
+    suppression de son contenu."""
+    start: float = Field(0.0, ge=0.0)
+    end: float = Field(0.0, ge=0.0)
+
+    @model_validator(mode="after")
+    def _ordered(self):
+        if self.end < self.start + 0.05:
+            raise ValueError("La sortie de la zone doit être après son entrée.")
+        return self
 
 
 class Comment(BaseModel):
@@ -388,6 +401,7 @@ class Timeline(BaseModel):
     reference_match: dict | None = None  # comparaison du rythme obtenu avec celui de la vidéo de référence
     comments: list[Comment] = Field(default_factory=list)
     markers: list[Marker] = Field(default_factory=list)  # repères de l'utilisateur (chapitres)
+    range: Range | None = None  # zone d'entrée/sortie (I/O) : boucle, export de la zone seule
     reframe: bool = True  # recadrage automatique sur le visage quand le format est plus étroit que la source
 
     @property

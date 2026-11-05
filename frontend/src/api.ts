@@ -298,6 +298,8 @@ export interface Timeline {
   reframe: boolean;
   comments: Comment[];
   markers?: Marker[];
+  /** Zone d'entrée/sortie (I/O sans sélection) : boucle, export de la zone seule. */
+  range?: { start: number; end: number } | null;
 }
 
 export interface EditSettings {
@@ -532,8 +534,8 @@ export const api = {
     fd.append("file", file);
     return req<MusicSettings>(`/api/projects/${id}/music`, { method: "POST", body: fd });
   },
-  export: (id: string, quality: string, fps: number | null = null, smooth = false) =>
-    req<Job>(`/api/projects/${id}/export`, json("POST", { quality, fps, smooth })),
+  export: (id: string, quality: string, fps: number | null = null, smooth = false, rangeOnly = false) =>
+    req<Job>(`/api/projects/${id}/export`, json("POST", { quality, fps, smooth, range_only: rangeOnly })),
   applyComments: (id: string) => req<Job>(`/api/projects/${id}/comments/apply`, { method: "POST" }),
   publishKit: (id: string) => req<Job>(`/api/projects/${id}/publish-kit`, { method: "POST" }),
   versions: (id: string) => req<Versions>(`/api/projects/${id}/versions`),
