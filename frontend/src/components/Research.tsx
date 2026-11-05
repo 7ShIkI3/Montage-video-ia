@@ -5,7 +5,7 @@ import { Icon } from "../icons";
 import { isBusy, jobOf, useStore } from "../store";
 
 /** Rendu minimal du Markdown des réponses : paragraphes, puces, **gras**. */
-function renderLite(text: string) {
+export function renderLite(text: string) {
   const inline = (s: string) => s.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
     part.startsWith("**") && part.endsWith("**") ? <b key={i}>{part.slice(2, -2)}</b> : <span key={i}>{part}</span>);
   const blocks: JSX.Element[] = [];

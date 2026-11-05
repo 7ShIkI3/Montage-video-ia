@@ -330,6 +330,17 @@ export interface Project {
   directions?: Direction[];
   reference?: { filename: string; summary: string; mean_shot: number; shots: number; duration: number } | null;
   research?: ResearchNote[];
+  chat?: ChatMessage[];
+}
+
+export interface ChatMessage {
+  id: string;
+  role: "monteur" | "realisateur";
+  text: string;
+  consigne: string | null;
+  applied: boolean;
+  by: string;
+  created_at: number;
 }
 
 export interface ResearchNote {
@@ -669,6 +680,14 @@ export const api = {
   deleteTemplate: (tid: string) => req<{ ok: boolean }>(`/api/templates/${tid}`, { method: "DELETE" }),
   xmlUrl: (id: string) => `/api/projects/${id}/export.xml`,
   srtUrl: (id: string) => `/api/projects/${id}/captions.srt`,
+  /** Chat avec le réalisateur IA (dossier des rushes, consignes appliquées). */
+  chat: (id: string, text: string) => req<Job>(`/api/projects/${id}/chat`, json("POST", { text })),
+  clearChat: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/chat`, { method: "DELETE" }),
+  dossier: (id: string) => fetch(`/api/projects/${id}/dossier`).then((r) => r.text()),
+  duplicateProject: (id: string) => req<Project>(`/api/projects/${id}/duplicate`, { method: "POST" }),
+  /** Ouvre le dossier du projet (ou ses exports / médias, un fichier sélectionné) dans l'explorateur. */
+  openFolder: (id: string, opts: { sub?: "exports" | "media"; file?: string } = {}) =>
+    req<{ path: string }>(`/api/projects/${id}/open-folder`, json("POST", opts)),
   /** « Essayer sans vidéo » : projet de démo créé tout de suite, clip et montage en tâche de fond. */
   demo: () => req<{ project: Project; job: Job }>("/api/demo", { method: "POST" }),
   job: (jobId: string) => req<Job>(`/api/jobs/${jobId}`),

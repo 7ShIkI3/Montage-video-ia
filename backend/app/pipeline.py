@@ -61,6 +61,13 @@ def analyze_media(project: Project, m: Media, ctx: JobContext, lo: float, hi: fl
         if m.has_video:
             signals["video"] = video_an.analyze(ffmpeg.decode_gray_frames(m.proxy or m.path))
         storage.save_signals(project.id, m.id, signals)
+    if m.has_video and "red_flashes" not in (signals.get("video") or {}):
+        # Écrans rouges (coups encaissés probables) : pour le dossier du réalisateur ; ajouté aux anciens projets au passage.
+        try:
+            signals.setdefault("video", {})["red_flashes"] = video_an.red_flashes(ffmpeg.decode_rgb_frames(m.proxy or m.path))
+            storage.save_signals(project.id, m.id, signals)
+        except Exception as e:
+            log.warning("Écrans rouges non mesurés pour %s : %s", m.filename, e)
     if m.has_video and "faces" not in signals and faces_an.AVAILABLE:
         ctx.step(f"{m.filename} : suivi des visages (recadrage auto)", lo + span * 0.45)
         try:

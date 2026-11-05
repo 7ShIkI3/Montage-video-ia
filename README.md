@@ -119,9 +119,21 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
   yt-dlp), une bibliothèque musicale avec recherche de musiques libres de droits (ccMixter, licence gardée
   à côté du fichier) ou le son d'un lien, et dans les réglages le téléchargement à l'avance des modèles Whisper
   et des voix naturelles Piper (Hugging Face).
+- Chat avec le réalisateur (onglet « Réalisateur ») : il lit le **dossier des rushes**, ce que l'app a mesuré
+  (durées, coups détectés au son, combos, écrans rouges = coups encaissés probables, changements de plan,
+  phrases transcrites horodatées, montage actuel plan par plan, repères, commentaires, notes de recherche) et
+  répond avec des horodatages ; une demande de changement devient une consigne appliquée au montage
+  (annulable par `Ctrl+Z`). « Ce qu'il sait » affiche le dossier tel qu'il le lit, limites comprises : l'app
+  n'interprète pas les images (pas de lecture du chat du jeu, pas d'identification des joueurs), elle dit donc
+  « probable ». La conversation reste dans le projet. Sans clé Claude, le message est appliqué comme une
+  consigne simple par le réalisateur local.
 - Recherche web (onglet « Recherche ») : une question, une réponse rédigée et sourcée par Claude (recherche web
-  d'Anthropic) ou, sans clé, les premiers résultats DuckDuckGo. Les notes restent dans le projet et le
-  réalisateur s'en sert au montage et dans les consignes ; une phrase se pose en bandeau d'un clic.
+  d'Anthropic) ou, sans clé, les premiers résultats DuckDuckGo. L'assistant reçoit aussi le dossier des rushes.
+  Les notes restent dans le projet et le réalisateur s'en sert au montage et dans les consignes ; une phrase se
+  pose en bandeau d'un clic.
+- Accueil : menu « ⋯ » sur chaque projet (ouvrir, renommer, dupliquer avec médias et analyses, ouvrir le dossier
+  dans l'explorateur, supprimer). Onglet Export : « Afficher dans le dossier » ouvre l'explorateur sur le fichier
+  exporté ; les liens de téléchargement marchent aussi dans l'application de bureau.
 - Zone d'entrée/sortie : `I` / `O` sans plan sélectionné (ou `X` pour le plan au curseur) posent une zone,
   glissable par ses bornes. `Ctrl+L` la lit en boucle, `Maj+Suppr` retire son contenu et referme le trou,
   et l'export propose « seulement la zone » (plans coupés, textes, sons, musique et repères recalés).

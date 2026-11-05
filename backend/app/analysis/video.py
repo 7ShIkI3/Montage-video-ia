@@ -30,3 +30,24 @@ def analyze(frames: np.ndarray, fps: float = config.ANALYSIS_FPS) -> dict:
         "cuts": cuts,
         "brightness": [round(float(x), 1) for x in frames.mean(axis=(1, 2))],
     }
+
+
+def red_flashes(frames_rgb: np.ndarray, fps: float = config.ANALYSIS_FPS, min_gap: float = 0.4,
+                jump: float = 14.0, floor: float = 10.0) -> list[float]:
+    """Instants où l'image rougit d'un coup (dégâts encaissés dans la plupart des jeux : écran teinté de rouge,
+    caméra qui tremble). Mesure : rouge moyen moins la moyenne vert/bleu, comparée aux images d'avant."""
+    if frames_rgb.ndim != 4 or frames_rgb.shape[0] < 3:
+        return []
+    f = frames_rgb.astype(np.float32)
+    redness = f[..., 0].mean(axis=(1, 2)) - (f[..., 1].mean(axis=(1, 2)) + f[..., 2].mean(axis=(1, 2))) / 2
+    out: list[float] = []
+    hot = False  # vrai tant que l'image reste rouge : on ne compte que le front montant
+    for i in range(1, len(redness)):
+        base = float(np.median(redness[max(0, i - 6):i]))
+        rising = redness[i] - base >= jump and redness[i] >= floor
+        if rising and not hot:
+            t = round(i / fps, 3)
+            if not out or t - out[-1] > min_gap:
+                out.append(t)
+        hot = rising
+    return out

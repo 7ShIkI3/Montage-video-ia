@@ -186,7 +186,7 @@ export const KIND_LABELS: Record<string, string> = {
   montage: "Montage automatique", export: "Export", doublage: "Doublage", traduction: "Traduction des sous-titres",
   controle: "Contrôle qualité", relecture: "Relecture", shorts: "Shorts", publication: "Kit de publication",
   voix_ia: "Voix de synthèse", directions: "3 directions", projecteur: "Projecteur voix", commentaires: "Commentaires",
-  consigne: "Consigne", telechargement: "Téléchargement", recherche: "Recherche web", demo: "Démo sans vidéo",
+  consigne: "Consigne", telechargement: "Téléchargement", recherche: "Recherche web", demo: "Démo sans vidéo", chat: "Réalisateur",
 };
 
 /** Tâches dont la fin ouvre le pitch du réalisateur. */

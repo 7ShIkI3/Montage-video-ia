@@ -441,6 +441,17 @@ class ResearchNote(BaseModel):
     created_at: float = Field(default_factory=time.time)
 
 
+class ChatMessage(BaseModel):
+    """Un échange du chat avec le réalisateur IA, gardé dans le projet."""
+    id: str = Field(default_factory=lambda: new_id("c_"))
+    role: Literal["monteur", "realisateur"] = "monteur"
+    text: str
+    consigne: str | None = None  # consigne que le réalisateur a appliquée au montage à la suite de ce message
+    applied: bool = False
+    by: str = ""  # "claude" ou "local" pour les réponses
+    created_at: float = Field(default_factory=time.time)
+
+
 class Project(BaseModel):
     id: str = Field(default_factory=lambda: new_id("p_"))
     name: str = "Nouveau projet"
@@ -455,6 +466,7 @@ class Project(BaseModel):
     directions: list[Direction] = Field(default_factory=list)  # 3 directions proposées avant le montage
     reference: dict | None = None  # profil de rythme d'une vidéo de référence (« monte comme ça »)
     research: list[ResearchNote] = Field(default_factory=list)  # notes de recherche web pour cette vidéo
+    chat: list[ChatMessage] = Field(default_factory=list)  # conversation avec le réalisateur IA
     versions: list[Version] = Field(default_factory=lambda: [Version()])
     active_version: str | None = None
 

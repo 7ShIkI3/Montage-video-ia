@@ -131,6 +131,20 @@ def decode_gray_frames(src: str | Path, fps: float = config.ANALYSIS_FPS, w: int
     return frames[: n * w * h].reshape(n, h, w).astype(np.float32)
 
 
+def decode_rgb_frames(src: str | Path, fps: float = config.ANALYSIS_FPS, w: int = 32, h: int = 18) -> np.ndarray:
+    """Images minuscules en couleur (n, h, w, 3) pour les teintes dominantes (écran rouge quand on encaisse)."""
+    proc = subprocess.run(
+        [FFMPEG, "-nostdin", "-loglevel", "error", "-i", str(src), "-an",
+         "-vf", f"fps={fps},scale={w}:{h}:flags=area,format=rgb24", "-f", "rawvideo", "-"],
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        raise FFmpegError(proc.stderr.decode(errors="ignore")[-500:])
+    frames = np.frombuffer(proc.stdout, dtype=np.uint8)
+    n = frames.size // (w * h * 3)
+    return frames[: n * w * h * 3].reshape(n, h, w, 3)
+
+
 def decode_gray_small(src: str | Path, fps: float, width: int = 480) -> np.ndarray:
     """Images en niveaux de gris de largeur fixe (hauteur proportionnelle), pour la détection de visages."""
     info = probe(src)

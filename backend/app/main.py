@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
+import subprocess
+import sys
 import time
+from typing import Literal
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -446,17 +450,108 @@ def research_web(pid: str, body: ResearchReq):
     q = body.question.strip()
     if not q:
         raise HTTPException(400, "Question vide.")
-    context = f"Projet « {p.name} »" + (f", montage intitulé « {p.timeline.title} »" if p.timeline.title else "")
-    if p.settings.instructions:
-        context += f". Consignes du monteur : {p.settings.instructions[:300]}"
+    from .ai.dossier import project_dossier
 
     def run(ctx):
-        r = research_mod.research(q, context, ctx)
+        # Le dossier des rushes (mesures de l'app) part avec la question : l'assistant sait ce qu'il y a dedans.
+        r = research_mod.research(q, project_dossier(storage.load_project(pid), max_chars=6000), ctx)
         note = ResearchNote(question=q, answer=r["answer"], sources=r["sources"], by=r["by"])
         storage.update_project(pid, lambda pr: pr.research.append(note))
         ctx.step("Note enregistrée", 1.0)
         return note.model_dump()
     return manager.submit(pid, "recherche", run)
+
+
+class ChatReq(BaseModel):
+    text: str
+
+
+@app.post("/api/projects/{pid}/chat")
+def chat_send(pid: str, body: ChatReq):
+    """Chat avec le réalisateur IA : il connaît le dossier des rushes et peut appliquer une consigne au montage."""
+    from .ai import chat as chat_mod
+    _project(pid)
+    if not body.text.strip():
+        raise HTTPException(400, "Message vide.")
+    return manager.submit(pid, "chat", lambda ctx: chat_mod.talk(pid, body.text, ctx))
+
+
+@app.delete("/api/projects/{pid}/chat")
+def chat_clear(pid: str):
+    # Le middleware tient déjà le verrou du projet pendant cette requête : lecture puis enregistrement direct
+    # (update_project reprendrait le même verrou, non réentrant → blocage).
+    p = _project(pid)
+    p.chat = []
+    storage.save_project(p)
+    return {"ok": True}
+
+
+@app.get("/api/projects/{pid}/dossier", response_class=Response)
+def project_dossier_text(pid: str):
+    """Le dossier des rushes tel que le réalisateur IA le lit (texte brut)."""
+    from .ai.dossier import project_dossier
+    return Response(project_dossier(_project(pid)), media_type="text/plain; charset=utf-8")
+
+
+@app.post("/api/projects/{pid}/duplicate")
+def duplicate_project(pid: str):
+    """Copie complète du projet (médias, analyses, montage, versions) sous un nouvel identifiant."""
+    from .models import new_id
+    p = _project(pid)
+    new_pid = new_id("p_")
+    src, dst = storage.project_dir(pid), storage.project_dir(new_pid)
+    # Le verrou du projet source est déjà tenu par le middleware le temps de la requête : copie sûre.
+    shutil.copytree(src, dst, ignore=shutil.ignore_patterns("exports"))
+    cp = Project.model_validate_json((dst / "project.json").read_text(encoding="utf-8"))
+    cp.id, cp.name, cp.created_at, cp.exports = new_pid, f"Copie de {p.name}", time.time(), []
+
+    def moved(path: str | None) -> str | None:
+        """Chemin absolu dans l'ancien dossier → le même dans la copie."""
+        if not path:
+            return path
+        try:
+            return str(dst / Path(path).resolve().relative_to(src.resolve()))
+        except ValueError:
+            return path
+    for m in cp.media:
+        m.path, m.proxy = moved(m.path), moved(m.proxy)
+    for tl in [cp.timeline, *(v.timeline for v in cp.versions if v.timeline)]:
+        tl.music.track = moved(tl.music.track)
+    return storage.save_project(cp)
+
+
+class OpenFolderReq(BaseModel):
+    sub: Literal["exports", "media"] | None = None  # sous-dossier à ouvrir (sinon le dossier du projet)
+    file: str | None = None  # nom d'un fichier du sous-dossier à mettre en évidence
+
+
+@app.post("/api/projects/{pid}/open-folder")
+def open_project_folder(pid: str, request: Request, body: OpenFolderReq | None = None):
+    """Ouvre le dossier du projet (ou ses exports, ses médias) dans l'explorateur de fichiers, le fichier demandé
+    sélectionné. Seulement depuis ce poste : pas depuis une autre machine du réseau."""
+    _project(pid)
+    host = request.client.host if request.client else ""
+    if host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+        raise HTTPException(403, "Le dossier ne s'ouvre que depuis ce poste.")
+    body = body or OpenFolderReq()
+    d = storage.project_dir(pid)
+    if body.sub == "exports":
+        d = storage.exports_dir(pid)
+    elif body.sub == "media":
+        d = storage.media_dir(pid)
+    target = d / Path(body.file).name if body.file else None
+    if target and not target.exists():
+        raise HTTPException(404, "Fichier introuvable")
+    if sys.platform == "win32":
+        if target:
+            subprocess.Popen(["explorer", "/select,", str(target)])
+        else:
+            os.startfile(str(d))  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", str(target)] if target else ["open", str(d)])
+    else:
+        subprocess.Popen(["xdg-open", str(d)])
+    return {"path": str(target or d)}
 
 
 @app.delete("/api/projects/{pid}/research/{nid}")
