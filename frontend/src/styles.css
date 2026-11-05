@@ -597,3 +597,18 @@ code.cmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding
   .settings-nav { position: static; flex-basis: 100%; flex-direction: row; flex-wrap: wrap; }
   .settings-section .field-row, .settings-section .field-row.three { grid-template-columns: 1fr; }
 }
+
+/* ---------- Montage de précision : aimantation, vitesse, aide, modales ---------- */
+.snap-line { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--accent); box-shadow: 0 0 0 1px rgba(255,107,61,0.35); pointer-events: none; z-index: 6; }
+.rate-badge { font: 600 11px var(--mono); padding: 2px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-2); border: 1px solid rgba(255,107,61,0.4); }
+.kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line-2); border-bottom-width: 2px; background: var(--surface-2); font: 500 11px var(--mono); color: var(--text-2); text-align: center; }
+.kbd-q { font: 700 13px var(--mono); }
+.modal-backdrop { position: fixed; inset: 0; z-index: 200; background: rgba(10,10,12,0.72); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.modal { width: 720px; max-width: 100%; max-height: calc(100vh - 48px); overflow-y: auto; background: var(--surface); border: 1px solid var(--line-2); border-radius: 14px; box-shadow: 0 40px 100px -20px rgba(0,0,0,0.9); }
+.modal > header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.modal h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.shortcut-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px 32px; padding: 20px; }
+.shortcut-groups h3 { margin: 0 0 10px; font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
+.shortcut-groups ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.shortcut-groups li { display: grid; grid-template-columns: 132px 1fr; gap: 10px; align-items: center; font-size: 13px; }
+.shortcut-groups .keys { display: flex; gap: 4px; flex-wrap: wrap; }

@@ -88,6 +88,26 @@ export function timelineDuration(tl: Timeline): number {
   return tl.clips.reduce((a, c) => a + clipDur(c), 0);
 }
 
+/** Instants « aimantés » de la timeline : début, fin et frontières de chaque plan. */
+export function snapPoints(tl: Timeline): number[] {
+  const starts = clipStarts(tl);
+  return [0, ...starts, timelineDuration(tl)];
+}
+
+/** Rapproche `t` du point le plus proche s'il est à moins de `px` pixels (au zoom `pps`). */
+export function snapTo(t: number, points: number[], pps: number, px = 8): { t: number; snapped: number | null } {
+  let best: number | null = null;
+  let dist = px / pps;
+  for (const p of points) {
+    const d = Math.abs(p - t);
+    if (d < dist) { dist = d; best = p; }
+  }
+  return best == null ? { t, snapped: null } : { t: best, snapped: best };
+}
+
+export type LeftTab = "rushes" | "ia" | "versions" | "modeles" | "marque";
+export type RightTab = "consigne" | "inspecteur" | "texte";
+
 export function clipAt(tl: Timeline, t: number): { index: number; start: number } | null {
   const starts = clipStarts(tl);
   for (let i = 0; i < tl.clips.length; i++) {
@@ -175,6 +195,15 @@ interface State {
   caps: Health | null;
   toasts: Toast[];
   pxPerSec: number;
+  /** Largeur visible de la timeline (px), pour « zoom ajusté ». */
+  timelineWidth: number;
+  /** Vitesse de lecture (J/K/L) : 1, 2 ou 4. */
+  rate: number;
+  /** Onglets de l'éditeur ; `leftTab` null = choix automatique (rushes si le projet est vide). */
+  leftTab: LeftTab | null;
+  rightTab: RightTab;
+  helpOpen: boolean;
+  paletteOpen: boolean;
   catalog: EffectsCatalog | null;
   item: Sel | null;
   picking: boolean;
@@ -206,6 +235,21 @@ interface State {
   setPlaying: (p: boolean) => void;
   select: (id: string | null) => void;
   setZoom: (pps: number) => void;
+  /** Zoom pour que tout le montage tienne dans la largeur visible. */
+  zoomFit: () => void;
+  setRate: (r: number) => void;
+  setLeftTab: (t: LeftTab | null) => void;
+  setRightTab: (t: RightTab) => void;
+  setHelp: (open: boolean) => void;
+  setPalette: (open: boolean) => void;
+  /** Curseur sur le plan précédent (-1) ou suivant (+1), qui devient sélectionné. */
+  jumpClip: (dir: -1 | 1) => void;
+  /** Copie du plan insérée juste après lui. */
+  duplicateClip: (id: string) => void;
+  /** Déplace un plan d'un cran vers la gauche ou la droite. */
+  nudgeClip: (id: string, dir: -1 | 1) => void;
+  /** Rogne l'entrée (« in ») ou la sortie (« out ») du plan au curseur. */
+  trimToPlayhead: (id: string, side: "in" | "out") => void;
 
   edit: (fn: (tl: Timeline) => void) => void;
   undo: () => void;
@@ -255,6 +299,12 @@ export const useStore = create<State>((set, get) => ({
   caps: null,
   toasts: [],
   pxPerSec: 40,
+  timelineWidth: 0,
+  rate: 1,
+  leftTab: null,
+  rightTab: "consigne",
+  helpOpen: false,
+  paletteOpen: false,
   catalog: null,
   item: null,
   picking: false,
@@ -388,6 +438,64 @@ export const useStore = create<State>((set, get) => ({
   setPlaying: (p) => set({ playing: p }),
   select: (id) => set({ selected: id, item: id ? { kind: "clip", id } : null }),
   setZoom: (pps) => set({ pxPerSec: Math.max(4, Math.min(300, pps)) }),
+  zoomFit: () => {
+    const { timeline, timelineWidth } = get();
+    const total = timeline ? timelineDuration(timeline) : 0;
+    if (!total || !timelineWidth) return;
+    get().setZoom((timelineWidth - 48) / total);
+  },
+  setRate: (r) => set({ rate: [1, 2, 4].includes(r) ? r : 1 }),
+  setLeftTab: (t) => set({ leftTab: t }),
+  setRightTab: (t) => set({ rightTab: t }),
+  setHelp: (open) => set({ helpOpen: open, paletteOpen: open ? false : get().paletteOpen }),
+  setPalette: (open) => set({ paletteOpen: open, helpOpen: open ? false : get().helpOpen }),
+  jumpClip: (dir) => {
+    const { timeline, playhead } = get();
+    if (!timeline?.clips.length) return;
+    const starts = clipStarts(timeline);
+    const eps = 0.02;
+    let idx: number;
+    if (dir > 0) {
+      idx = starts.findIndex((s) => s > playhead + eps);
+      if (idx < 0) { get().setPlayhead(timelineDuration(timeline)); return; }
+    } else {
+      idx = starts.length - 1;
+      while (idx > 0 && starts[idx] >= playhead - eps) idx--;
+    }
+    set({ playhead: starts[idx], selected: timeline.clips[idx].id, item: { kind: "clip", id: timeline.clips[idx].id } });
+  },
+  duplicateClip: (id) => {
+    let nid = "";
+    get().edit((tl) => {
+      const i = tl.clips.findIndex((x) => x.id === id);
+      if (i < 0) return;
+      nid = uid();
+      tl.clips.splice(i + 1, 0, { ...clone(tl.clips[i]), id: nid, reason: "Copie. " + tl.clips[i].reason });
+    });
+    if (nid) set({ selected: nid, item: { kind: "clip", id: nid } });
+  },
+  nudgeClip: (id, dir) => {
+    const tl = get().timeline;
+    if (!tl) return;
+    const i = tl.clips.findIndex((x) => x.id === id);
+    if (i < 0 || i + dir < 0 || i + dir >= tl.clips.length) return;
+    get().moveClip(i, dir > 0 ? i + 2 : i - 1);
+    const starts = clipStarts(get().timeline!);
+    set({ playhead: starts[i + dir] });
+  },
+  trimToPlayhead: (id, side) => {
+    const { timeline, playhead } = get();
+    if (!timeline) return;
+    const i = timeline.clips.findIndex((x) => x.id === id);
+    if (i < 0) return;
+    const c = timeline.clips[i];
+    const start = clipStarts(timeline)[i];
+    const loc = playhead - start;
+    if (loc <= 0 || loc >= clipDur(c)) return;  // le curseur doit être dans le plan
+    const src = c.src_in + localToSrc(c, loc);
+    get().trimClip(id, side, src);
+    if (side === "in") set({ playhead: start });
+  },
 
   edit: (fn) => {
     const tl = get().timeline;
