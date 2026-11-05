@@ -38,6 +38,15 @@ def main() -> int:
         "--collect-all", "faster_whisper", "--collect-all", "ctranslate2",
         "--collect-data", "cv2", "--hidden-import", "ai_edge_litert.interpreter",
     ]
+    # DLL CUDA installées par pip (requirements-cuda.txt) : embarquées si présentes, pour que la
+    # transcription Whisper garde le GPU dans l'application installée (voir backend/app/cuda.py).
+    import importlib.util
+    for pkg in ("nvidia.cublas", "nvidia.cudnn", "nvidia.cuda_nvrtc"):
+        try:
+            if importlib.util.find_spec(pkg):
+                opts += ["--collect-binaries", pkg]
+        except (ImportError, ValueError):
+            pass
     if args.ffmpeg:
         exe = ".exe" if os.name == "nt" else ""
         for tool in ("ffmpeg", "ffprobe"):

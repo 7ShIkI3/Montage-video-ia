@@ -9,3 +9,4 @@ frontend/dist/
 *.tsbuildinfo
 /dist/
 /build/
+*.spec
