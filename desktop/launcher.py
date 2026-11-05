@@ -19,6 +19,7 @@ import webbrowser
 from pathlib import Path
 
 APP_NAME = "Monteur IA"
+LOG_MAX_BYTES = 5 * 1024 * 1024  # au-delà, monteur.log passe en monteur.log.1 au démarrage
 
 
 def bundle_root() -> Path:
@@ -60,6 +61,11 @@ def redirect_std(log: Path) -> None:
     configurant ses logs (`sys.stdout.isatty()`). On les envoie dans un journal du dossier de données."""
     if sys.stdout is not None and sys.stderr is not None:
         return
+    try:
+        if log.stat().st_size > LOG_MAX_BYTES:  # rotation simple : un seul ancien journal, `.1`, écrasé à chaque fois
+            log.replace(log.with_name(log.name + ".1"))
+    except OSError:  # pas de journal encore, ou fichier verrouillé : on écrit à la suite
+        pass
     f = open(log, "a", encoding="utf-8", buffering=1)
     f.write(f"\n--- {APP_NAME} : démarrage {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
     if sys.stdout is None:
