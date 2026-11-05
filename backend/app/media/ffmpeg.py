@@ -7,12 +7,14 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 from typing import Callable
 
 import numpy as np
 
 from .. import config
+from ..jobs import JobCancelled
 
 FFMPEG = os.environ.get("MONTEUR_FFMPEG") or shutil.which("ffmpeg") or "ffmpeg"
 FFPROBE = os.environ.get("MONTEUR_FFPROBE") or shutil.which("ffprobe") or "ffprobe"
@@ -67,22 +69,30 @@ _TIME_RE = re.compile(r"out_time_us=(\d+)")
 
 
 def run(args: list[str], duration: float | None = None, on_progress: ProgressCb | None = None,
-        cwd: str | Path | None = None) -> None:
-    """Lance ffmpeg avec suivi de progression (0..1) via -progress."""
+        cwd: str | Path | None = None, cancel: threading.Event | None = None) -> None:
+    """Lance ffmpeg avec suivi de progression (0..1) via -progress. `cancel` posé : ffmpeg est tué (JobCancelled)."""
     cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-progress", "pipe:1", *args]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd)
     assert proc.stdout is not None
-    for line in proc.stdout:
-        if on_progress and duration:
-            m = _TIME_RE.match(line.strip())
-            if m:
-                on_progress(min(1.0, int(m.group(1)) / 1e6 / duration))
+    try:
+        for line in proc.stdout:
+            if cancel is not None and cancel.is_set():
+                raise JobCancelled()
+            if on_progress and duration:
+                m = _TIME_RE.match(line.strip())
+                if m:
+                    on_progress(min(1.0, int(m.group(1)) / 1e6 / duration))
+    except BaseException:  # annulation, ou erreur dans le callback : on ne laisse pas ffmpeg tourner seul
+        proc.kill()
+        proc.wait()
+        raise
     stderr = proc.stderr.read() if proc.stderr else ""
     if proc.wait() != 0:
         raise FFmpegError(stderr.strip()[-1500:] or "ffmpeg a échoué")
 
 
-def make_proxy(src: str | Path, dst: str | Path, duration: float, on_progress: ProgressCb | None = None) -> None:
+def make_proxy(src: str | Path, dst: str | Path, duration: float, on_progress: ProgressCb | None = None,
+               cancel: threading.Event | None = None) -> None:
     """Proxy léger pour la lecture : 540p, GOP court pour un seek rapide."""
     h = config.PROXY_HEIGHT
     run([
@@ -92,7 +102,7 @@ def make_proxy(src: str | Path, dst: str | Path, duration: float, on_progress: P
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-g", "15", "-bf", "0",
         "-c:a", "aac", "-b:a", "96k", "-ac", "2",
         "-movflags", "+faststart", str(dst),
-    ], duration, on_progress)
+    ], duration, on_progress, cancel=cancel)
 
 
 def decode_audio(src: str | Path, sr: int = config.AUDIO_SR) -> np.ndarray:

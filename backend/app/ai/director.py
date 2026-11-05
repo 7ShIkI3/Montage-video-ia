@@ -652,7 +652,7 @@ def heuristic_command(instruction: str, timeline: Timeline, segments: list[Segme
             "Sans clé API Claude, je comprends seulement : une durée (« 30 secondes »), un format "
             "(« vertical »), les sous-titres, la musique, les zooms, des effets (« noir et blanc », « ralenti », "
             "« transitions », « bruitages », « sans effets »), ou « enlève \"mot\" ». "
-            "Ajoute ANTHROPIC_API_KEY pour des consignes libres."
+            "Ajoute ta clé Claude dans Réglages (engrenage en haut à droite) pour des consignes libres."
         )
     return tl, ", ".join(changed), s2
 

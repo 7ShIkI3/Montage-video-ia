@@ -1,0 +1,6 @@
+# Transcription Whisper sur carte NVIDIA (CUDA 12) : DLL cuBLAS et cuDNN installées par pip.
+# Optionnel : sans elles, l'app transcrit sur le processeur (plus lent). Voir app/cuda.py.
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cudnn-cu12==9.24.1.1
+# Tirée par cuBLAS, épinglée pour une installation reproductible.
+nvidia-cuda-nvrtc-cu12==12.9.86

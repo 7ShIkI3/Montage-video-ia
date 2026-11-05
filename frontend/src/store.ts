@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, CaptionLine, Clip, AudioItem, Comment, EffectsCatalog, ImageItem, ImpactItem, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript, waitJob } from "./api";
+import { api, ApiError, CaptionLine, Clip, AudioItem, Comment, EffectsCatalog, Health, ImageItem, ImpactItem, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript, waitJob } from "./api";
 
 const uid = () => "c_" + Math.random().toString(36).slice(2, 12);
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
@@ -97,6 +97,65 @@ export function clipAt(tl: Timeline, t: number): { index: number; start: number 
   return null;
 }
 
+/** Tâche suivie côté interface : le libellé et la façon de la relancer ne viennent pas du serveur. */
+export interface TrackedJob extends Job {
+  label?: string;
+  /** Relance la même tâche (bouton « Réessayer »). */
+  retry?: () => Promise<Job | null>;
+}
+
+export interface Toast {
+  id: number;
+  text: string;
+  level: "info" | "ok" | "erreur";
+  action?: { label: string; run: () => void };
+}
+
+export interface RunJobOpts {
+  /** Recharge le projet à la fin (par défaut : oui). */
+  refresh?: boolean;
+  /** Le résultat remplace la timeline locale (tâches IA). */
+  timeline?: boolean;
+  onDone?: (j: Job) => void | Promise<void>;
+}
+
+/** Libellé français de chaque type de tâche. */
+export const KIND_LABELS: Record<string, string> = {
+  montage: "Montage IA", export: "Export", doublage: "Doublage", traduction: "Traduction des sous-titres",
+  controle: "Contrôle qualité", relecture: "Relecture", shorts: "Shorts", publication: "Kit de publication",
+  voix_ia: "Voix IA", directions: "3 directions", projecteur: "Projecteur voix", commentaires: "Commentaires",
+  consigne: "Consigne",
+};
+export const kindLabel = (kind: string) => KIND_LABELS[kind] ?? kind;
+
+const isActive = (j: Job) => j.status === "en_attente" || j.status === "en_cours";
+
+/** Tâche en cours la plus récente (null s'il n'y en a pas). */
+export function activeJob(s: { jobs: Record<string, Job> }): Job | null {
+  let best: Job | null = null;
+  for (const j of Object.values(s.jobs)) if (isActive(j) && (!best || j.created_at > best.created_at)) best = j;
+  return best;
+}
+
+/** Tâche la plus récente d'un type : celle en cours si elle existe, sinon la dernière terminée. */
+export function jobOf(s: { jobs: Record<string, Job> }, kind: string): Job | null {
+  let best: Job | null = null;
+  for (const j of Object.values(s.jobs)) {
+    if (j.kind !== kind) continue;
+    if (!best || (isActive(j) && !isActive(best)) || (isActive(j) === isActive(best) && j.created_at > best.created_at)) best = j;
+  }
+  return best;
+}
+
+/** Vrai si une tâche de l'un de ces types tourne (sans type : n'importe laquelle). */
+export const isBusy = (s: { jobs: Record<string, Job> }, ...kinds: string[]): boolean =>
+  Object.values(s.jobs).some((j) => isActive(j) && (!kinds.length || kinds.includes(j.kind)));
+
+const ERROR_WORDS = /impossible|échoué|échec|refusé|erreur/i;
+let toastSeq = 0;
+/** Tâches dont un appel suit déjà l'avancement (évite de les suivre deux fois après un load). */
+const following = new Set<string>();
+
 interface State {
   project: Project | null;
   timeline: Timeline | null;
@@ -109,8 +168,12 @@ interface State {
   captions: CaptionLine[];
   transcripts: Record<string, Transcript>;
   segments: Segment[];
+  /** Toutes les tâches du projet (en cours et récentes), par identifiant. */
+  jobs: Record<string, TrackedJob>;
+  /** Dérivée de `jobs` : la tâche en cours la plus récente (compatibilité). */
   job: Job | null;
-  toast: string | null;
+  caps: Health | null;
+  toasts: Toast[];
   pxPerSec: number;
   catalog: EffectsCatalog | null;
   item: Sel | null;
@@ -126,8 +189,19 @@ interface State {
   saveNow: () => Promise<void>;
   refreshDerived: () => Promise<void>;
   setProject: (p: Project) => void;
-  setJob: (j: Job | null) => void;
-  notify: (msg: string | null) => void;
+  /** Ajoute ou met à jour une tâche (garde son libellé et son `retry`) et recalcule `job`. */
+  putJob: (j: Job, extra?: { label?: string; retry?: TrackedJob["retry"] }) => void;
+  /** Lance une tâche serveur, suit son avancement, recharge le projet et signale l'issue. Null si échec ou annulation. */
+  runJob: (label: string, start: () => Promise<Job>, opts?: RunJobOpts) => Promise<Job | null>;
+  /** Exécute `fn` ; une erreur devient un toast au lieu d'être avalée. */
+  guard: <T>(label: string, fn: () => Promise<T>) => Promise<T | undefined>;
+  /** Signale une erreur (rien pour une annulation ; bouton « Ouvrir Réglages » si Claude manque). */
+  fail: (label: string, e: unknown) => void;
+  refreshCaps: () => Promise<void>;
+  notify: (msg: string | null, opts?: { level?: Toast["level"]; action?: Toast["action"] }) => void;
+  dismiss: (id: number) => void;
+  /** Demande l'arrêt d'une tâche en cours. */
+  cancelJob: (id: string) => Promise<void>;
   setPlayhead: (t: number) => void;
   setPlaying: (p: boolean) => void;
   select: (id: string | null) => void;
@@ -176,8 +250,10 @@ export const useStore = create<State>((set, get) => ({
   captions: [],
   transcripts: {},
   segments: [],
+  jobs: {},
   job: null,
-  toast: null,
+  caps: null,
+  toasts: [],
   pxPerSec: 40,
   catalog: null,
   item: null,
@@ -188,17 +264,31 @@ export const useStore = create<State>((set, get) => ({
 
   load: async (id) => {
     if (!get().catalog) api.effects().then((c) => set({ catalog: c })).catch(() => undefined);
+    get().refreshCaps();
+    const sameProject = get().project?.id === id;
     const p = await api.getProject(id);
-    set({ project: p, timeline: p.timeline, past: [], future: [], dirty: false, playhead: 0, selected: null });
-    const jobs = await api.activeJobs(id).catch(() => []);
-    set({ job: jobs[0] ?? null });
+    // Revenir des réglages recharge le même projet : on garde alors l'historique d'annulation.
+    set({ project: p, timeline: p.timeline, dirty: false, playhead: 0, selected: null,
+      ...(sameProject ? {} : { past: [], future: [], jobs: {}, job: null }) });
+    const [active, history] = await Promise.all([
+      api.activeJobs(id).catch(() => [] as Job[]),
+      api.jobsHistory(id).catch(() => [] as Job[]),
+    ]);
+    // Les tâches déjà suivies ici gardent leur libellé et leur « Réessayer » ; le reste vient du serveur.
+    const jobs: Record<string, TrackedJob> = {};
+    for (const j of history) jobs[j.id] = j;
+    for (const j of active) jobs[j.id] = j;
+    for (const [jid, j] of Object.entries(get().jobs)) if (isActive(j) || !jobs[jid]) jobs[jid] = j;
+    set({ jobs, job: activeJob({ jobs }) });
     await get().refreshDerived();
-    if (jobs.length) {
-      // Tâche lancée avant un rechargement de la page : on reprend son suivi jusqu'au bout.
-      waitJob(jobs[0], (j) => { if (get().project?.id === id) set({ job: j }); })
+    // Tâches lancées avant un rechargement de la page : on reprend leur suivi jusqu'au bout.
+    for (const j of active) {
+      if (following.has(j.id)) continue;
+      following.add(j.id);
+      waitJob(j, (u) => { if (get().project?.id === id) get().putJob(u); })
         .then(() => { if (get().project?.id === id) return get().refreshProject({ timeline: true }); })
-        .catch((e) => get().notify((e as Error).message))
-        .finally(() => { if (get().project?.id === id) set({ job: null }); });
+        .catch((e) => get().fail(kindLabel(j.kind), e))
+        .finally(() => following.delete(j.id));
     }
   },
   refreshProject: async (opts) => {
@@ -231,8 +321,65 @@ export const useStore = create<State>((set, get) => ({
     set({ captions, transcripts, segments });
   },
   setProject: (p) => set({ project: p }),
-  setJob: (j) => set({ job: j }),
-  notify: (msg) => set({ toast: msg }),
+  putJob: (j, extra) => {
+    const jobs = { ...get().jobs, [j.id]: { ...get().jobs[j.id], ...j, ...extra } };
+    set({ jobs, job: activeJob({ jobs }) });
+  },
+  runJob: async (label, start, opts) => {
+    const pid = get().project?.id;
+    if (!pid) return null;
+    const same = () => get().project?.id === pid;
+    const retry = () => get().runJob(label, start, opts);
+    try {
+      await get().saveNow();
+      const first = await start();
+      following.add(first.id);
+      let done: Job;
+      try {
+        done = await waitJob(first, (j) => { if (same()) get().putJob(j, { label, retry }); });
+      } finally {
+        following.delete(first.id);
+      }
+      if (same()) {
+        if (opts?.refresh !== false) await get().refreshProject({ timeline: opts?.timeline });
+        await opts?.onDone?.(done);
+      }
+      return done;
+    } catch (e) {
+      if ((e as ApiError).code === "cancelled") get().notify(`Annulée : ${label}`);
+      else get().fail(label, e);
+      return null;
+    }
+  },
+  guard: async (label, fn) => {
+    try {
+      return await fn();
+    } catch (e) {
+      get().fail(label, e);
+      return undefined;
+    }
+  },
+  fail: (label, e) => {
+    const err = e as ApiError;
+    if (err?.code === "cancelled") return;
+    const text = `${label} : ${err?.message ?? String(e)}`;
+    const action = err?.code === "claude_required"
+      ? { label: "Ouvrir Réglages", run: () => { location.hash = "#/reglages"; } }
+      : undefined;
+    get().notify(text, { level: "erreur", action });
+  },
+  refreshCaps: () => api.health().then((caps) => set({ caps })).catch(() => undefined),
+  notify: (msg, opts) => {
+    if (msg === null) return set({ toasts: [] });
+    const level = opts?.level ?? (ERROR_WORDS.test(msg) ? "erreur" : "info");
+    // Un même message répété remplace le précédent au lieu de s'empiler.
+    const rest = get().toasts.filter((t) => t.text !== msg).slice(-4);
+    set({ toasts: [...rest, { id: ++toastSeq, text: msg, level, action: opts?.action }] });
+  },
+  dismiss: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
+  cancelJob: async (id) => {
+    await get().guard("Annulation impossible", async () => { get().putJob(await api.cancelJob(id)); });
+  },
   setPlayhead: (t) => {
     const tl = get().timeline;
     const max = tl ? timelineDuration(tl) : 0;
@@ -434,6 +581,7 @@ export const useStore = create<State>((set, get) => ({
       else if (kind === "comment") tl.comments = tl.comments.filter((x) => x.id !== id);
       else if (kind === "impact") tl.impacts = (tl.impacts || []).filter((x) => x.id !== id);
       else if (kind === "image") tl.images = (tl.images || []).filter((x) => x.id !== id);
+      else if (kind === "audio") tl.audio = (tl.audio || []).filter((x) => x.id !== id);
       else tl.overlays = tl.overlays.filter((x) => x.id !== id);
     });
     set({ item: null });

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { api, Direction, EditSettings, fmtTime, Style, waitJob } from "../api";
+import { api, Direction, EditSettings, fmtTime, Style } from "../api";
 import { useStore } from "../store";
 
 const STYLES: { id: Style; name: string; desc: string }[] = [
@@ -64,9 +64,12 @@ export function MediaPanel() {
             </div>
             <button className="icon-btn" title="Retirer" onClick={async () => {
               if (!confirm(`Retirer ${m.filename} du projet ?`)) return;
-              await useStore.getState().saveNow();
-              await api.deleteMedia(project.id, m.id);
-              await useStore.getState().refreshProject({ timeline: true });
+              const st = useStore.getState();
+              await st.guard("Retrait impossible", async () => {
+                await st.saveNow();
+                await api.deleteMedia(project.id, m.id);
+                await st.refreshProject({ timeline: true });
+              });
             }}>✕</button>
           </li>
         ))}
@@ -78,7 +81,7 @@ export function MediaPanel() {
 export function AIPanel() {
   const project = useStore((s) => s.project);
   const job = useStore((s) => s.job);
-  const { setJob, notify } = useStore.getState();
+  const { notify } = useStore.getState();
   const [s, setS] = useState<EditSettings | null>(null);
   if (!project) return null;
   const settings = s ?? project.settings;
@@ -92,17 +95,19 @@ export function AIPanel() {
     if (project.timeline.clips.length && !confirm(
       dirty ? "Remonter remplace le montage actuel et tes retouches non enregistrées. Continuer ?"
         : "Remonter remplace le montage actuel. Continuer ?")) return;
-    try {
+    const before = useStore.getState().timeline;
+    await useStore.getState().runJob("Montage IA", async () => {
       await api.patchProject(project.id, { settings: settings_ });
-      const j = await api.autoEdit(project.id, settings_);
-      await waitJob(j, setJob);
-      await useStore.getState().load(project.id);
-      notify("Montage terminé. Tu peux le retoucher ou demander des changements à l'IA.");
-    } catch (e) {
-      notify(`Le montage a échoué : ${(e as Error).message}`);
-    } finally {
-      setJob(null);
-    }
+      return api.autoEdit(project.id, settings_);
+    }, {
+      refresh: false,
+      onDone: async () => {
+        await useStore.getState().load(project.id);
+        // load() vide l'historique : Ctrl+Z doit pouvoir revenir au montage d'avant.
+        useStore.setState({ past: before ? [before] : [], future: [] });
+        notify("Montage terminé. Tu peux le retoucher ou demander des changements à l'IA.");
+      },
+    });
   };
 
   return (
@@ -155,7 +160,12 @@ export function AIPanel() {
         {busy ? "L'IA travaille…" : project.timeline.clips.length ? "↻ Remonter avec l'IA" : "✨ Monter avec l'IA"}
       </button>
       {busy && job && (
-        <div className="progress"><div style={{ width: `${job.progress * 100}%` }} /><span>{job.message || "En attente…"}</span></div>
+        <div className="progress-row">
+          <div className="progress"><div style={{ width: `${job.progress * 100}%` }} /><span>{job.message || "En attente…"}</span></div>
+          <button className="small-btn" onClick={() => useStore.getState().cancelJob(job.id)} disabled={job.cancel_requested}>
+            {job.cancel_requested ? "Arrêt…" : "Annuler"}
+          </button>
+        </div>
       )}
       {project.warnings.map((w, i) => <p key={i} className="warn small">{w}</p>)}
     </section>
@@ -171,15 +181,7 @@ function DirectionsPicker({ busy, onPick }: { busy: boolean; onPick: (d: Directi
   const [audience, setAudience] = useState("");
   if (!project) return null;
   const dirs = project.directions ?? [];
-  const ask = async () => {
-    const st = useStore.getState();
-    try {
-      await waitJob(await api.directions(project.id, { platform, tone, audience }), st.setJob);
-      await st.refreshProject();
-    } catch (e) {
-      st.notify(`Directions impossibles : ${(e as Error).message}`);
-    } finally { st.setJob(null); }
-  };
+  const ask = () => useStore.getState().runJob("3 directions", () => api.directions(project.id, { platform, tone, audience }));
   return (
     <div className="directions">
       <button className="link-like small" onClick={() => setOpen(!open)}>
@@ -236,7 +238,7 @@ function ReferencePicker({ busy }: { busy: boolean }) {
         <button className="small-btn" disabled={busy || sending} onClick={() => input.current?.click()}>
           {sending ? "Analyse…" : ref ? "Changer" : "Choisir…"}
         </button>
-        {ref && <button className="small-btn" disabled={busy} onClick={async () => { await api.deleteReference(project.id); await refreshProject(); }}>Retirer</button>}
+        {ref && <button className="small-btn" disabled={busy} onClick={() => useStore.getState().guard("Retrait impossible", async () => { await api.deleteReference(project.id); await refreshProject(); })}>Retirer</button>}
       </div>
       <input ref={input} type="file" accept="video/*" hidden onChange={async (e) => {
         const f = e.target.files?.[0];

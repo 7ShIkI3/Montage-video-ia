@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from app import storage
+from app import config, storage
 from app.ai import translate, tts
 from app.analysis import segment
 from app.main import app
@@ -170,6 +170,7 @@ def test_dubbing(rush, monkeypatch):
     tl.clips = [Clip(media_id=m.id, src_in=0.0, src_out=5.0)]
     assert c.put(f"/api/projects/{pid}/timeline", json=tl.model_dump()).status_code == 200
     monkeypatch.setattr(translate, "translate_lines", lambda texts, lang: {t: "Hello everyone, let's go" for t in texts})
+    monkeypatch.setattr(config, "claude_available", lambda: True)  # le doublage exige Claude pour traduire
     assert c.get("/api/tts").json()["en"] in ("espeak", "piper")
 
     j = _wait(c.post(f"/api/projects/{pid}/dub", json={"language": "en"}).json())

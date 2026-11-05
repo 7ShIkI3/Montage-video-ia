@@ -2,24 +2,46 @@ import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Editor } from "./components/Editor";
 import { Home } from "./components/Home";
+import { Settings } from "./components/Settings";
+import { Toasts } from "./components/Toasts";
+import { useStore } from "./store";
 import "./styles.css";
 
-function route(): string | null {
+type Route = { page: "projet"; id: string } | { page: "reglages" } | { page: "accueil" };
+
+function route(): Route {
+  if (location.hash.startsWith("#/reglages")) return { page: "reglages" };
   const m = location.hash.match(/^#\/p\/([\w]+)/);
-  return m ? m[1] : null;
+  return m ? { page: "projet", id: m[1] } : { page: "accueil" };
 }
 
+// Les erreurs que personne n'a rattrapées deviennent un message visible au lieu de disparaître dans la console.
+window.addEventListener("unhandledrejection", (e) => {
+  const err = e.reason as { message?: string; code?: string } | undefined;
+  if (err?.code === "cancelled") return;
+  useStore.getState().notify(`Erreur inattendue : ${err?.message ?? String(e.reason)}`, { level: "erreur" });
+});
+
 function App() {
-  const [pid, setPid] = useState<string | null>(route());
+  const [r, setR] = useState<Route>(route());
   useEffect(() => {
-    const on = () => setPid(route());
+    const on = () => setR(route());
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
-  return pid ? (
-    <Editor key={pid} id={pid} onBack={() => (location.hash = "")} />
-  ) : (
-    <Home onOpen={(id) => (location.hash = `#/p/${id}`)} />
+  // Retour des réglages : à la page d'où l'on vient (éditeur ou accueil), sinon à l'accueil.
+  const back = () => { if (history.length > 1) history.back(); else location.hash = ""; };
+  return (
+    <>
+      {r.page === "projet" ? (
+        <Editor key={r.id} id={r.id} onBack={() => (location.hash = "")} />
+      ) : r.page === "reglages" ? (
+        <Settings onBack={back} />
+      ) : (
+        <Home onOpen={(id) => (location.hash = `#/p/${id}`)} />
+      )}
+      <Toasts />
+    </>
   );
 }
 

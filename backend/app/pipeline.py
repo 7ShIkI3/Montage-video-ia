@@ -46,7 +46,8 @@ def analyze_media(project: Project, m: Media, ctx: JobContext, lo: float, hi: fl
     if not m.proxy and m.has_video:
         proxy = cache / f"{m.id}.proxy.mp4"
         ffmpeg.make_proxy(m.path, proxy, m.duration,
-                          ctx.sub(lo, lo + span * 0.35, f"{m.filename} : création du proxy de lecture"))
+                          ctx.sub(lo, lo + span * 0.35, f"{m.filename} : création du proxy de lecture"),
+                          cancel=ctx.cancel_event)
         m.proxy = str(proxy)
         ffmpeg.thumbnail(proxy, cache / f"{m.id}.jpg", min(1.0, m.duration / 2))
     signals = storage.load_signals(project.id, m.id)
@@ -75,13 +76,23 @@ def analyze_media(project: Project, m: Media, ctx: JobContext, lo: float, hi: fl
         signals["hits"] = hits_an.detect_hits(pcm, config.AUDIO_SR)
         storage.save_signals(project.id, m.id, signals)
     if m.has_audio and storage.load_transcript(project.id, m.id) is None:
-        ctx.step(f"{m.filename} : transcription (Whisper {config.WHISPER_MODEL})", lo + span * 0.5)
+        ctx.step(f"{m.filename} : chargement de Whisper {config.WHISPER_MODEL}", lo + span * 0.5, stage="transcription")
         try:
             if pcm is None:
                 pcm = ffmpeg.decode_audio(m.path)
+            tr_mod.ensure_loaded()  # le choix GPU / processeur se fait au chargement
+            st = tr_mod.whisper_status()
+            if st["fallback_reason"]:
+                warn = f"GPU indisponible ({st['fallback_reason'].splitlines()[0][:100]}) : transcription sur CPU, plus lente."
+                if warn not in project.warnings:
+                    project.warnings.append(warn)
+            ctx.step(f"{m.filename} : transcription (Whisper {config.WHISPER_MODEL} sur {st['device_used'].upper()})",
+                     lo + span * 0.5, stage="transcription")
             t = tr_mod.transcribe(pcm, m.id, m.duration, ctx.sub(lo + span * 0.5, hi))
             storage.save_transcript(project.id, t)
-        except tr_mod.TranscriptionUnavailable as e:
+        except (RuntimeError, OSError) as e:  # dont TranscriptionUnavailable : le montage se fait sans paroles
+            if not isinstance(e, tr_mod.TranscriptionUnavailable):
+                log.warning("Transcription de %s échouée : %s", m.filename, e)
             warn = f"Transcription indisponible ({e}). Montage basé sur l'audio et l'image seulement."
             if warn not in project.warnings:
                 project.warnings.append(warn)
@@ -147,6 +158,7 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     project.warnings = []
     n = len(project.media)
     for i, m in enumerate(project.media):
+        ctx.check()
         analyze_media(project, m, ctx, 0.85 * i / n, 0.85 * (i + 1) / n)
         _save_media(project)
 
@@ -526,6 +538,7 @@ def make_shorts(project_id: str, ctx: JobContext, count: int = 3, target: float 
     n = len(project.media)
     for i, m in enumerate(project.media):
         if not m.analyzed:
+            ctx.check()
             analyze_media(project, m, ctx, 0.6 * i / n, 0.6 * (i + 1) / n)
             _save_media(project)
     ctx.step("Recherche des passages les plus partageables", 0.65)
@@ -721,6 +734,21 @@ def translate_captions(project_id: str, lang: str | None, ctx: JobContext) -> di
     return {"language": lang}
 
 
+def _dub_lines(tl: Timeline, transcripts: dict[str, Transcript]):
+    """Phrases plus longues que les sous-titres : la voix lit d'une traite et respire aux vraies pauses."""
+    return cap_mod.group_lines(cap_mod.timeline_words(tl, transcripts), 18, 120, max_gap=0.8)
+
+
+def dub_needs_claude(project: Project, lang: str) -> bool:
+    """Le doublage n'appelle Claude que pour traduire des phrases pas déjà en cache ni déjà dans la bonne langue."""
+    transcripts = transcripts_for(project)
+    if {transcripts[c.media_id].language for c in project.timeline.clips if c.media_id in transcripts} == {lang}:
+        return False
+    known = storage.load_translations(project.id, lang)
+    tl = project.timeline.model_copy(update={"caption_language": None})
+    return any(ln.text not in known for ln in _dub_lines(tl, transcripts))
+
+
 def dub_voice(project_id: str, lang: str | None, ctx: JobContext, original_volume: float = 0.12) -> dict:
     """Doublage IA : traduit les phrases du montage, les fait lire par une voix de synthèse calée sur le
     moment où elles sont dites, et baisse la voix d'origine. lang=None retire le doublage."""
@@ -745,9 +773,8 @@ def dub_voice(project_id: str, lang: str | None, ctx: JobContext, original_volum
         raise ValueError("Aucune voix de synthèse pour cette langue : installe espeak-ng, ou Piper avec une voix "
                          f"dans {tts.voices_dir()}.")
     tl = project.timeline.model_copy(update={"caption_language": None})
-    # Phrases plus longues que les sous-titres : la voix lit d'une traite et respire aux vraies pauses.
     transcripts = transcripts_for(project)
-    lines = cap_mod.group_lines(cap_mod.timeline_words(tl, transcripts), 18, 120, max_gap=0.8)
+    lines = _dub_lines(tl, transcripts)
     if not lines:
         raise ValueError("Rien à doubler : il faut des paroles transcrites dans le montage.")
     ctx.step(f"Traduction des phrases en {name}", 0.05)

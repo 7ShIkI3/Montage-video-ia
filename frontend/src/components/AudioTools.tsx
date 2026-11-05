@@ -1,7 +1,8 @@
 // Lot 2 : voix off au micro, sons importés sur les pistes audio, et langue des sous-titres.
 import { useEffect, useRef, useState } from "react";
-import { api, waitJob } from "../api";
-import { useStore } from "../store";
+import { api } from "../api";
+import { CapHint, needClaude } from "../caps";
+import { isBusy, useStore } from "../store";
 
 /** Enregistre une voix off pendant que la vidéo défile depuis le curseur, puis la pose sur une piste audio. */
 export function VoiceOverButton() {
@@ -85,28 +86,25 @@ export function AddSoundButton() {
 export function CaptionLanguage() {
   const project = useStore((s) => s.project);
   const tl = useStore((s) => s.timeline);
-  const job = useStore((s) => s.job);
+  const busy = useStore((s) => isBusy(s, "traduction"));
+  const reason = useStore((s) => needClaude(s.caps));
   const [langs, setLangs] = useState<{ code: string; name: string }[]>([]);
   useEffect(() => { api.languages().then(setLangs).catch(() => undefined); }, []);
   if (!project || !tl) return null;
-  const busy = job?.kind === "traduction" && job.status !== "termine" && job.status !== "erreur";
-  const change = async (code: string) => {
-    const st = useStore.getState();
-    try {
-      await st.saveNow();
-      await waitJob(await api.translate(project.id, code || null), st.setJob);
-      await st.refreshProject({ timeline: true });
-      st.notify(code ? `Sous-titres traduits (${langs.find((l) => l.code === code)?.name ?? code}).` : "Sous-titres dans la langue parlée.");
-    } catch (e) {
-      st.notify(`Traduction impossible : ${(e as Error).message}`);
-    } finally { st.setJob(null); }
-  };
+  const change = (code: string) => useStore.getState().runJob("Traduction", () => api.translate(project.id, code || null), {
+    timeline: true,
+    onDone: () => useStore.getState().notify(code ? `Sous-titres traduits (${langs.find((l) => l.code === code)?.name ?? code}).` : "Sous-titres dans la langue parlée."),
+  });
+  // Sans Claude, on peut seulement revenir à la langue parlée : les traductions sont grisées.
   return (
-    <label>Langue des sous-titres
-      <select value={tl.caption_language || ""} disabled={busy || tl.captions === "aucun"} onChange={(e) => change(e.target.value)}>
-        <option value="">Langue parlée (originale)</option>
-        {langs.map((l) => <option key={l.code} value={l.code}>Traduire en {l.name}</option>)}
-      </select>
-    </label>
+    <>
+      <label>Langue des sous-titres
+        <select value={tl.caption_language || ""} disabled={busy || tl.captions === "aucun"} onChange={(e) => change(e.target.value)}>
+          <option value="">Langue parlée (originale)</option>
+          {langs.map((l) => <option key={l.code} value={l.code} disabled={!!reason}>Traduire en {l.name}</option>)}
+        </select>
+      </label>
+      <CapHint reason={reason} />
+    </>
   );
 }

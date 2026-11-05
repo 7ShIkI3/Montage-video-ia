@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, fmtTime, ProjectSummary } from "../api";
+import { useStore } from "../store";
 
 export function Home({ onOpen }: { onOpen: (id: string) => void }) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
@@ -28,6 +29,7 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
     <div className="home" onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => { e.preventDefault(); quickStart([...e.dataTransfer.files]); }}>
       <div className="hero">
+        <a className="btn hero-settings" href="#/reglages" title="Clé Claude, transcription, voix">⚙ Réglages</a>
         <div className="logo">▶</div>
         <h1>Monteur IA</h1>
         <p>Dépose tes rushes. L'IA les regarde, les écoute, choisit les meilleurs moments et monte la vidéo.
@@ -36,7 +38,7 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
           <button className="primary big" onClick={() => input.current?.click()} disabled={!!busy}>
             {busy ?? "Importer des vidéos"}
           </button>
-          <button className="big" onClick={async () => onOpen((await api.createProject("Nouveau projet")).id)}>
+          <button className="big" onClick={() => useStore.getState().guard("Création du projet impossible", async () => onOpen((await api.createProject("Nouveau projet")).id))}>
             Projet vide
           </button>
         </div>
@@ -60,7 +62,8 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
                 <span className="muted small">{p.media} rush(es) · montage {fmtTime(p.duration)} · {new Date(p.updated_at * 1000).toLocaleDateString("fr-FR")}</span>
               </div>
               <button className="icon-btn del" title="Supprimer" onClick={async () => {
-                if (confirm(`Supprimer « ${p.name} » et tous ses fichiers ?`)) { await api.deleteProject(p.id); refresh(); }
+                if (confirm(`Supprimer « ${p.name} » et tous ses fichiers ?`))
+                  await useStore.getState().guard("Suppression impossible", async () => { await api.deleteProject(p.id); await refresh(); });
               }}>✕</button>
             </div>
           ))}
