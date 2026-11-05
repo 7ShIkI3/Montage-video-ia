@@ -15,7 +15,16 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
   const [over, setOver] = useState(false);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<Sort>("recent");
+  const [menu, setMenu] = useState<string | null>(null);  // carte dont le menu « ⋯ » est ouvert
   const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: MouseEvent) => { if (!(e.target as Element).closest?.(".card-menu, .more")) setMenu(null); };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setMenu(null); };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", key); };
+  }, [menu]);
 
   const refresh = () => api.listProjects().then(setProjects).catch((e) => setError(e.message));
   useEffect(() => { refresh(); useStore.getState().refreshCaps(); }, []);
@@ -91,7 +100,7 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
           ) : (
             <div className="grid">
               {shown.map((p) => (
-                <article key={p.id} className="card">
+                <article key={p.id} className={`card ${menu === p.id ? "menu-open" : ""}`}>
                   <button className="card-open" onClick={() => onOpen(p.id)} aria-label={`Ouvrir ${p.name}`} />
                   <div className="card-thumb">
                     {p.thumb ? <img src={api.thumbUrl(p.id, p.thumb)} alt="" onError={(e) => (e.currentTarget.style.display = "none")} /> : <Icon name="film" size={40} strokeWidth={1.4} />}
@@ -102,10 +111,35 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
                     <b>{p.name}</b>
                     <span className="muted small">{p.media} média{p.media > 1 ? "s" : ""} · {new Date(p.updated_at * 1000).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
                   </div>
-                  <button className="icon-btn del" title="Supprimer" aria-label={`Supprimer ${p.name}`} onClick={async () => {
-                    if (await ask.confirm(`Supprimer « ${p.name} » et tous ses fichiers ?`, { title: "Supprimer le projet", ok: "Supprimer", danger: true }))
-                      await useStore.getState().guard("Suppression impossible", async () => { await api.deleteProject(p.id); await refresh(); });
-                  }}><Icon name="trash" size={15} /></button>
+                  <button className="icon-btn more" title="Actions" aria-label={`Actions pour ${p.name}`} aria-expanded={menu === p.id}
+                    onClick={() => setMenu(menu === p.id ? null : p.id)}>⋯</button>
+                  {menu === p.id && (
+                    <div className="card-menu" role="menu">
+                      <button role="menuitem" onClick={() => onOpen(p.id)}><Icon name="play" size={14} />Ouvrir</button>
+                      <button role="menuitem" onClick={async () => {
+                        setMenu(null);
+                        const name = await ask.prompt("Nouveau nom du projet", p.name, { title: "Renommer", ok: "Renommer" });
+                        if (name && name.trim() && name.trim() !== p.name)
+                          await useStore.getState().guard("Renommage impossible", async () => { await api.patchProject(p.id, { name: name.trim() }); await refresh(); });
+                      }}><Icon name="pencil" size={14} />Renommer</button>
+                      <button role="menuitem" onClick={async () => {
+                        setMenu(null);
+                        await useStore.getState().guard("Duplication impossible", async () => {
+                          setBusy("Copie du projet…");
+                          try { await api.duplicateProject(p.id); await refresh(); } finally { setBusy(null); }
+                        });
+                      }}><Icon name="copy" size={14} />Dupliquer</button>
+                      <button role="menuitem" onClick={() => { setMenu(null); useStore.getState().guard("Ouverture impossible", () => api.openFolder(p.id)); }}>
+                        <Icon name="folder" size={14} />Ouvrir le dossier
+                      </button>
+                      <hr />
+                      <button role="menuitem" className="danger-text" onClick={async () => {
+                        setMenu(null);
+                        if (await ask.confirm(`Supprimer « ${p.name} » et tous ses fichiers ?`, { title: "Supprimer le projet", ok: "Supprimer", danger: true }))
+                          await useStore.getState().guard("Suppression impossible", async () => { await api.deleteProject(p.id); await refresh(); });
+                      }}><Icon name="trash" size={14} />Supprimer</button>
+                    </div>
+                  )}
                 </article>
               ))}
             </div>

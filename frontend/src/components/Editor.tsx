@@ -4,11 +4,12 @@ import { Icon, IconName } from "../icons";
 import { DEFAULT_LAYOUT, isBusy, LeftTab, RIGHT_TAB_ORDER, RightTab, useStore } from "../store";
 import { Shortcuts } from "./Shortcuts";
 import { Pitch } from "./Pitch";
+import { DirectorChat } from "./DirectorChat";
 import { dialogOpen } from "./Dialog";
 import { CommandPalette } from "./CommandPalette";
 import { AIPanel, MediaPanel } from "./LeftPanel";
 import { Player } from "./Player";
-import { CommandBar, CommentsPanel, TranscriptPanel } from "./RightPanel";
+import { CommentsPanel, TranscriptPanel } from "./RightPanel";
 import { MontageTab } from "./tabs/MontageTab";
 import { PlanTab } from "./tabs/PlanTab";
 import { HabillageTab } from "./tabs/HabillageTab";
@@ -123,7 +124,7 @@ const LEFT_TABS: { id: LeftTab; label: string; icon: IconName }[] = [
 ];
 /** Onglets du panneau droit, dans l'ordre des touches 1 à 9. Rien ne disparaît quand on sélectionne un plan. */
 const RIGHT_TABS: { id: RightTab; label: string; icon: IconName }[] = [
-  { id: "consigne", label: "Consigne et commentaires", icon: "message" },
+  { id: "consigne", label: "Réalisateur et commentaires", icon: "message" },
   { id: "montage", label: "Montage", icon: "film" },
   { id: "plan", label: "Plan sélectionné", icon: "square" },
   { id: "habillage", label: "Habillage", icon: "sparkles" },
@@ -295,7 +296,7 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
               <button className="icon-btn tab-close" title="Replier le panneau" aria-label="Replier le panneau de droite" onClick={() => setLayout({ rightOpen: false })}><Icon name="panel-right" size={14} /></button>
             </div>
             <div className="tab-body">
-              {right === "consigne" && <><CommandBar /><CommentsPanel /></>}
+              {right === "consigne" && <><DirectorChat /><CommentsPanel /></>}
               {right === "montage" && <MontageTab />}
               {right === "plan" && <PlanTab />}
               {right === "habillage" && <HabillageTab />}

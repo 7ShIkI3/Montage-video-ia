@@ -831,3 +831,33 @@ dialog.dlg footer button { min-width: 96px; }
 .pitch-item::before { content: "· "; color: var(--faint); }
 .pitch-note { color: var(--warn); }
 .pitch-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 20px 18px; border-top: 1px solid var(--line); position: sticky; bottom: 0; background: var(--surface); }
+
+/* ---------- Chat réalisateur ---------- */
+.chat { display: flex; flex-direction: column; min-height: 0; }
+.chat-list { display: flex; flex-direction: column; gap: 10px; max-height: 46vh; overflow-y: auto; padding: 2px 2px 6px; }
+.chat-msg { display: flex; flex-direction: column; gap: 3px; max-width: 92%; }
+.chat-msg.monteur { align-self: flex-end; align-items: flex-end; }
+.chat-msg.realisateur { align-self: flex-start; }
+.chat-bubble { padding: 9px 12px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); font-size: 13px; line-height: 1.5; }
+.chat-msg.monteur .chat-bubble { background: var(--accent-soft); border-color: transparent; border-bottom-right-radius: 4px; }
+.chat-msg.realisateur .chat-bubble { border-bottom-left-radius: 4px; }
+.chat-bubble p { margin: 0 0 6px; }
+.chat-bubble p:last-child, .chat-bubble ul:last-child { margin-bottom: 0; }
+.chat-bubble ul { margin: 0 0 6px; padding-left: 18px; }
+.chat-bubble.typing span::after { content: " …"; animation: chat-dots 1.2s steps(3) infinite; }
+@keyframes chat-dots { 0% { opacity: 0.3; } 100% { opacity: 1; } }
+.chat-action { display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+.chat-action.ok { color: var(--ok); border-color: rgba(61,214,140,0.4); }
+.chat-meta { padding: 0 4px; }
+.chat form { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
+.chat form textarea { flex: 1; min-width: 0; }
+.chat-dossier { max-height: 32vh; overflow: auto; margin: 0 0 10px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg); border: 1px solid var(--line); white-space: pre-wrap; font-family: var(--mono); font-size: 11px; line-height: 1.45; color: var(--text-2); }
+
+/* ---------- Menu d'une carte de projet (accueil) ---------- */
+.card .more { position: absolute; right: 8px; bottom: 10px; z-index: 2; width: 30px; min-height: 30px; opacity: 0; }
+.card:hover .more, .card .more:focus-visible, .card.menu-open .more { opacity: 1; }
+.card-menu { position: absolute; right: 8px; bottom: 44px; z-index: 3; min-width: 180px; padding: 6px; background: var(--surface); border: 1px solid var(--line-2); border-radius: 10px; box-shadow: 0 20px 60px -20px rgba(0,0,0,0.9); display: flex; flex-direction: column; }
+.card-menu button { justify-content: flex-start; gap: 8px; border: 0; background: transparent; min-height: 34px; padding: 0 10px; border-radius: 6px; font-size: 13px; }
+.card-menu button:hover { background: var(--surface-2); }
+.card-menu button.danger-text { color: var(--danger); }
+.card-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }

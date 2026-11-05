@@ -158,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
         except ImportError:
             pass
     if window:
+        # Sans ce réglage, pywebview ignore les liens de téléchargement (exports, sous-titres) : clic sans effet.
+        window.settings["ALLOW_DOWNLOADS"] = True
         window.create_window(APP_NAME, url, width=1440, height=900, min_size=(1100, 700))
         window.start()  # rend la main quand la fenêtre est fermée
     else:

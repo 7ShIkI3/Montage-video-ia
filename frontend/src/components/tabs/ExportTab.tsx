@@ -70,6 +70,9 @@ export function ExportTab() {
   const go = () => useStore.getState().runJob(useRange ? "Export de la zone" : "Export",
     () => api.export(project.id, quality, fps, smooth, useRange, container), { onDone: (j) => setLast(j.result as string) });
   const isVideo = (x: string) => /\.(mp4|webm|mov)$/.test(x);
+  // Ouvre le dossier des exports dans l'explorateur (le fichier sélectionné) : marche même là où un lien
+  // de téléchargement ne fait rien.
+  const reveal = (file?: string) => useStore.getState().guard("Ouverture du dossier impossible", () => api.openFolder(project.id, { sub: "exports", file }));
 
   return (
     <section className="panel inspector export-tab">
@@ -122,6 +125,7 @@ export function ExportTab() {
         <div className="export-result">
           {isVideo(last) && <video controls preload="metadata" src={api.exportUrl(project.id, last)} />}
           <a href={api.exportUrl(project.id, last)} download>Télécharger « {last} »</a>
+          <button className="small-btn" onClick={() => reveal(last)} title="Afficher le fichier dans l'explorateur"><Icon name="folder" size={12} />Afficher dans le dossier</button>
         </div>
       )}
       <div className="export-alt">
@@ -136,10 +140,12 @@ export function ExportTab() {
       {project.exports.length > 0 && (
         <details>
           <summary className="small">Exports précédents ({project.exports.length})</summary>
+          <p className="muted small">Les fichiers sont dans le dossier du projet (Documents › Monteur IA). <button className="link small" onClick={() => reveal()}>Ouvrir le dossier des exports</button></p>
           <ul className="small">
             {[...project.exports].reverse().map((x) => (
               <li key={x}><a href={api.exportUrl(project.id, x)} download>{x}</a>
-                {isVideo(x) && <> · <a href={api.exportUrl(project.id, x.replace(/\.(mp4|webm|mov)$/, ".srt"))} download>.srt</a></>}</li>
+                {isVideo(x) && <> · <a href={api.exportUrl(project.id, x.replace(/\.(mp4|webm|mov)$/, ".srt"))} download>.srt</a></>}
+                {" · "}<button className="link small" onClick={() => reveal(x)} title="Afficher ce fichier dans l'explorateur">afficher</button></li>
             ))}
           </ul>
         </details>
