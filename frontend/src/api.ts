@@ -570,8 +570,8 @@ export const api = {
   downloadWhisper: (size: string) => req<Job>(`/api/models/whisper/${encodeURIComponent(size)}`, { method: "POST" }),
   piperCatalog: (lang: string) => req<PiperVoice[]>(`/api/models/piper?lang=${encodeURIComponent(lang)}`),
   downloadPiper: (key: string) => req<Job>(`/api/models/piper/${encodeURIComponent(key)}`, { method: "POST" }),
-  export: (id: string, quality: string, fps: number | null = null, smooth = false, rangeOnly = false) =>
-    req<Job>(`/api/projects/${id}/export`, json("POST", { quality, fps, smooth, range_only: rangeOnly })),
+  export: (id: string, quality: string, fps: number | null = null, smooth = false, rangeOnly = false, container = "mp4") =>
+    req<Job>(`/api/projects/${id}/export`, json("POST", { quality, fps, smooth, range_only: rangeOnly, container })),
   applyComments: (id: string) => req<Job>(`/api/projects/${id}/comments/apply`, { method: "POST" }),
   publishKit: (id: string) => req<Job>(`/api/projects/${id}/publish-kit`, { method: "POST" }),
   versions: (id: string) => req<Versions>(`/api/projects/${id}/versions`),

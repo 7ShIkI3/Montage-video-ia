@@ -80,6 +80,11 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
 
 ## L'éditeur
 
+- Panneau droit en neuf onglets (touches `1` à `9`) : Consigne et commentaires, Montage, Plan sélectionné,
+  Habillage, Audio et voix, Qualité, Export (qualité, cadence, fichier MP4/WebM/MOV/GIF, zone, aperçu du
+  résultat, XML/SRT, kit de publication), Texte, Recherche. Sélectionner un plan ouvre l'onglet Plan
+  seulement depuis Consigne, Montage ou Plan : depuis Audio, Habillage, Qualité ou Export, on reste où on
+  travaille, rien ne disparaît.
 - Espace de travail modulable : panneaux de gauche et de droite redimensionnables par leurs poignées (double-clic :
   taille par défaut) et repliables, hauteur de la timeline réglable, barre d'état en bas (moteurs, position, zoom,
   zone). Tout est mémorisé dans le navigateur ; « Espace de travail par défaut » remet tout en place.
