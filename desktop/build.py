@@ -26,8 +26,16 @@ def main() -> int:
     if not (dist / "index.html").exists():
         print("Construis d'abord l'interface : cd frontend && npm ci && npm run build", file=sys.stderr)
         return 1
+    demo_clip = ROOT / "build" / "demo_pvp.mp4"
+    if not demo_clip.exists():
+        # Clip « Essayer sans vidéo » : rendu une fois ici (quelques minutes) plutôt qu'à chaque essai chez l'utilisateur.
+        print("Rendu du clip de démo (une fois)…")
+        sys.path.insert(0, str(ROOT / "backend"))
+        from app.media import demo
+        demo.render(demo_clip)
     import PyInstaller.__main__ as pyi
     opts = [
+        "--add-data", f"{demo_clip}{SEP}assets",
         str(ROOT / "desktop" / "launcher.py"),
         "--name", "Monteur IA", "--noconfirm", "--windowed",
         "--distpath", str(ROOT / "dist"), "--workpath", str(ROOT / "build"),

@@ -301,6 +301,17 @@ def auto_edit(pid: str, settings: EditSettings):
     return job
 
 
+@app.post("/api/demo")
+def demo_project():
+    """« Essayer sans vidéo » : un projet avec le clip de démo (combat PvP synthétique), monté automatiquement.
+    Le projet est créé tout de suite pour que l'éditeur s'ouvre et suive la tâche en direct."""
+    from .media import demo
+    p = storage.save_project(Project(name=demo.DEMO_PROJECT_NAME,
+                                     settings=EditSettings(style="pvp", captions="aucun", music=True)))
+    job = manager.submit(p.id, "demo", lambda ctx: demo.demo_job(p.id, ctx))
+    return {"project": p, "job": job}
+
+
 @app.post("/api/projects/{pid}/reference")
 async def upload_reference(pid: str, file: UploadFile = File(...)):
     """Vidéo de référence : l'IA en copie le rythme (durée des plans, accélération, fondus) au prochain montage."""

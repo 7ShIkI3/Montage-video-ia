@@ -3,6 +3,8 @@ import { api, Clip, fmtTime, ImpactItem, OverlayItem, Timeline } from "../api";
 import { clipAt, clipDur, clipStarts, commentTime, kfAt, localToSrc, rampOf, speedAt, srcToLocal, timelineDuration, useStore } from "../store";
 import { cssFilter, fxClasses, overlaysFor } from "../fxPreview";
 import { Icon } from "../icons";
+import { LIVE_KINDS } from "../stages";
+import { LiveDirector } from "./LiveDirector";
 
 // Lecture de la timeline en direct, sans rendu : deux lecteurs vidéo alternent
 // pour que les coupes entre fichiers soient instantanées. Les effets, transitions,
@@ -65,6 +67,7 @@ export function Player() {
   const setPlayhead = useStore((s) => s.setPlayhead);
   const setPlaying = useStore((s) => s.setPlaying);
   const rate = useStore((s) => s.rate);
+  const live = useStore((s) => !!s.job && LIVE_KINDS.includes(s.job.kind));
 
   const v0 = useRef<HTMLVideoElement>(null);
   const v1 = useRef<HTMLVideoElement>(null);
@@ -488,11 +491,12 @@ export function Player() {
           {layers.letterbox && <div className="layer letterbox" />}
           <div ref={veil} className="layer veil" />
           <div ref={fxLayer} className="layer fx-layer" />
-          {!tl?.clips.length && (
+          {!tl?.clips.length && !live && (
             <div className="frame-empty">
               Importe tes vidéos puis clique sur <b>Monter automatiquement</b>
             </div>
           )}
+          <LiveDirector />
           {g && cc && cc.masks?.filter((m) => {
             if (m.start == null || m.end == null) return true;
             const loc = srcToLocal(cc, Math.max(0, g.srcT - cc.src_in));

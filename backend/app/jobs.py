@@ -17,7 +17,7 @@ from .models import new_id
 log = logging.getLogger(__name__)
 
 ACTIVE = ("en_attente", "en_cours")
-TIMEOUTS = {"montage": 3600, "export": 7200, "telechargement": 1800}  # secondes sans mise à jour avant de déclarer la tâche bloquée
+TIMEOUTS = {"montage": 3600, "export": 7200, "telechargement": 1800, "demo": 3600}  # secondes sans mise à jour avant de déclarer la tâche bloquée
 DEFAULT_TIMEOUT = 600
 MAX_STEPS = 200
 WATCHDOG_INTERVAL = 5.0
@@ -46,7 +46,7 @@ class Job(BaseModel):
     finished_at: float | None = None
     timeout_s: float = DEFAULT_TIMEOUT
     stage: str | None = None
-    steps: list[dict] = Field(default_factory=list)  # {t, message, progress}
+    steps: list[dict] = Field(default_factory=list)  # {t, message, progress, stage}
     _cancel: threading.Event = PrivateAttr(default_factory=threading.Event)
 
 
@@ -69,7 +69,7 @@ class JobContext:
         if stage:
             j.stage = stage
         if message != j.message:
-            j.steps.append({"t": time.time(), "message": message, "progress": j.progress})
+            j.steps.append({"t": time.time(), "message": message, "progress": j.progress, "stage": j.stage})
             del j.steps[:-MAX_STEPS]
         j.message = message
         j.updated_at = time.time()

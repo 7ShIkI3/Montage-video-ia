@@ -18,7 +18,11 @@ export function PlanTab() {
     <section className="panel inspector">
       {c ? <ClipEditor c={c} /> : it && it.kind !== "clip" && it.kind !== "comment" ? <ItemEditor /> : (
         <>
-          <header><h3>Plan</h3></header>
+          <header><h3>Plan</h3>{tl.clips.length > 0 && (
+            <button className="small-btn" title="Le réalisateur présente son montage" onClick={() => useStore.getState().setPitch(true)}>
+              <Icon name="sparkles" size={12} />Pitch
+            </button>
+          )}</header>
           <p className="muted small">Clique un plan ou un élément de la timeline pour le régler ici. Ou ajoute au curseur :</p>
           <div className="add-grid">
             <button onClick={() => addText()}><Icon name="plus" size={14} />Texte</button>

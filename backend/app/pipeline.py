@@ -53,7 +53,7 @@ def analyze_media(project: Project, m: Media, ctx: JobContext, lo: float, hi: fl
     signals = storage.load_signals(project.id, m.id)
     pcm = None
     if signals is None:
-        ctx.step(f"{m.filename} : analyse audio et vidéo", lo + span * 0.4)
+        ctx.step(f"{m.filename} : analyse audio et vidéo", lo + span * 0.4, stage="analyse")
         signals = {}
         if m.has_audio:
             pcm = ffmpeg.decode_audio(m.path)
@@ -162,7 +162,7 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         analyze_media(project, m, ctx, 0.85 * i / n, 0.85 * (i + 1) / n)
         _save_media(project)
 
-    ctx.step("Repérage et notation des moments forts", 0.86)
+    ctx.step("Repérage et notation des moments forts", 0.86, stage="reperage")
     segments = all_segments(project, settings)
     music = pick_music(project, settings.style) if settings.music else None
     if settings.music and not music:
@@ -181,13 +181,13 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         settings = settings.model_copy(update={"instructions": (settings.instructions + "\n" +
                                                                 research_mod.notes_as_instructions(project.research)).strip()})
     from .ai import roles
-    ctx.step("Stratège et directeur créatif : objectif, public, accroche, moment fort", 0.88)
+    ctx.step("Stratège et directeur créatif : objectif, public, accroche, moment fort", 0.88, stage="brief")
     brief, brief_by = roles.brief(project, segments, settings)
     if settings.style != "pvp":
         settings = settings.model_copy(update={"instructions": (settings.instructions + "\n" +
                                                                 roles.brief_instructions(brief)).strip()})
     director = dir_mod.get_director()
-    ctx.step("Monteur : réalisation du montage" + (" (Claude)" if director.name == "claude" else ""), 0.9)
+    ctx.step("Monteur : réalisation du montage" + (" (Claude)" if director.name == "claude" else ""), 0.9, stage="montage")
     order = [m.id for m in project.media]
     # Les commentaires survivent au re-montage et le guident (sauf ceux que l'IA n'a pas compris).
     notes = [c for c in project.timeline.comments if c.status != "incompris"]
@@ -215,7 +215,7 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         project.warnings.append(f"Réalisateur Claude indisponible ({e}) : montage heuristique utilisé.")
         tl = dir_mod.HeuristicDirector().direct(segments, settings, order, music)
     if tl.director == "heuristique" or (tl.director == "claude" and not _has_effects(tl)):
-        ctx.step("Habillage : transitions, effets, bruitages, titres", 0.97)
+        ctx.step("Habillage : transitions, effets, bruitages, titres", 0.97, stage="habillage")
         tl = decorate(tl, segments, settings, project.name)
     tl.comments = old_comments
     tl.brand = project.timeline.brand  # l'identité de marque survit au re-montage
@@ -225,18 +225,18 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         if zone:
             comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, zone, _faces(project))
     if notes and tl.director != "claude":  # heuristique ou pvp
-        ctx.step("Application de tes commentaires", 0.98)
+        ctx.step("Application de tes commentaires", 0.98, stage="habillage")
         comments_mod.apply_all(tl, segments, settings, {m.id: m.duration for m in project.media}, notes, _faces(project))
     if tl.clips and settings.style != "pvp":
-        ctx.step("Plans calés sur les phrases, projecteur sur ce que montre la voix", 0.981)
+        ctx.step("Plans calés sur les phrases, projecteur sur ce que montre la voix", 0.981, stage="calage")
         tl.voice_focus = voice_focus(project, tl, transcripts_for(project))
     if project.reference and tl.clips and settings.style != "pvp":
         from .ai import reference as ref_mod
-        ctx.step("Rythme calé sur la vidéo de référence", 0.982)
+        ctx.step("Rythme calé sur la vidéo de référence", 0.982, stage="calage")
         tl, tl.reference_match = ref_mod.match(tl, project.reference, transcripts_for(project))
     project.timeline = tl
     tl = polish(project, tl, segments, settings, music, ctx, director, 0.985)
-    ctx.step("Storyboard, montage et publication : vérification rôle par rôle", 0.995)
+    ctx.step("Storyboard, montage et publication : vérification rôle par rôle", 0.995, stage="verification")
     try:
         tl.plan = roles.before_steps(brief, brief_by) + roles.after_steps(project, tl, segments, settings, brief)
     except Exception as e:  # le plan affiché ne doit jamais faire échouer le montage
@@ -247,7 +247,7 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         p.settings, p.warnings, p.timeline = saved, project.warnings, tl
     storage.update_project(project_id, apply)
     rv = f", note du relecteur {tl.review.score:.1f}/10" if tl.review else ""
-    ctx.step(f"Montage prêt : {len(tl.clips)} plans, {tl.duration:.0f} s{rv}", 1.0)
+    ctx.step(f"Montage prêt : {len(tl.clips)} plans, {tl.duration:.0f} s{rv}", 1.0, stage="pret")
     return tl
 
 
@@ -266,7 +266,7 @@ def polish(project: Project, tl: Timeline, segments: list[Segment], settings: Ed
     fixed: list[str] = list(tl.quality.fixed) if tl.quality else []
     rev = None
     for rnd in range(1, max_rounds + 1):
-        ctx.step(f"Contrôle qualité et relecture (tour {rnd})", min(0.995, at + 0.004 * rnd))
+        ctx.step(f"Contrôle qualité et relecture (tour {rnd})", min(0.995, at + 0.004 * rnd), stage="relecture")
         tl = quality_mod.check_and_fix(tl, transcripts, settings)
         fixed += tl.quality.fixed
         tl.quality.issues += soundsheet.sync_checks(project, tl, transcripts)
@@ -548,7 +548,7 @@ def make_shorts(project_id: str, ctx: JobContext, count: int = 3, target: float 
             ctx.check()
             analyze_media(project, m, ctx, 0.6 * i / n, 0.6 * (i + 1) / n)
             _save_media(project)
-    ctx.step("Recherche des passages les plus partageables", 0.65)
+    ctx.step("Recherche des passages les plus partageables", 0.65, stage="reperage")
     settings = project.settings.model_copy(update={"style": "short", "format": fmt, "target_duration": target})
     segments = all_segments(project, settings)
     cands = [(mid, win, *virality(win)) for mid, win in _windows(segments, target)]
@@ -567,7 +567,7 @@ def make_shorts(project_id: str, ctx: JobContext, count: int = 3, target: float 
     out = []
     names = {m.id: m.filename for m in project.media}
     for k, (mid, win, score, reasons) in enumerate(chosen, 1):
-        ctx.step(f"Montage du short {k}/{len(chosen)}", 0.7 + 0.28 * (k - 1) / len(chosen))
+        ctx.step(f"Montage du short {k}/{len(chosen)}", 0.7 + 0.28 * (k - 1) / len(chosen), stage="shorts")
         ids = {s.id for s in win}
         sub = [s for s in segments if s.id in ids]
         tl = dir_mod.HeuristicDirector().direct(sub, settings, [mid], None)
@@ -584,7 +584,7 @@ def make_shorts(project_id: str, ctx: JobContext, count: int = 3, target: float 
         p.ensure_versions()
         p.versions.extend(new)
     storage.update_project(project_id, apply)
-    ctx.step(f"{len(out)} short(s) prêt(s) dans les versions", 1.0)
+    ctx.step(f"{len(out)} short(s) prêt(s) dans les versions", 1.0, stage="pret")
     return out
 
 
@@ -615,11 +615,22 @@ class _Scoped:
     def _m(self, p: float) -> float:
         return self.lo + (self.hi - self.lo) * p
 
-    def step(self, message: str, progress: float) -> None:
-        self.ctx.step(message, self._m(progress))
+    def step(self, message: str, progress: float | None = None, stage: str | None = None) -> None:
+        self.ctx.step(message, None if progress is None else self._m(progress), stage=stage)
 
     def sub(self, a: float, b: float, message: str | None = None):
         return self.ctx.sub(self._m(a), self._m(b), message)
+
+    def check(self) -> None:
+        self.ctx.check()
+
+    @property
+    def job(self):
+        return self.ctx.job
+
+    @property
+    def cancel_event(self):
+        return self.ctx.cancel_event
 
 
 def export_preset(project_id: str, preset: str, ctx: JobContext, version_ids: list[str] | None = None) -> list[str]:
@@ -954,9 +965,10 @@ def propose_directions(project_id: str, platform: str, tone: str, audience: str,
     for i, m in enumerate(project.media):
         analyze_media(project, m, ctx, 0.8 * i / n, 0.8 * (i + 1) / n)
         _save_media(project)
-    ctx.step("Le directeur créatif prépare 3 directions" + (" (Claude)" if config.claude_available() else ""), 0.85)
+    ctx.step("Le directeur créatif prépare 3 directions" + (" (Claude)" if config.claude_available() else ""), 0.85,
+             stage="directions")
     segments = all_segments(project, project.settings)
     found, who = dir_ai.propose(project, segments, platform, tone, audience)
     storage.update_project(project_id, lambda p: setattr(p, "directions", found))
-    ctx.step("3 directions prêtes : choisis-en une", 1.0)
+    ctx.step("3 directions prêtes : choisis-en une", 1.0, stage="pret")
     return {"directions": [d.model_dump() for d in found], "by": who}
