@@ -64,6 +64,7 @@ export function Player() {
   const captions = useStore((s) => s.captions);
   const setPlayhead = useStore((s) => s.setPlayhead);
   const setPlaying = useStore((s) => s.setPlaying);
+  const rate = useStore((s) => s.rate);
 
   const v0 = useRef<HTMLVideoElement>(null);
   const v1 = useRef<HTMLVideoElement>(null);
@@ -72,6 +73,15 @@ export function Player() {
   const stage = useRef<HTMLDivElement>(null);
   const fxLayer = useRef<HTMLDivElement>(null);
   const music = useRef<HTMLAudioElement>(null);
+  // Changement de vitesse (J/K/L) : appliqué tout de suite aux vidéos en cours et à la musique,
+  // sans attendre la boucle d'images (qui ne tourne pas dans un onglet en arrière-plan).
+  const prevRate = useRef(1);
+  useEffect(() => {
+    const f = rate / prevRate.current;
+    prevRate.current = rate;
+    for (const el of [v0.current, v1.current]) if (el && Math.abs(f - 1) > 1e-6) el.playbackRate = el.playbackRate * f;
+    if (music.current) music.current.playbackRate = rate;
+  }, [rate]);
   const active = useRef(0);
   const cur = useRef(-1);
   const reported = useRef(0);
@@ -125,7 +135,7 @@ export function Player() {
     el.style.transform = baseTransform(c, offset / Math.max(0.1, clipDur(c)));
     el.style.filter = cssFilter(c.effects, look);
     reframe(el, c, target);
-    el.playbackRate = speedAt(c, Math.max(0, offset));
+    el.playbackRate = speedAt(c, Math.max(0, offset)) * useStore.getState().rate;
     el.muted = c.audio_effects.includes("muet");
     el.volume = Math.min(1, Math.max(0, c.volume));
   }
@@ -369,7 +379,8 @@ export function Player() {
       if (!c) return;
       const loc = srcToLocal(c, Math.max(0, el.currentTime - c.src_in));
       const t = starts[cur.current] + loc;
-      if (rampOf(c)) el.playbackRate = speedAt(c, loc);
+      const want = speedAt(c, loc) * useStore.getState().rate;
+      if (Math.abs(el.playbackRate - want) > 0.01) el.playbackRate = want;
       syncAudio(t, true);
       for (const s of sfx) if (s.start > reported.current && s.start <= t) playSfx(s.kind, s.volume);
       for (const im of impacts) if (im.start > reported.current && im.start <= t) fireImpact(im);
@@ -553,9 +564,12 @@ export function Player() {
           disabled={!tl?.clips.length}>
           <Icon name={playing ? "pause" : "play"} size={16} />
         </button>
+        <button className="icon-btn" title="Plan précédent (↑)" aria-label="Plan précédent" onClick={() => useStore.getState().jumpClip(-1)}><Icon name="chevron-up" size={18} /></button>
+        <button className="icon-btn" title="Plan suivant (↓)" aria-label="Plan suivant" onClick={() => useStore.getState().jumpClip(1)}><Icon name="chevron-down" size={18} /></button>
         <span className="tc">
           {fmtTime(playhead, true)} <span className="muted">/ {fmtTime(total, true)}</span>
         </span>
+        {rate !== 1 && <span className="rate-badge" title="Vitesse de lecture (L pour changer, K pour arrêter)">×{rate}</span>}
         {cc && (cc.speed !== 1 || cc.effects.length > 0 || look !== "aucun") && (
           <span className="fx-badge" title="Effets du plan courant">
             <Icon name="sparkles" size={13} />{[look !== "aucun" ? look : "", cc.speed !== 1 ? `×${cc.speed}` : "", ...cc.effects].filter(Boolean).join(" · ").replace(/_/g, " ")}

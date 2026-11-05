@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Icon, IconName } from "../icons";
-import { isBusy, jobOf, useStore } from "../store";
+import { isBusy, jobOf, LeftTab, RightTab, useStore } from "../store";
+import { Shortcuts } from "./Shortcuts";
 import { AIPanel, MediaPanel } from "./LeftPanel";
 import { Player } from "./Player";
 import { CommandBar, CommentsPanel, Inspector, TranscriptPanel } from "./RightPanel";
@@ -40,7 +41,29 @@ function useShortcuts() {
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       const s = useStore.getState();
       const mod = e.ctrlKey || e.metaKey;
-      if (e.code === "Space") { e.preventDefault(); s.setPlaying(!s.playing); }
+      const k = e.key.toLowerCase();
+      const clip = s.item?.kind === "clip" ? s.item.id : null;
+      if (s.helpOpen || s.paletteOpen) {
+        if (e.key === "Escape") { s.setHelp(false); s.setPalette(false); }
+        return;
+      }
+      if (e.key === "?" || e.key === "F1" || (e.shiftKey && e.key === "/")) { e.preventDefault(); s.setHelp(true); return; }
+      if (mod && k === "k") { e.preventDefault(); s.setPalette(true); return; }
+      if (e.code === "Space") { e.preventDefault(); if (s.playing) s.setRate(1); s.setPlaying(!s.playing); }
+      else if (k === "k" && !mod) { s.setRate(1); s.setPlaying(false); }
+      else if (k === "l" && !mod) { if (s.playing) s.setRate(s.rate >= 4 ? 1 : s.rate * 2); else { s.setRate(1); s.setPlaying(true); } }
+      else if (k === "j" && !mod) { s.setPlayhead(s.playhead - (e.shiftKey ? 5 : 1)); }
+      else if (e.key === "Home") { e.preventDefault(); s.setPlayhead(0); }
+      else if (e.key === "End") { e.preventDefault(); s.setPlayhead(Number.MAX_SAFE_INTEGER); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); s.jumpClip(-1); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); s.jumpClip(1); }
+      else if ((e.key === "+" || e.key === "=") && !mod) { s.setZoom(s.pxPerSec * 1.25); }
+      else if (e.key === "-" && !mod) { s.setZoom(s.pxPerSec / 1.25); }
+      else if (k === "z" && e.shiftKey && !mod) { s.zoomFit(); }
+      else if (mod && k === "d") { e.preventDefault(); if (clip) s.duplicateClip(clip); }
+      else if (mod && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); if (clip) s.nudgeClip(clip, e.key === "ArrowLeft" ? -1 : 1); }
+      else if (k === "i" && !mod) { if (clip) s.trimToPlayhead(clip, "in"); }
+      else if (k === "o" && !mod) { if (clip) s.trimToPlayhead(clip, "out"); }
       else if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); s.undo(); }
       else if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); s.redo(); }
       else if (e.key.toLowerCase() === "s" && !mod) { s.splitAtPlayhead(); }
@@ -194,8 +217,6 @@ function ExportButton() {
   );
 }
 
-type LeftTab = "rushes" | "ia" | "versions" | "modeles" | "marque";
-type RightTab = "consigne" | "inspecteur" | "texte";
 const LEFT_TABS: { id: LeftTab; label: string; icon: IconName }[] = [
   { id: "rushes", label: "Rushes", icon: "film" },
   { id: "ia", label: "Réalisation IA", icon: "sparkles" },
@@ -215,8 +236,10 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
   const selected = useStore((s) => s.selected);
   const item = useStore((s) => s.item);
   const [name, setName] = useState("");
-  const [left, setLeft] = useState<LeftTab | null>(null);
-  const [right, setRight] = useState<RightTab>("consigne");
+  const left = useStore((s) => s.leftTab);
+  const right = useStore((s) => s.rightTab);
+  const helpOpen = useStore((s) => s.helpOpen);
+  const { setLeftTab: setLeft, setRightTab: setRight } = useStore.getState();
   useAutosave();
   useShortcuts();
 
@@ -294,6 +317,7 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
       <footer className="bottom">
         <TimelineView />
       </footer>
+      {helpOpen && <Shortcuts onClose={() => useStore.getState().setHelp(false)} />}
     </div>
   );
 }

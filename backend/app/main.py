@@ -989,6 +989,7 @@ if config.FRONTEND_DIST.exists():
     @app.get("/{path:path}")
     def spa(path: str):
         f = config.FRONTEND_DIST / path
-        if path and f.is_file() and config.FRONTEND_DIST in f.resolve().parents:
+        if path and path != "index.html" and f.is_file() and config.FRONTEND_DIST in f.resolve().parents:
             return FileResponse(f)
-        return FileResponse(config.FRONTEND_DIST / "index.html")
+        # index.html n'est jamais mis en cache : il référence des fichiers au nom haché qui changent à chaque build.
+        return FileResponse(config.FRONTEND_DIST / "index.html", headers={"Cache-Control": "no-cache"})

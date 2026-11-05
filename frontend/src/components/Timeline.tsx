@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtTime } from "../api";
-import { clipDur, clipStarts, commentTime, rampOf, Sel, timelineDuration, useStore } from "../store";
+import { clipDur, clipStarts, commentTime, localToSrc, rampOf, Sel, snapPoints, snapTo, timelineDuration, useStore } from "../store";
 import { AddSoundButton, VoiceOverButton } from "./AudioTools";
 import { Icon } from "../icons";
 
@@ -63,6 +63,28 @@ export function TimelineView() {
   const scroller = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<number | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
+  const [snapAt, setSnapAt] = useState<number | null>(null);
+
+  // Largeur visible (pour « zoom ajusté ») et zoom à la molette avec Ctrl, centré sous la souris.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => useStore.setState({ timelineWidth: el.clientWidth }));
+    ro.observe(el);
+    useStore.setState({ timelineWidth: el.clientWidth });
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const st = useStore.getState();
+      const rect = el.getBoundingClientRect();
+      const tAtMouse = (el.scrollLeft + e.clientX - rect.left) / st.pxPerSec;
+      st.setZoom(st.pxPerSec * (e.deltaY < 0 ? 1.2 : 1 / 1.2));
+      const pps2 = useStore.getState().pxPerSec;
+      el.scrollLeft = Math.max(0, tAtMouse * pps2 - (e.clientX - rect.left));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => { ro.disconnect(); el.removeEventListener("wheel", onWheel); };
+  }, []);
 
   const total = tl ? timelineDuration(tl) : 0;
   const starts = useMemo(() => (tl ? clipStarts(tl) : []), [tl]);
@@ -97,8 +119,19 @@ export function TimelineView() {
     const x0 = e.clientX;
     const base = side === "in" ? c.src_in : c.src_out;
     let first = true;
+    const i = tl.clips.findIndex((x) => x.id === id);
+    const start = starts[i];
     const move = (ev: MouseEvent) => {
-      const v = base + ((ev.clientX - x0) / pps) * (side === "in" ? c.speed || 1 : c.speed_end ?? (c.speed || 1));
+      let v = base + ((ev.clientX - x0) / pps) * (side === "in" ? c.speed || 1 : c.speed_end ?? (c.speed || 1));
+      // Aimantation au curseur de lecture (Alt pour l'ignorer).
+      const st0 = useStore.getState();
+      const ph = st0.playhead;
+      let snapped: number | null = null;
+      if (!ev.altKey && ph > start && ph < start + clipDur(c)) {
+        const srcAtPlayhead = c.src_in + localToSrc(c, ph - start);
+        if (Math.abs(srcAtPlayhead - v) * pps / (c.speed || 1) < 8) { v = srcAtPlayhead; snapped = ph; }
+      }
+      setSnapAt(snapped);
       if (first) {
         trimClip(id, side, v);
         first = false;
@@ -111,6 +144,7 @@ export function TimelineView() {
       }
     };
     const up = () => {
+      setSnapAt(null);
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
     };
@@ -125,8 +159,11 @@ export function TimelineView() {
     selectItem({ kind, id });
     const x0 = e.clientX;
     let first = true;
+    const points = [...snapPoints(tl), useStore.getState().playhead];
     const move = (ev: MouseEvent) => {
-      const v = Math.max(0, start + (ev.clientX - x0) / pps);
+      let v = Math.max(0, start + (ev.clientX - x0) / pps);
+      // Aimantation aux frontières des plans et au curseur (Alt pour l'ignorer).
+      if (!ev.altKey) { const r = snapTo(v, points, pps); v = r.t; setSnapAt(r.snapped); } else setSnapAt(null);
       const st = useStore.getState();
       if (first) {
         st.updateItem(kind, id, { start: v });
@@ -138,6 +175,7 @@ export function TimelineView() {
       }
     };
     const up = () => {
+      setSnapAt(null);
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
     };
@@ -177,6 +215,8 @@ export function TimelineView() {
           Zoom
           <input type="range" min={4} max={300} value={pps} onChange={(e) => setZoom(+e.target.value)} />
         </label>
+        <button className="icon-btn" title="Zoom ajusté : tout le montage (Maj+Z)" aria-label="Zoom ajusté" onClick={() => useStore.getState().zoomFit()}><Icon name="grid" size={15} /></button>
+        <button className="icon-btn" title="Raccourcis clavier (?)" aria-label="Raccourcis clavier" onClick={() => useStore.getState().setHelp(true)}><span className="kbd-q">?</span></button>
       </div>
       <div className="timeline-scroll" ref={scroller}>
         <div className="timeline-inner" style={{ width }}>
@@ -333,6 +373,7 @@ export function TimelineView() {
               </div>
             )}
           </div>
+          {snapAt != null && <div className="snap-line" style={{ left: snapAt * pps }} />}
           <div className="playhead" style={{ left: playhead * pps }} />
         </div>
       </div>

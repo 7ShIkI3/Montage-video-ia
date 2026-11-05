@@ -1,6 +1,8 @@
 """Test de bout en bout : import → montage IA → retouche → consigne → export."""
 import time
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -173,3 +175,14 @@ def test_comments_guide_the_ai(rush):
     tl = c.get(f"/api/projects/{pid}").json()["timeline"]
     assert len(tl["comments"]) == 2 and not covers(tl, 9.5)
     assert c.post(f"/api/projects/{pid}/comments/apply").status_code == 400
+
+
+def test_index_html_is_never_cached():
+    """L'interface est servie sans cache : après une mise à jour, le navigateur ne garde pas un index périmé."""
+    from app import config
+    if not config.FRONTEND_DIST.exists():
+        pytest.skip("frontend non construit")
+    for path in ("/", "/index.html", "/p/x"):
+        r = client.get(path)
+        assert r.status_code == 200 and r.headers.get("cache-control") == "no-cache", path
+        assert "<div id=\"root\">" in r.text
