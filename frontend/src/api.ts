@@ -28,6 +28,9 @@ export interface Clip {
   reason: string;
   zoom: number;
   volume: number;
+  /** Fondus audio d'entrée et de sortie du plan (s). */
+  fade_in?: number;
+  fade_out?: number;
   speed: number;
   transition: string;
   transition_duration: number;

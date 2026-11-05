@@ -287,6 +287,8 @@ export function TimelineView() {
                   {(c.keyframes || []).map((k, j) => (
                     <div key={j} className="kf-mark" style={{ left: k.t * pps }} title={`Image clé ${fmtTime(k.t, true)} · zoom ${Math.round(k.zoom * 100)} %`} />
                   ))}
+                  {(c.fade_in ?? 0) > 0 && <div className="fade fade-in" title={`Fondu d'entrée ${c.fade_in} s`} style={{ width: Math.min(w, (c.fade_in ?? 0) * pps) }} />}
+                  {(c.fade_out ?? 0) > 0 && <div className="fade fade-out" title={`Fondu de sortie ${c.fade_out} s`} style={{ width: Math.min(w, (c.fade_out ?? 0) * pps) }} />}
                   <div className="score" style={{ width: `${Math.round(c.score * 100)}%` }} />
                   <div className="handle right" onMouseDown={(e) => startTrim(e, c.id, "out")} />
                 </div>

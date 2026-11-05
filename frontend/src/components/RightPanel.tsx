@@ -187,6 +187,21 @@ export function Inspector() {
           <label>Volume {Math.round(c.volume * 100)} %
             <input type="range" min={0} max={2} step={0.05} value={c.volume} onChange={(e) => updateClip(c.id, { volume: +e.target.value })} />
           </label>
+          <label className="inline">
+            <input type="checkbox" checked={c.audio_effects.includes("muet")}
+              onChange={(e) => updateClip(c.id, { audio_effects: e.target.checked ? [...c.audio_effects.filter((x) => x !== "muet"), "muet"] : c.audio_effects.filter((x) => x !== "muet") })} />
+            Couper le son de ce plan
+          </label>
+          <div className="field-row">
+            <label>Fondu d'entrée (s)
+              <input type="number" min={0} max={5} step={0.1} value={c.fade_in ?? 0}
+                onChange={(e) => updateClip(c.id, { fade_in: Math.max(0, Math.min(5, +e.target.value || 0)) })} />
+            </label>
+            <label>Fondu de sortie (s)
+              <input type="number" min={0} max={5} step={0.1} value={c.fade_out ?? 0}
+                onChange={(e) => updateClip(c.id, { fade_out: Math.max(0, Math.min(5, +e.target.value || 0)) })} />
+            </label>
+          </div>
           <MotionEditor c={c} />
           {catalog && <ClipEffects c={c} catalog={catalog} />}
         </>

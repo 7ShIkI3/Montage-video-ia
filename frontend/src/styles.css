@@ -631,3 +631,8 @@ code.cmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding
 .palette-keys { display: flex; gap: 4px; flex: none; }
 .palette-hint { font-size: 11px; color: var(--muted); flex: none; }
 .palette-empty { padding: 16px 10px; color: var(--muted); font-size: 13px; }
+
+/* ---------- Audio par plan : fondus dessinés sur le plan ---------- */
+.fade { position: absolute; top: 0; bottom: 0; pointer-events: none; z-index: 1; }
+.fade-in { left: 0; background: linear-gradient(to top right, rgba(10,10,12,0.6) 49.5%, transparent 50.5%); border-left: 1px solid rgba(255,255,255,0.35); }
+.fade-out { right: 0; background: linear-gradient(to top left, rgba(10,10,12,0.6) 49.5%, transparent 50.5%); border-right: 1px solid rgba(255,255,255,0.35); }
