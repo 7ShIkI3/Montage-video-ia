@@ -10,6 +10,7 @@ from .ai import director as dir_mod
 from .ai.decorate import decorate
 from .ai import publish as publish_mod
 from .ai import comments as comments_mod
+from .ai import jury as jury_mod
 from .ai import pvp as pvp_mod
 from .ai import quality as quality_mod
 from .ai import review as review_mod
@@ -20,7 +21,7 @@ from .analysis import faces as faces_an
 from .analysis import hits as hits_an
 from .analysis import transcribe as tr_mod
 from .analysis import video as video_an
-from .jobs import JobContext
+from .jobs import JobCancelled, JobContext
 from .media import ffmpeg
 from .models import EditSettings, Media, Project, Segment, Timeline, Transcript
 from .render import captions as cap_mod
@@ -157,6 +158,48 @@ def _save_media(project: Project) -> None:
     storage.update_project(project.id, apply)
 
 
+JURY_ROUNDS = 2  # tours de jury par montage : le second seulement si le premier ne trouve pas assez de bons combos
+
+
+def _pvp_edit(project: Project, settings: EditSettings, music: str | None, ctx: JobContext) -> Timeline:
+    """Montage PvP : rafales de coups hors menus, jugées sur images par Claude quand une clé est là."""
+    sigs = {m.id: storage.load_signals(project.id, m.id) or {} for m in project.media}
+    hits_by = {mid: s.get("hits") or [] for mid, s in sigs.items()}
+    blocked = {mid: video_an.overlays((s.get("video") or {}).get("brightness") or [],
+                                      (s.get("video") or {}).get("fps") or config.ANALYSIS_FPS) for mid, s in sigs.items()}
+    cands = pvp_mod.candidates(project.media, hits_by, blocked)
+    by_id = {m.id: m for m in project.media}
+    target = settings.target_duration or 30.0
+    # Verdicts déjà rendus lors d'un montage précédent : s'ils suffisent, aucun appel.
+    verdicts: dict = {(mid, k): v for mid in sigs for k, v in jury_mod.cached(project.id, mid).items()}
+
+    def enough() -> bool:
+        ranked, _, checked = pvp_mod.rank_candidates(cands, verdicts, target)
+        return sum(c["end"] - c["start"] + 0.9 for _, c in ranked[:checked]) >= 0.6 * target
+
+    # Un re-montage (des verdicts existent déjà) ne fait qu'un tour : le coût d'un « Remonter » reste borné.
+    rounds = 1 if verdicts else JURY_ROUNDS
+    passed = {(mid, k) for mid in sigs for k in jury_mod.skipped(project.id, mid)}
+    if cands and config.claude_available():
+        try:
+            for _ in range(rounds):
+                rows = pvp_mod.shortlist(cands, jury_mod.MAX_CANDIDATES, set(verdicts) | passed)
+                if not rows or enough():
+                    break
+                before = len(verdicts)
+                verdicts = {**verdicts, **jury_mod.judge(project.id, [(by_id[mid], c) for mid, c in rows], ctx)}
+                if len(verdicts) == before:
+                    break
+        except JobCancelled:
+            raise
+        except Exception as e:
+            log.warning("Jury des combos indisponible : %s", e)
+            project.warnings.append(f"Jury IA indisponible ({e}) : combos classés au son, sans savoir qui porte les coups.")
+    elif cands and not verdicts:
+        project.warnings.append("Sans clé Claude, les combos sont classés au son : l'app ne sait pas qui porte les coups.")
+    return pvp_mod.build(project.media, hits_by, settings, project.name, music, verdicts=verdicts, blocked=blocked)
+
+
 def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timeline:
     project = storage.load_project(project_id)
     if not project.media:
@@ -198,7 +241,8 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         settings = settings.model_copy(update={"instructions": (settings.instructions + "\n" +
                                                                 roles.brief_instructions(brief)).strip()})
     director = dir_mod.get_director()
-    ctx.step("Monteur : réalisation du montage" + (" (Claude)" if director.name == "claude" else ""), 0.9, stage="montage")
+    ctx.step("Monteur : edit PvP calé sur les coups" if settings.style == "pvp" else
+             "Monteur : réalisation du montage" + (" (Claude)" if director.name == "claude" else ""), 0.9, stage="montage")
     order = [m.id for m in project.media]
     # Les commentaires survivent au re-montage et le guident (sauf ceux que l'IA n'a pas compris).
     notes = [c for c in project.timeline.comments if c.status != "incompris"]
@@ -206,8 +250,7 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     try:
         if settings.style == "pvp":
             # Edit PvP : calé sur les coups et le tempo, construit localement (calcul précis au centième).
-            tl = pvp_mod.build(project.media, {m.id: (storage.load_signals(project.id, m.id) or {}).get("hits") or []
-                                               for m in project.media}, settings, project.name, music)
+            tl = _pvp_edit(project, settings, music, ctx)
             if not tl.clips:
                 project.warnings.append(tl.summary + " Montage classique utilisé à la place.")
                 tl = dir_mod.HeuristicDirector().direct(segments, settings.model_copy(update={"style": "short"}),
@@ -293,7 +336,9 @@ def polish(project: Project, tl: Timeline, segments: list[Segment], settings: Ed
                 log.warning("Relecture Claude impossible, relecteur local : %s", e)
         rev = rev or review_mod.local_review(tl.quality)
         history.append(rev.score)
-        if rev.score >= review_mod.PASS_SCORE or rnd == max_rounds or director.name != "claude" or not (
+        # Un montage PvP est calculé sur les coups : le réalisateur ne le reprend pas, il le remplacerait par un
+        # montage fait de segments de parole, sans rapport avec les combos choisis.
+        if rev.score >= review_mod.PASS_SCORE or rnd == max_rounds or director.name != "claude" or tl.director == "pvp" or not (
                 instructions or rev.remarks):
             break
         consigne = instructions or "; ".join(f"{r.problem} ({r.fix})" for r in rev.remarks[:8])

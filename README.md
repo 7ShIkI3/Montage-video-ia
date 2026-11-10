@@ -27,9 +27,14 @@ Le plan détaillé et la stratégie sont dans [PLAN.md](PLAN.md).
 10. **Moteur 3D** (logiciel, NumPy + OpenCV) : caméra en perspective, transitions cube / retournement / porte,
     écran en orbite ou flottant, bascule et rotation d'entrée, textes en relief animés, et une piste
     **Impacts** (secousse 3D, zoom choc, flash, flash rouge, étincelles 3D, onde de choc).
-11. **Edit PvP** (gaming) : détecte les coups dans le son, regroupe les combos, garde les meilleurs, met un
-    ralenti sur le coup final, cale chaque coupe sur le tempo de la musique (rythme électro généré si aucune
-    musique n'est choisie) et pose secousses, étincelles, flashs et « COMBO xN » en 3D.
+11. **Edit PvP** (gaming) : détecte les coups dans le son et les regroupe en rafales au rythme d'un combo
+    (0,5 s entre deux coups), hors menus et inventaires. Le son ne dit pas qui frappe : avec une clé Claude, un
+    **jury IA** regarde quatre images de chaque rafale candidate (14 par tour, deux tours au plus, les fins de
+    duel d'abord) et ne garde que celles à l'avantage du joueur ; une rafale subie ou une mort n'entre jamais.
+    Les verdicts sont gardés avec le rush : refaire le montage ne repaie pas. Sans clé, le classement se fait
+    au son et l'app le dit. Le meilleur combo ferme l'edit, avec le seul ralenti (les kills en ont un aussi) ;
+    chaque coupe tombe sur le tempo de la musique (rythme électro généré si aucune musique n'est choisie), avec
+    secousses, étincelles et « COMBO xN » en 3D. Ce montage n'est pas repris par le réalisateur après relecture.
 
 Avec une clé API Anthropic, le réalisateur est **Claude** : il comprend le sens du discours, choisit les
 meilleurs passages, écrit un titre et applique des consignes libres. Sans clé, un réalisateur local
@@ -275,6 +280,7 @@ backend/app/
   ai/director.py         réalisateurs heuristique et Claude, consignes
   analysis/hits.py       coups (flux spectral x volume), combos, tempo
   ai/pvp.py              style Edit PvP (combos, ralentis, calage sur le tempo, musique générée)
+  ai/jury.py             jury des combos : Claude regarde les rafales et dit à qui elles profitent
   render/                sous-titres (ASS animé, SRT) et rendu FFmpeg une passe
   render/engine3d.py     moteur 3D : caméra, plans texturés, texte extrudé, particules
   render/scene3d.py      compositeur 3D image par image entre deux passes FFmpeg

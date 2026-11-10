@@ -81,8 +81,26 @@ def _local_brief(project: Project, segments: list[Segment], settings: EditSettin
     }
 
 
+def _pvp_brief(project: Project, settings: EditSettings) -> dict:
+    """Brief d'un edit PvP : pas de parole à suivre, le montage se joue sur les combos et le tempo."""
+    total = sum(m.duration for m in project.media)
+    return {
+        "objectif": f"Tirer de {total / 60:.0f} min de combats un edit court fait des meilleurs combos du joueur.",
+        "public": AUDIENCE_OF.get("pvp", "joueurs PvP"),
+        "plateforme": PLATFORM_OF.get("pvp", "YouTube") + (f", format {settings.format}" if settings.format else ""),
+        "promesse": "Seulement des combos portés par le joueur, sans menu, sans lobby, sans temps mort.",
+        "angle": "les rafales de coups les plus nettes, choisies sur les images et pas seulement au son",
+        "ton": TONE_OF.get("pvp", "nerveux, calé sur la musique"),
+        "accroche": "un combo fort dès la première seconde",
+        "moment_fort": "le meilleur combo, ralenti sur son coup final",
+        "fin": "le dernier coup final, coupé juste après l'impact",
+    }
+
+
 def brief(project: Project, segments: list[Segment], settings: EditSettings) -> tuple[dict, str]:
     """Brief du stratège et du directeur créatif. Renvoie (brief, auteur : « claude » ou « local »)."""
+    if settings.style == "pvp":  # les segments notés ici sont de la parole : ils égareraient le brief
+        return _pvp_brief(project, settings), "local"
     if config.claude_available() and segments:
         try:
             import anthropic

@@ -57,9 +57,26 @@ def media_section(project: Project, m, max_phrases: int = 30, max_seen: int = 40
     hits = sig.get("hits") or []
     if hits:
         cb = hits_an.combos(hits)
-        lines.append(f"  Coups détectés au son : {len(hits)}" + (f" ; combos : {len(cb)}" if cb else ""))
-        for c in cb[:12]:
-            lines.append(f"  · combo {mmss(c['start'])} → {mmss(c['end'])} : {c['n']} coups, score {c['score']:.1f}")
+        lines.append(f"  Coups détectés au son : {len(hits)}" + (f" ; combats (coups rapprochés) : {len(cb)}" if cb else ""))
+        for c in sorted(cb, key=lambda c: -c["score"])[:8]:
+            lines.append(f"  · combat {mmss(c['start'])} → {mmss(c['end'])} : {c['n']} coups")
+        # Les rafales sont les vrais combos (coups à 0,5 s d'écart). Le son ne dit pas qui frappe : seul le jury
+        # (images regardées par Claude lors d'un montage PvP) le sait.
+        from ..analysis import video as video_an
+        from . import jury, pvp
+        seen = (sig.get("jury") or {}).get("verdicts") or {}
+        v0 = sig.get("video") or {}
+        menus = video_an.overlays(v0.get("brightness") or [], v0.get("fps") or 5)
+        # Mêmes rafales que le montage PvP (hors menus) : leurs clés sont celles des verdicts du jury.
+        bursts = sorted((c for _, c in pvp.candidates([m], {m.id: hits}, {m.id: menus})),
+                        key=lambda c: (jury.key(c) not in seen, -c["score"]))
+        if bursts:
+            lines.append(f"  Rafales au rythme d'un combo : {len(bursts)}"
+                         + (f", dont {len(seen)} jugées sur images" if seen else " (auteur des coups inconnu sans images)"))
+        for c in bursts[:14]:
+            v = seen.get(jury.key(c))
+            lines.append(f"  · combo {mmss(c['start'])} → {mmss(c['end'])} : {c['n']} coups"
+                         + (f" — jury : {jury.label(v)}" if v else ""))
     video = sig.get("video") or {}
     if sig and m.has_video and "red_flashes" not in video:
         # Projet analysé avant l'ajout de cette mesure : on la calcule ici (quelques secondes) et on la garde.
