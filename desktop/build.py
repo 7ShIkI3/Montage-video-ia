@@ -26,6 +26,14 @@ def main() -> int:
     if not (dist / "index.html").exists():
         print("Construis d'abord l'interface : cd frontend && npm ci && npm run build", file=sys.stderr)
         return 1
+    # L'interface embarquée est celle de frontend/dist, telle quelle : si les sources ont changé depuis sa
+    # construction, l'exe partirait avec une vieille interface sans que rien ne le signale.
+    built = (dist / "index.html").stat().st_mtime
+    newer = [f for f in (ROOT / "frontend" / "src").rglob("*") if f.is_file() and f.stat().st_mtime > built]
+    if newer:
+        print(f"L'interface construite est plus ancienne que ses sources ({newer[0].name}, {len(newer)} fichier(s)) : "
+              "cd frontend && npm run build", file=sys.stderr)
+        return 1
     demo_clip = ROOT / "build" / "demo_pvp.mp4"
     if not demo_clip.exists():
         # Clip « Essayer sans vidéo » : rendu une fois ici (quelques minutes) plutôt qu'à chaque essai chez l'utilisateur.
