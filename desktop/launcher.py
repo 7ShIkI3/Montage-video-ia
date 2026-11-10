@@ -162,6 +162,8 @@ def main(argv: list[str] | None = None) -> int:
         window.settings["ALLOW_DOWNLOADS"] = True
         window.create_window(APP_NAME, url, width=1440, height=900, min_size=(1100, 700))
         window.start()  # rend la main quand la fenêtre est fermée
+        # Sans cette ligne, le journal ne distingue pas une fenêtre fermée d'un arrêt brutal du processus.
+        print(f"{APP_NAME} : fenêtre fermée {time.strftime('%Y-%m-%d %H:%M:%S')}")
     else:
         webbrowser.open(url)
         try:
@@ -171,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
             pass
     server.should_exit = True
     server_thread.join(timeout=5)  # laisse le serveur annuler les tâches en cours (ffmpeg compris) avant de quitter
+    print(f"{APP_NAME} : arrêt normal {time.strftime('%Y-%m-%d %H:%M:%S')}")
     return 0
 
 
