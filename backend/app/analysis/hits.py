@@ -87,6 +87,33 @@ def combos(hits: list[list[float]], max_gap: float = 1.6, min_hits: int = 3) -> 
     return out
 
 
+# Un joueur touché est invulnérable une demi-seconde : dans un combo, les coups se suivent à 0,5 s environ.
+# Au-delà de 0,8 s sans coup, l'enchaînement est rompu.
+RHYTHM_GAP = 0.8
+BURST_MAX = 8.0  # secondes gardées d'une rafale : au-delà, on garde la fin (là où tombe le coup final)
+
+
+def bursts(hits: list[list[float]], max_gap: float = RHYTHM_GAP, min_hits: int = 4, max_len: float = BURST_MAX) -> list[dict]:
+    """Rafales : coups qui s'enchaînent au rythme d'un combo. C'est l'unité d'un montage de highlights.
+
+    `combos` regroupe des coups espacés jusqu'à 1,6 s : dans un duel où ça frappe sans arrêt, il rend le duel
+    entier (une minute, cent coups), pas un combo. Ici le rythme est celui d'un vrai enchaînement.
+    """
+    out = []
+    for c in combos(hits, max_gap, min_hits):
+        if c["end"] - c["start"] > max_len:
+            c = _combo([h for h in c["hits"] if h[0] >= c["end"] - max_len])
+        out.append(c)
+    return out
+
+
+def outside(hits: list[list[float]], blocked: list[list[float]]) -> list[list[float]]:
+    """Les coups hors des intervalles `blocked` (menus ouverts : leurs clics ne sont pas des coups)."""
+    if not blocked:
+        return hits
+    return [h for h in hits if not any(a <= h[0] <= b for a, b in blocked)]
+
+
 def _combo(c: list[list[float]]) -> dict:
     s = [x[1] for x in c]
     dur = c[-1][0] - c[0][0]

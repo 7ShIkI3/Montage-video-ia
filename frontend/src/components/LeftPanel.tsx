@@ -10,7 +10,7 @@ const STYLES: { id: Style; name: string; desc: string }[] = [
   { id: "short", name: "Short", desc: "Vertical, 15–60 s, accroche d'abord" },
   { id: "vlog", name: "Vlog", desc: "Ambiance et plans d'illustration" },
   { id: "podcast", name: "Podcast", desc: "Garde tout, retire silences et « euh »" },
-  { id: "pvp", name: "Edit PvP", desc: "Gaming : combos, coups au rythme, effets 3D" },
+  { id: "pvp", name: "Edit PvP", desc: "Gaming : tes meilleurs combos, vérifiés sur les images par l'IA, calés sur le rythme" },
 ];
 
 export function MediaPanel() {

@@ -57,9 +57,21 @@ def media_section(project: Project, m, max_phrases: int = 30, max_seen: int = 40
     hits = sig.get("hits") or []
     if hits:
         cb = hits_an.combos(hits)
-        lines.append(f"  Coups détectés au son : {len(hits)}" + (f" ; combos : {len(cb)}" if cb else ""))
-        for c in cb[:12]:
-            lines.append(f"  · combo {mmss(c['start'])} → {mmss(c['end'])} : {c['n']} coups, score {c['score']:.1f}")
+        lines.append(f"  Coups détectés au son : {len(hits)}" + (f" ; combats (coups rapprochés) : {len(cb)}" if cb else ""))
+        for c in sorted(cb, key=lambda c: -c["score"])[:8]:
+            lines.append(f"  · combat {mmss(c['start'])} → {mmss(c['end'])} : {c['n']} coups")
+        # Les rafales sont les vrais combos (coups à 0,5 s d'écart). Le son ne dit pas qui frappe : seul le jury
+        # (images regardées par Claude lors d'un montage PvP) le sait.
+        from . import jury
+        seen = (sig.get("jury") or {}).get("verdicts") or {}
+        bursts = sorted(hits_an.bursts(hits), key=lambda c: (jury.key(c) not in seen, -c["score"]))
+        if bursts:
+            lines.append(f"  Rafales au rythme d'un combo : {len(bursts)}"
+                         + (f", dont {len(seen)} jugées sur images" if seen else " (auteur des coups inconnu sans images)"))
+        for c in bursts[:14]:
+            v = seen.get(jury.key(c))
+            lines.append(f"  · combo {mmss(c['start'])} → {mmss(c['end'])} : {c['n']} coups"
+                         + (f" — jury : {jury.label(v)}" if v else ""))
     video = sig.get("video") or {}
     if sig and m.has_video and "red_flashes" not in video:
         # Projet analysé avant l'ajout de cette mesure : on la calcule ici (quelques secondes) et on la garde.
