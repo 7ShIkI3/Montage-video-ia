@@ -1,30 +1,42 @@
-// Chat avec le réalisateur IA : il lit le dossier des rushes (coups, combos, écrans rouges, phrases horodatées,
-// montage actuel) et répond ; quand on lui demande un changement, il l'applique au montage (annulable).
+// Chat avec le réalisateur IA : un agent qui lit le dossier des rushes, REGARDE les images quand il en a besoin
+// (outil voir_images), cherche sur le web, et modifie le montage avec des outils précis (annulable).
+// Sa réponse s'écrit au fil de l'eau ; chaque message garde la liste de ce qu'il a fait.
 import { useEffect, useRef, useState } from "react";
-import { api, ChatMessage } from "../api";
+import { api, ChatMessage, VisionEstimate } from "../api";
 import { CapHint } from "../caps";
 import { Icon } from "../icons";
 import { isBusy, jobOf, useStore } from "../store";
 import { ask } from "./Dialog";
 import { renderLite } from "./Research";
 
-const EXAMPLES = ["Quels combos ai-je gagnés ?", "Garde seulement le meilleur combat", "Fais une version de 30 secondes",
-  "Passe en vertical", "Qu'est-ce qui manque pour un bon short ?"];
+const EXAMPLES = ["Quels combats ai-je gagnés ? Regarde les images.", "Refais le montage autour de mes meilleurs kills",
+  "Pose un repère à chaque élimination", "Fais une version de 30 secondes", "Passe en vertical"];
 
 export function DirectorChat() {
   const project = useStore((s) => s.project);
   const caps = useStore((s) => s.caps);
   const busy = useStore((s) => isBusy(s));
   const job = useStore((s) => jobOf(s, "chat"));
+  const visionJob = useStore((s) => jobOf(s, "vision"));
   const [text, setText] = useState("");
   const [pending, setPending] = useState<string | null>(null);  // message envoyé, affiché avant la réponse
   const [dossier, setDossier] = useState<string | null>(null);
+  const [vision, setVision] = useState<VisionEstimate | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const n = project?.chat?.length ?? 0;
-  useEffect(() => { list.current?.scrollTo({ top: list.current.scrollHeight }); }, [n, busy]);
+  const pid = project?.id;
+  const mediaCount = project?.media.length ?? 0;
+  const active = (j: typeof job) => !!j && (j.status === "en_cours" || j.status === "en_attente");
+  const running = active(job);
+  const looking = active(visionJob);
+  useEffect(() => { list.current?.scrollTo({ top: list.current.scrollHeight }); }, [n, busy, job?.preview, job?.message]);
+  // Combien d'images une passe de vision enverrait : relu quand les rushes changent ou qu'une passe finit.
+  useEffect(() => {
+    if (!pid) return;
+    api.visionEstimate(pid).then(setVision).catch(() => setVision(null));
+  }, [pid, mediaCount, looking]);
   if (!project) return null;
   const messages: ChatMessage[] = project.chat ?? [];
-  const running = busy && job?.status !== "termine" && job?.status !== "erreur" && job?.status !== "annulee" && job?.kind === "chat";
 
   const send = async (t: string) => {
     const msg = t.trim();
@@ -37,7 +49,7 @@ export function DirectorChat() {
         timeline: true,
         onDone: (done) => {
           const r = done.result as { applied?: boolean; message?: ChatMessage } | null;
-          // Un changement appliqué par le réalisateur s'annule comme une retouche manuelle (Ctrl+Z).
+          // Un changement fait par le réalisateur s'annule comme une retouche manuelle (Ctrl+Z).
           if (r?.applied && before) useStore.setState((s) => ({ past: [...s.past, before], future: [] }));
         },
       });
@@ -53,6 +65,20 @@ export function DirectorChat() {
     if (dossier !== null) return setDossier(null);
     await useStore.getState().guard("Dossier illisible", async () => setDossier(await api.dossier(project.id)));
   };
+  const look = async () => {
+    if (!vision || !vision.images) return;
+    if (!await ask.confirm(
+      `Claude va regarder ${vision.images} image${vision.images > 1 ? "s" : ""} de ${vision.pending} rush${vision.pending > 1 ? "es" : ""} (fins de combos, écrans rouges, changements de plan) et noter ce qu'il voit. C'est un appel payant à l'API Claude, fait une seule fois par rush.`,
+      { title: "Faire regarder les rushes", ok: "Regarder" })) return;
+    await useStore.getState().runJob("Analyse des images", () => api.vision(project.id), {
+      onDone: (j) => {
+        const r = j.result as { observations?: number } | null;
+        useStore.getState().notify(`Rushes regardés : ${r?.observations ?? 0} observations ajoutées au dossier.`, { level: "ok" });
+        setDossier(null);
+      },
+    });
+  };
+  const seen = vision ? vision.media.filter((m) => m.done).length : 0;
 
   return (
     <section className="panel chat" data-testid="director-chat">
@@ -62,17 +88,40 @@ export function DirectorChat() {
         <button className="link small" onClick={showDossier} title="Ce que le réalisateur sait de tes rushes">{dossier !== null ? "Masquer le dossier" : "Ce qu'il sait"}</button>
         {messages.length > 0 && <button className="icon-btn" title="Effacer la conversation" aria-label="Effacer la conversation" onClick={clear}><Icon name="trash" size={14} /></button>}
       </header>
+      {vision && vision.claude && vision.media.length > 0 && (
+        <div className="chat-vision" data-testid="chat-vision">
+          <Icon name={vision.pending ? "eye-off" : "eye"} size={14} />
+          <span className="small">
+            {looking ? (visionJob?.message || "Claude regarde les rushes…")
+              : vision.pending ? `${seen}/${vision.media.length} rush${vision.media.length > 1 ? "es" : ""} regardé${seen > 1 ? "s" : ""} par Claude. Il peut déjà regarder à la demande ; une passe complète lui donne une vue d'ensemble.`
+              : "Claude a regardé tous les rushes : ses observations sont dans le dossier."}
+          </span>
+          {vision.pending > 0 && !looking && (
+            <button className="small-btn" disabled={busy} onClick={look}>Regarder ({vision.images} images)</button>
+          )}
+        </div>
+      )}
       {dossier !== null && <pre className="chat-dossier small">{dossier}</pre>}
       <div className="chat-list" ref={list}>
         {!messages.length && (
-          <p className="muted small">Pose-lui une question sur tes rushes (il a les coups, les combos, les écrans rouges, les phrases horodatées et le montage) ou demande un changement : il l'applique.</p>
+          <p className="muted small">Pose-lui une question sur tes rushes ou demande un changement. Il a les mesures de l'app (coups, combos, écrans rouges, paroles), il va voir les images quand la réponse en dépend, et il modifie le montage lui-même.</p>
         )}
         {messages.map((m) => (
           <div key={m.id} className={`chat-msg ${m.role}`}>
             <div className="chat-bubble">
               {m.role === "realisateur" ? renderLite(m.text) : <p>{m.text}</p>}
-              {m.consigne && (
-                <span className={`chat-action ${m.applied ? "ok" : ""}`} title={m.consigne}>
+              {m.sources && m.sources.length > 0 && (
+                <ul className="chat-sources">
+                  {m.sources.map((s, i) => <li key={i}><a href={s.url} target="_blank" rel="noreferrer" title={s.url}>{s.title || s.url}</a></li>)}
+                </ul>
+              )}
+              {m.actions && m.actions.length > 0 && (
+                <ul className="chat-actions" aria-label="Ce que le réalisateur a fait">
+                  {m.actions.map((a, i) => <li key={i}><Icon name={/regardé|lu les/.test(a) ? "eye" : /web/.test(a) ? "globe" : "check"} size={11} />{a}</li>)}
+                </ul>
+              )}
+              {(m.applied || m.consigne) && (
+                <span className={`chat-action ${m.applied ? "ok" : ""}`} title={m.consigne ?? "Annulable par Ctrl+Z"}>
                   <Icon name={m.applied ? "check" : "clock"} size={12} />{m.applied ? "Montage modifié" : "Consigne non appliquée"}
                 </span>
               )}
@@ -84,7 +133,12 @@ export function DirectorChat() {
           <div className="chat-msg monteur"><div className="chat-bubble"><p>{pending}</p></div><span className="chat-meta muted small">Toi</span></div>
         )}
         {running && job && (
-          <div className="chat-msg realisateur"><div className="chat-bubble typing"><span className="muted small">{job.message || "…"}</span></div></div>
+          <div className="chat-msg realisateur" data-testid="chat-live">
+            <div className="chat-bubble">
+              {job.preview ? renderLite(job.preview) : null}
+              <span className="chat-step typing muted small">{job.message || "…"}</span>
+            </div>
+          </div>
         )}
       </div>
       <form onSubmit={(e) => { e.preventDefault(); send(text); }}>
@@ -93,7 +147,7 @@ export function DirectorChat() {
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(text); } }} />
         <button className="primary" disabled={busy || !text.trim()}>{running ? "…" : <><Icon name="message" size={14} />Envoyer</>}</button>
       </form>
-      <CapHint reason={caps && !caps.claude ? "Sans clé Claude (Réglages), le réalisateur ne discute pas : il applique les consignes simples (durée, format, sous-titres, musique, zooms, couper un passage)." : null} />
+      <CapHint reason={caps && !caps.claude ? "Sans clé Claude (Réglages), le réalisateur ne discute pas et ne regarde pas les images : il applique les consignes simples (durée, format, sous-titres, musique, zooms, couper un passage)." : null} />
       <div className="chips">
         {EXAMPLES.map((x) => <button key={x} className="chip" disabled={busy} onClick={() => setText(x)}>{x}</button>)}
       </div>

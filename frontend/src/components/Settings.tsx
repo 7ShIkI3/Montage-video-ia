@@ -89,8 +89,8 @@ function PiperVoices({ runtime, onChanged }: { runtime: boolean; onChanged: () =
   );
 }
 
-const CLAUDE_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
-const EFFORTS = ["low", "medium", "high", "max"];
+const CLAUDE_MODELS = ["claude-opus-5-5", "claude-fable-5-2", "claude-sonnet-5-5", "claude-haiku-5-5"];
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3"];
 const CUDA_COMMAND = "backend\\.venv\\Scripts\\python -m pip install -r backend/requirements-cuda.txt";
 

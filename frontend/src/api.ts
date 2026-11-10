@@ -341,6 +341,17 @@ export interface ChatMessage {
   applied: boolean;
   by: string;
   created_at: number;
+  /** Ce que le réalisateur a fait pendant sa réponse (images regardées, modifications). */
+  actions?: string[];
+  sources?: { title: string; url: string }[];
+}
+
+export interface VisionEstimate {
+  media: { media_id: string; filename: string; images: number; done: boolean }[];
+  /** Images qu'une passe enverrait à Claude (rushes pas encore regardés). */
+  images: number;
+  pending: number;
+  claude: boolean;
 }
 
 export interface ResearchNote {
@@ -423,6 +434,8 @@ export interface Job {
   updated_at: number;
   finished_at: number | null;
   stage: string | null;
+  /** Texte en cours d'écriture (réponse du réalisateur au fil de l'eau). */
+  preview?: string | null;
   steps: { t: number; message: string; progress: number; stage?: string | null }[];
   cancel_requested: boolean;
 }
@@ -682,6 +695,9 @@ export const api = {
   srtUrl: (id: string) => `/api/projects/${id}/captions.srt`,
   /** Chat avec le réalisateur IA (dossier des rushes, consignes appliquées). */
   chat: (id: string, text: string) => req<Job>(`/api/projects/${id}/chat`, json("POST", { text })),
+  /** Passe de vision : Claude regarde des images des rushes (payant, sur action du monteur). */
+  visionEstimate: (id: string) => req<VisionEstimate>(`/api/projects/${id}/vision`),
+  vision: (id: string, force = false) => req<Job>(`/api/projects/${id}/vision`, json("POST", { force })),
   clearChat: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/chat`, { method: "DELETE" }),
   dossier: (id: string) => fetch(`/api/projects/${id}/dossier`).then((r) => r.text()),
   duplicateProject: (id: string) => req<Project>(`/api/projects/${id}/duplicate`, { method: "POST" }),

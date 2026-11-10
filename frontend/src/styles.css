@@ -860,3 +860,19 @@ dialog.dlg footer button { min-width: 96px; }
 .card-menu button:hover { background: var(--surface-2); }
 .card-menu button.danger-text { color: var(--danger); }
 .card-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+
+/* ---------- Réalisateur à outils : vision, actions, sources ---------- */
+.chat-vision { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg); border: 1px solid var(--line); color: var(--text-2); }
+.chat-vision > svg { flex: none; color: var(--muted); }
+.chat-vision > span { flex: 1; min-width: 0; }
+.chat-vision .small-btn { flex: none; }
+.chat-actions { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 3px; font-size: 11.5px; color: var(--muted); }
+.chat-bubble .chat-actions { padding-left: 0; }
+.chat-actions li { display: flex; align-items: center; gap: 6px; }
+.chat-actions svg { flex: none; }
+.chat-sources { margin: 8px 0 0; padding-left: 16px; font-size: 12px; }
+.chat-bubble .chat-sources { margin-bottom: 0; }
+.chat-sources a { color: var(--accent-2); overflow-wrap: anywhere; }
+.chat-step { display: block; }
+.chat-bubble > p + .chat-step, .chat-bubble > ul + .chat-step { margin-top: 6px; }
+.chat-step.typing::after { content: " …"; animation: chat-dots 1.2s steps(3) infinite; }

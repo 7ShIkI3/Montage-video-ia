@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 SETTINGS_PATH = config.DATA_DIR / "settings.json"
 DEVICES = ("auto", "cuda", "cpu")
-EFFORTS = ("low", "medium", "high", "max")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # Champ -> variable d'environnement qui l'emporte sur le fichier.
 _ENV = {
     "claude_model": "MONTEUR_CLAUDE_MODEL", "claude_effort": "MONTEUR_CLAUDE_EFFORT",

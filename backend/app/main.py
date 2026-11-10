@@ -486,6 +486,29 @@ def chat_clear(pid: str):
     return {"ok": True}
 
 
+class VisionReq(BaseModel):
+    media_ids: list[str] | None = None
+    force: bool = False  # regarder à nouveau un rush déjà vu
+
+
+@app.get("/api/projects/{pid}/vision")
+def vision_estimate(pid: str):
+    """Combien d'images une passe de vision enverrait à Claude, et quels rushes ont déjà été regardés."""
+    from .ai import vision
+    return vision.estimate(_project(pid))
+
+
+@app.post("/api/projects/{pid}/vision")
+def vision_run(pid: str, body: VisionReq | None = None):
+    """Fait regarder les rushes par Claude (images aux instants clés). Appel payant : seulement sur action du monteur."""
+    from .ai import vision
+    _project(pid)
+    if not config.claude_available():
+        raise HTTPException(400, "Regarder les images demande une clé Claude (Réglages).")
+    body = body or VisionReq()
+    return manager.submit(pid, "vision", lambda ctx: vision.observe_project(pid, ctx, body.media_ids, body.force))
+
+
 @app.get("/api/projects/{pid}/dossier", response_class=Response)
 def project_dossier_text(pid: str):
     """Le dossier des rushes tel que le réalisateur IA le lit (texte brut)."""
