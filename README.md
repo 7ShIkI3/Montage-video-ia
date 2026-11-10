@@ -119,14 +119,19 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
   yt-dlp), une bibliothèque musicale avec recherche de musiques libres de droits (ccMixter, licence gardée
   à côté du fichier) ou le son d'un lien, et dans les réglages le téléchargement à l'avance des modèles Whisper
   et des voix naturelles Piper (Hugging Face).
-- Chat avec le réalisateur (onglet « Réalisateur ») : il lit le **dossier des rushes**, ce que l'app a mesuré
-  (durées, coups détectés au son, combos, écrans rouges = coups encaissés probables, changements de plan,
-  phrases transcrites horodatées, montage actuel plan par plan, repères, commentaires, notes de recherche) et
-  répond avec des horodatages ; une demande de changement devient une consigne appliquée au montage
-  (annulable par `Ctrl+Z`). « Ce qu'il sait » affiche le dossier tel qu'il le lit, limites comprises : l'app
-  n'interprète pas les images (pas de lecture du chat du jeu, pas d'identification des joueurs), elle dit donc
-  « probable ». La conversation reste dans le projet. Sans clé Claude, le message est appliqué comme une
+- Réalisateur IA (onglet « Réalisateur ») : un agent Claude à outils. Il lit le **dossier des rushes** (ce que
+  l'app a mesuré : coups au son, combos, écrans rouges, changements de plan, paroles horodatées, montage plan par
+  plan, repères, commentaires, notes de recherche), **regarde les images** quand la réponse en dépend (des images
+  du rush aux instants qu'il choisit, avec recadrage d'un coin pour lire un petit texte), lit la transcription,
+  cherche sur le web, et **agit** : refaire le découpage à des instants précis, retoucher un plan, poser un texte ou
+  des repères, ou confier une consigne libre au monteur automatique. Sa réponse s'écrit au fil de l'eau, chaque
+  message garde la liste de ce qu'il a fait, et tout changement s'annule par `Ctrl+Z`. « Ce qu'il sait » affiche
+  le dossier tel qu'il le lit. Au plus 30 images par message. Sans clé Claude, le message est appliqué comme une
   consigne simple par le réalisateur local.
+- Analyse visuelle des rushes (« Regarder » dans l'onglet Réalisateur) : sur ta demande, Claude regarde des images
+  de chaque rush aux instants qui comptent (fin des combos, écrans rouges, changements de plan, puis une grille
+  régulière, 36 au plus) et note ce qu'il voit, texte à l'écran compris. Ces observations entrent dans le dossier
+  et guident aussi le montage automatique. Appel payant, fait une fois par rush, jamais lancé tout seul.
 - Recherche web (onglet « Recherche ») : une question, une réponse rédigée et sourcée par Claude (recherche web
   d'Anthropic) ou, sans clé, les premiers résultats DuckDuckGo. L'assistant reçoit aussi le dossier des rushes.
   Les notes restent dans le projet et le réalisateur s'en sert au montage et dans les consignes ; une phrase se

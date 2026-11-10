@@ -449,6 +449,8 @@ class ChatMessage(BaseModel):
     consigne: str | None = None  # consigne que le réalisateur a appliquée au montage à la suite de ce message
     applied: bool = False
     by: str = ""  # "claude" ou "local" pour les réponses
+    actions: list[str] = Field(default_factory=list)  # ce que le réalisateur a fait (images regardées, modifications)
+    sources: list[dict] = Field(default_factory=list)  # pages citées par une recherche web : {"title", "url"}
     created_at: float = Field(default_factory=time.time)
 
 

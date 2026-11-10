@@ -187,6 +187,10 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         from .ai import research as research_mod
         settings = settings.model_copy(update={"instructions": (settings.instructions + "\n" +
                                                                 research_mod.notes_as_instructions(project.research)).strip()})
+    from .ai import vision as vision_mod
+    seen = vision_mod.notes_as_instructions(project)  # ce que Claude a vu dans les images, si la passe a été faite
+    if seen:
+        settings = settings.model_copy(update={"instructions": (settings.instructions + "\n" + seen).strip()})
     from .ai import roles
     ctx.step("Stratège et directeur créatif : objectif, public, accroche, moment fort", 0.88, stage="brief")
     brief, brief_by = roles.brief(project, segments, settings)
@@ -630,6 +634,9 @@ class _Scoped:
 
     def check(self) -> None:
         self.ctx.check()
+
+    def preview(self, text: str) -> None:
+        self.ctx.preview(text)
 
     @property
     def job(self):

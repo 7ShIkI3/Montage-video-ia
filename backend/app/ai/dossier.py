@@ -1,9 +1,10 @@
-"""Dossier du projet : ce que l'app a mesuré dans les rushes, en texte, pour le réalisateur IA et la recherche.
+"""Dossier du projet : ce que l'app sait des rushes, en texte, pour le réalisateur IA et la recherche.
 
 Sans ce dossier, l'IA ne « voit » pas les rushes et répond à côté (« je ne peux pas savoir quels combos tu as
 gagnés »). Avec, elle a des horodatages : coups détectés au son, combos, écrans rouges (coups encaissés
-probables), changements de plan, phrases transcrites, montage actuel, repères, commentaires, notes de recherche.
-Le dossier dit aussi ce que l'app ne mesure pas, pour que l'IA réponde « probable » plutôt qu'inventer.
+probables), changements de plan, phrases transcrites, ce que Claude a vu dans les images (si la passe de vision
+a été faite), montage actuel, repères, commentaires, notes de recherche. Le dossier dit aussi ce qui n'a pas été
+mesuré, pour que l'IA réponde « probable » ou aille regarder, plutôt qu'inventer.
 """
 from __future__ import annotations
 
@@ -11,11 +12,16 @@ from .. import storage
 from ..analysis import hits as hits_an
 from ..models import Project, Transcript
 
-LIMITS = (
-    "Limites de la mesure : l'app n'interprète pas les images (pas de lecture du chat ou des messages de "
-    "kill, pas d'identification des joueurs, pas de score ni de barre de vie). Un combo = coups rapprochés "
-    "entendus au son ; un écran rouge = probablement un coup encaissé par le joueur qui filme. Déductions à "
-    "présenter comme probables, avec les horodatages."
+LIMITS_BLIND = (
+    "Limites de la mesure : pour les rushes sans analyse visuelle, l'app n'a pas interprété les images (pas de "
+    "lecture du chat ou des messages de kill, pas d'identification des joueurs, pas de score ni de barre de vie). "
+    "Un combo = coups rapprochés entendus au son ; un écran rouge = probablement un coup encaissé par le joueur "
+    "qui filme. Déductions à présenter comme probables, avec les horodatages."
+)
+LIMITS_TOOLS = (
+    "Ce dossier vient de mesures (son, mouvement) et, quand elle a été faite, d'une analyse visuelle par "
+    "échantillons. Pour tout ce qu'il ne dit pas (issue d'un combat, texte à l'écran, ce qu'on voit à un instant "
+    "précis), regarde les images avec l'outil voir_images avant d'affirmer."
 )
 
 
@@ -44,7 +50,7 @@ def _phrases(tr: Transcript, gap: float = 0.8, max_len: int = 110) -> list[tuple
     return out
 
 
-def media_section(project: Project, m, max_phrases: int = 30) -> list[str]:
+def media_section(project: Project, m, max_phrases: int = 30, max_seen: int = 40) -> list[str]:
     lines = [f"- {m.filename} : {mmss(m.duration)} ({m.width}x{m.height}, {m.fps:.0f} i/s)"
              + ("" if m.analyzed else " — pas encore analysé")]
     sig = storage.load_signals(project.id, m.id) or {}
@@ -69,9 +75,17 @@ def media_section(project: Project, m, max_phrases: int = 30) -> list[str]:
     if reds:
         lines.append("  Écrans rouges (coups encaissés probables) : " + ", ".join(mmss(t) for t in reds[:30])
                      + (f" … ({len(reds)} au total)" if len(reds) > 30 else ""))
-    cuts = (sig.get("video") or {}).get("cuts") or []
+    cuts = video.get("cuts") or []
     if cuts:
         lines.append(f"  Changements de plan dans le rush : {len(cuts)}")
+    vision = sig.get("vision") or {}
+    if vision.get("observations"):
+        lines.append(f"  Vu dans les images (analyse visuelle de {vision.get('images', len(vision['observations']))} images) :"
+                     + (f" {vision['resume']}" if vision.get("resume") else ""))
+        for o in vision["observations"][:max_seen]:
+            lines.append(f"  · {mmss(o['t'])} [{o['type']}] {o['vu']}" + (f" — texte : « {o['texte']} »" if o.get("texte") else ""))
+    elif m.has_video:
+        lines.append("  Images : pas encore regardées (aucune analyse visuelle de ce rush)")
     tr = storage.load_transcript(project.id, m.id)
     if tr and tr.words:
         ph = _phrases(tr)
@@ -84,8 +98,35 @@ def media_section(project: Project, m, max_phrases: int = 30) -> list[str]:
     return lines
 
 
-def project_dossier(project: Project, max_chars: int = 9000) -> str:
-    """Le dossier complet, en français, borné en taille (les paroles sont échantillonnées si besoin)."""
+def montage_section(project: Project, max_clips: int = 40) -> list[str]:
+    """Le montage actuel, plan par plan (position sur la timeline ← source)."""
+    tl = project.timeline
+    names = {m.id: m.filename for m in project.media}
+    if not tl.clips:
+        return ["Montage actuel : aucun (pas encore monté)."]
+    out = [f"Montage actuel : {len(tl.clips)} plans, {mmss(tl.duration)}"
+           + (f", titre « {tl.title} »" if tl.title else "") + (f", réalisateur {tl.director}" if tl.director else "")]
+    if tl.summary:
+        out.append(f"Résumé du réalisateur : {tl.summary[:500]}")
+    t = 0.0
+    for k, c in enumerate(tl.clips[:max_clips], 1):
+        fx = ", ".join(x for x in [f"×{c.speed}" if c.speed != 1 else "", *c.effects] if x)
+        out.append(f"  {k}. {mmss(t)} ← {names.get(c.media_id, c.media_id)} {mmss(c.src_in)}→{mmss(c.src_out)}"
+                   + (f" ({fx})" if fx else ""))
+        t += c.duration
+    if len(tl.clips) > max_clips:
+        out.append(f"  … {len(tl.clips) - max_clips} autres plans")
+    if tl.texts:
+        out.append("Textes : " + " | ".join(f"{mmss(x.start)} « {x.text[:60]} »" for x in tl.texts[:12]))
+    if tl.review:
+        out.append(f"Note du relecteur : {tl.review.score:.1f}/10")
+    if tl.quality:
+        out.append(f"Contrôle qualité : {tl.quality.score}/100")
+    return out
+
+
+def project_dossier(project: Project, max_chars: int = 12000, tools: bool = False) -> str:
+    """Le dossier complet, en français, borné en taille. `tools` : le lecteur peut aller regarder les images."""
     s = project.settings
     out = [f"Projet « {project.name} » — style {s.style}, format {s.format}, durée cible "
            f"{int(s.target_duration) if s.target_duration else 'auto'} s, sous-titres {s.captions}."]
@@ -96,31 +137,11 @@ def project_dossier(project: Project, max_chars: int = 9000) -> str:
         out.append("- aucun pour l'instant")
     for m in project.media:
         out.extend(media_section(project, m))
-    out.append("\n" + LIMITS)
+    out.append("\n" + (LIMITS_TOOLS if tools else LIMITS_BLIND))
     tl = project.timeline
     names = {m.id: m.filename for m in project.media}
-    if tl.clips:
-        out.append(f"\nMontage actuel : {len(tl.clips)} plans, {mmss(tl.duration)}"
-                   + (f", titre « {tl.title} »" if tl.title else "") + (f", réalisateur {tl.director}" if tl.director else ""))
-        if tl.summary:
-            out.append(f"Résumé du réalisateur : {tl.summary[:500]}")
-        t = 0.0
-        for k, c in enumerate(tl.clips[:40], 1):
-            d = (c.src_out - c.src_in) / max(0.05, c.speed or 1.0)
-            fx = ", ".join(x for x in [f"×{c.speed}" if c.speed != 1 else "", *c.effects] if x)
-            out.append(f"  {k}. {mmss(t)} ← {names.get(c.media_id, c.media_id)} {mmss(c.src_in)}→{mmss(c.src_out)}"
-                       + (f" ({fx})" if fx else ""))
-            t += d
-        if len(tl.clips) > 40:
-            out.append(f"  … {len(tl.clips) - 40} autres plans")
-        if tl.texts:
-            out.append("Textes : " + " | ".join(f"{mmss(x.start)} « {x.text[:60]} »" for x in tl.texts[:12]))
-        if tl.review:
-            out.append(f"Note du relecteur : {tl.review.score:.1f}/10")
-        if tl.quality:
-            out.append(f"Contrôle qualité : {tl.quality.score}/100")
-    else:
-        out.append("\nMontage actuel : aucun (pas encore monté).")
+    out.append("")
+    out.extend(montage_section(project))
     if tl.markers:
         out.append("Repères du monteur : " + " | ".join(f"{mmss(k.t)} {k.label or '(sans nom)'}" for k in tl.markers[:20]))
     open_c = [c for c in tl.comments if c.status == "ouvert"]

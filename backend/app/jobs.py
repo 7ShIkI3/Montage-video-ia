@@ -46,6 +46,7 @@ class Job(BaseModel):
     finished_at: float | None = None
     timeout_s: float = DEFAULT_TIMEOUT
     stage: str | None = None
+    preview: str | None = None  # texte en cours d'écriture (réponse du réalisateur au fil de l'eau)
     steps: list[dict] = Field(default_factory=list)  # {t, message, progress, stage}
     _cancel: threading.Event = PrivateAttr(default_factory=threading.Event)
 
@@ -75,6 +76,11 @@ class JobContext:
         j.updated_at = time.time()
         if self._on_change:
             self._on_change()
+
+    def preview(self, text: str) -> None:
+        """Texte en cours (réponse diffusée) : lu par l'interface à chaque sondage, sans écriture disque."""
+        self.job.preview = text[-8000:] if text else None
+        self.job.updated_at = time.time()
 
     def sub(self, lo: float, hi: float, message: str | None = None) -> Callable[[float], None]:
         """Callback de progression qui mappe 0..1 sur [lo, hi]."""

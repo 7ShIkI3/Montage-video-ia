@@ -21,7 +21,8 @@ RESEARCH_SYSTEM = (
     "Tu es l'assistant documentaire d'un monteur vidéo. Il prépare une vidéo et a besoin de faits fiables. "
     "Cherche sur le web, puis réponds en français, en 5 à 12 phrases courtes, factuelles, datées et chiffrées "
     "quand c'est possible. Cite tes sources. Termine par 2 ou 3 idées utilisables dans la vidéo (chiffre choc, "
-    "fait surprenant, formulation d'accroche). Si tu ne trouves pas, dis-le au lieu d'inventer.\n"
+    "fait surprenant, formulation d'accroche). Si tu ne trouves pas, dis-le au lieu d'inventer. Écris tout en "
+    "français : reformule ce que disent les sources, sans recopier de fragments dans une autre langue.\n"
     "Tu reçois aussi le dossier du projet : ce que l'app a mesuré dans ses rushes (coups au son, combos, écrans "
     "rouges, phrases horodatées, montage actuel). Quand la question porte sur ses rushes, réponds avec ces "
     "horodatages (en disant « probable » pour ce que l'app ne mesure pas, le dossier le précise) au lieu de dire "
@@ -51,11 +52,12 @@ def research(question: str, context: str = "", ctx=None) -> dict:
 
 def _claude(question: str, context: str) -> dict:
     import anthropic
+    from .chat import web_search_tool
     client = anthropic.Anthropic()
     user = (f"DOSSIER DU PROJET :\n{context.strip()}\n\n" if context.strip() else "") + f"Question : {question}"
     r = client.beta.messages.create(
         model=config.CLAUDE_MODEL, max_tokens=4000, system=RESEARCH_SYSTEM,
-        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}],
+        tools=[web_search_tool(5)],
         messages=[{"role": "user", "content": user}],
     )
     return parse_claude_response(r)
