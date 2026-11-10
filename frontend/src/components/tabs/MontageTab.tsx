@@ -1,12 +1,14 @@
-// Onglet Montage : le film dans son ensemble (titre, réalisateur, format, sous-titres, rôles, passages écartés,
-// sauvegardes automatiques).
+// Onglet Film : le film dans son ensemble (titre, réalisateur, format, recadrage, plan de réalisation, passages écartés,
+// sauvegardes automatiques). Le style des sous-titres est dans le module Texte du panneau de gauche.
 import { useCallback, useEffect, useState } from "react";
 import { api, Backup, fmtTime } from "../../api";
+import { Icon } from "../../icons";
 import { useStore } from "../../store";
-import { CaptionLanguage } from "../AudioTools";
 import { ask } from "../Dialog";
 import { PlanPanel } from "../Quality";
 import { RejectedList } from "../RightPanel";
+import { EmptyHint } from "../ui/EmptyHint";
+import { Section } from "../ui/Section";
 
 /** Copies datées du projet, faites automatiquement à chaque enregistrement (au plus une toutes les 5 minutes,
  * les 10 dernières sont gardées). « Restaurer » remet l'une d'elles en place ; l'état courant est gardé avant. */
@@ -36,10 +38,10 @@ function BackupsSection({ projectId }: { projectId: string }) {
   };
 
   return (
-    <div className="fx-section backups">
-      <div className="fx-title">
-        Sauvegardes automatiques
-        <button className="small-btn" onClick={refresh} disabled={busy}>Actualiser</button>
+    <div className="backups">
+      <div className="backups-bar">
+        <p className="muted small">Une copie au plus toutes les 5 minutes, les 10 dernières sont gardées.</p>
+        <button className="small-btn" onClick={refresh} disabled={busy}><Icon name="refresh" size={13} />Actualiser</button>
       </div>
       {list && list.length === 0 && <p className="muted small">Pas encore de sauvegarde : la première arrive à ton prochain enregistrement.</p>}
       {list && list.length > 0 && (
@@ -53,7 +55,6 @@ function BackupsSection({ projectId }: { projectId: string }) {
           ))}
         </ul>
       )}
-      <p className="muted small">Une copie au plus toutes les 5 minutes, les 10 dernières sont gardées.</p>
     </div>
   );
 }
@@ -61,34 +62,32 @@ function BackupsSection({ projectId }: { projectId: string }) {
 export function MontageTab() {
   const project = useStore((s) => s.project);
   const tl = useStore((s) => s.timeline);
-  const { setTimelineProps } = useStore.getState();
+  const { setTimelineProps, openLeft } = useStore.getState();
   if (!tl || !project) return null;
   return (
-    <section className="panel inspector">
-      <header><h3>Montage</h3></header>
-      {tl.title && <p className="title">{tl.title}</p>}
-      <p className="muted small">{tl.summary || "Aucun montage pour l'instant : importe des médias, puis « Monter automatiquement » ou pose des plans à la main."}</p>
-      {tl.director && <p className="muted small">Réalisé par : {tl.director === "claude" ? "Claude" : "moteur local"}</p>}
-      <div className="field-row">
-        <label>Format
-          <select value={tl.format} onChange={(e) => setTimelineProps({ format: e.target.value as typeof tl.format })}>
-            <option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option>
-          </select>
-        </label>
-        <label>Sous-titres
-          <select value={tl.captions} onChange={(e) => setTimelineProps({ captions: e.target.value as typeof tl.captions })}>
-            <option value="karaoke">Animés</option><option value="classique">Classiques</option><option value="aucun">Aucun</option>
-          </select>
-        </label>
-      </div>
-      <CaptionLanguage />
+    <div className="rw film-tab">
+      {tl.clips.length === 0 && !tl.summary ? (
+        <EmptyHint icon="clapper" text="Aucun montage pour l'instant : importe des médias, puis « Monter avec l'IA », ou pose des plans à la main."
+          action={{ label: "Monter avec l'IA", onClick: () => openLeft("ia") }} />
+      ) : (
+        <>
+          {tl.title && <p className="title">{tl.title}</p>}
+          {tl.summary && <p className="muted small">{tl.summary}</p>}
+          {tl.director && <p className="muted small">Réalisé par : {tl.director === "claude" ? "Claude" : "moteur local"}</p>}
+        </>
+      )}
+      <label>Format
+        <select value={tl.format} onChange={(e) => setTimelineProps({ format: e.target.value as typeof tl.format })}>
+          <option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option>
+        </select>
+      </label>
       {tl.format !== "16:9" && (
-        <label className="inline"><input type="checkbox" checked={tl.reframe !== false}
+        <label className="inline"><input type="checkbox" className="switch" checked={tl.reframe !== false}
           onChange={(e) => setTimelineProps({ reframe: e.target.checked })} /> Recadrage auto sur le visage</label>
       )}
-      <PlanPanel />
-      <RejectedList />
-      <BackupsSection projectId={project.id} />
-    </section>
+      {(tl.plan?.length ?? 0) > 0 && <Section title="Plan de réalisation"><PlanPanel /></Section>}
+      {tl.rejected.length > 0 && <Section title={`Passages écartés (${tl.rejected.length})`}><RejectedList /></Section>}
+      <Section title="Sauvegardes automatiques"><BackupsSection projectId={project.id} /></Section>
+    </div>
   );
 }

@@ -1,60 +1,15 @@
 import { useMemo, useRef, useState } from "react";
-import { api, Clip, ColorAdjust, EffectsCatalog, fmtTime, Opt, Timeline } from "../api";
-import { CapHint } from "../caps";
-import { hasColor } from "../fxPreview";
+import { api, Clip, EffectsCatalog, fmtTime, Timeline } from "../api";
 import { clipAt, clipStarts, commentTime, ItemKind, srcToLocal, useStore } from "../store";
-import { ImageButtons } from "./Studio";
-import { MotionEditor } from "./Motion";
-import { CUTOUTS, CutoutTools } from "./Lot3";
 import { Icon } from "../icons";
 import { MusicLibraryDialog } from "./Library";
 import { ask } from "./Dialog";
-
-export function CommandBar() {
-  const project = useStore((s) => s.project);
-  const job = useStore((s) => s.job);
-  const caps = useStore((s) => s.caps);
-  const [text, setText] = useState("");
-  const busy = !!job && (job.status === "en_cours" || job.status === "en_attente");
-  if (!project) return null;
-  const examples = ["Fais une version de 30 secondes", "Passe en vertical", "Look cinéma", "Ajoute des transitions et des bruitages",
-    "Ralenti sur l'action", "Enlève le passage sur « la météo »"];
-
-  const send = async (instruction: string) => {
-    if (!instruction.trim()) return;
-    const before = useStore.getState().timeline;
-    await useStore.getState().runJob("Consigne", () => api.command(project.id, instruction), {
-      timeline: true,
-      onDone: (done) => {
-        // La consigne IA devient une étape annulable comme une retouche manuelle.
-        if (before) useStore.setState((s) => ({ past: [...s.past, before], future: [] }));
-        const r = done.result as { message?: string } | null;
-        useStore.getState().notify(r?.message ? `Consigne : ${r.message}` : "Consigne appliquée.");
-        setText("");
-      },
-    });
-  };
-
-  return (
-    <section className="panel command">
-      <header><h3>Consigne</h3></header>
-      <form onSubmit={(e) => { e.preventDefault(); send(text); }}>
-        <textarea rows={2} value={text} placeholder="Décris le changement voulu…" disabled={busy}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(text); } }} />
-        <button className="primary" disabled={busy || !text.trim() || !project.timeline.clips.length}>
-          {busy && job?.kind === "consigne" ? "…" : "Appliquer"}
-        </button>
-      </form>
-      <CapHint reason={caps && !caps.claude ? "Sans clé Claude (Réglages), seules les consignes simples sont comprises : durée, format, sous-titres, musique, zooms…" : null} />
-      <div className="chips">
-        {examples.map((x) => <button key={x} className="chip" onClick={() => setText(x)}>{x}</button>)}
-      </div>
-    </section>
-  );
-}
+import { ClipInspector } from "./right/ClipInspector";
+import { ItemHead, RangeField } from "./right/fields";
+import { EmptyHint } from "./ui/EmptyHint";
 
 // Commentaires de montage : posés à un instant (ou sur tout le montage), appliqués en une passe.
+// La zone de saisie est en haut, la liste défile seule, le bouton « Appliquer » reste en bas.
 export function CommentsPanel() {
   const project = useStore((s) => s.project);
   const tl = useStore((s) => s.timeline);
@@ -89,41 +44,42 @@ export function CommentsPanel() {
     });
   };
   const label = { ouvert: "En attente", applique: "Appliqué", incompris: "Pas compris" } as const;
+  const pickWhy = busy ? "Une tâche est en cours." : !hit ? "Place le curseur sur un plan pour sélectionner un élément de l'image." : null;
+  const applyWhy = busy ? "Une tâche est en cours." : !open.length ? "Aucun commentaire en attente à appliquer." : null;
 
   return (
     <section className="panel comments">
-      <header>
-        <h3>Commentaires de montage</h3>
-        <span className="muted small">{open.length} en attente</span>
-      </header>
-      <textarea id="comment-box" rows={2} value={text} disabled={busy}
-        placeholder={hit && !general ? `À ${fmtTime(playhead, true)} sur ${clipName} : « coupe ce passage », « ralenti », « texte "Wow" »…` : "Remarque sur tout le montage…"}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); add(); } }} />
-      {pending ? (
-        <div className="zone-pill">
-          <span><Icon name="square" size={12} /> Zone sélectionnée sur l'image</span>
-          <button className="link" onClick={() => setPendingRegion(null)} title="Retirer la zone" aria-label="Retirer la zone"><Icon name="x" size={14} /></button>
+      <div className="cm-compose">
+        <textarea id="comment-box" rows={2} value={text} disabled={busy} aria-label="Commentaire de montage"
+          placeholder={hit && !general ? `À ${fmtTime(playhead, true)} sur ${clipName} : « coupe ce passage », « ralenti », « texte "Wow" »…` : "Remarque sur tout le montage…"}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); add(); } }} />
+        {pending ? (
+          <div className="zone-pill">
+            <span><Icon name="square" size={12} /> Zone sélectionnée sur l'image</span>
+            <button className="icon-btn" onClick={() => setPendingRegion(null)} title="Retirer la zone" aria-label="Retirer la zone"><Icon name="x" size={14} /></button>
+          </div>
+        ) : null}
+        {pending && (
+          <div className="quick-actions">
+            {[["Flouter", "Floute ça"], ["Pixeliser", "Pixelise ça"], ["Cacher", "Cache ça en noir"],
+              ["Entourer", "Entoure ça"], ["Zoomer dessus", "Zoom sur ça"], ["Cadrer dessus", "Cadre sur ça"]].map(([l, t]) => (
+              <button key={l} className="chip" disabled={busy} onClick={() => addComment(text.trim() ? `${t}. ${text.trim()}` : t) && setText("")}>{l}</button>
+            ))}
+          </div>
+        )}
+        <div className="comment-row">
+          <button className={`small-btn pick-btn ${picking ? "on" : ""}`} disabled={!hit || busy}
+            onClick={() => setPicking(!picking)}>
+            <Icon name="square" size={12} />{picking ? "Trace la zone…" : "Sélectionner sur la vidéo"}
+          </button>
+          <button className="small-btn primary-soft" disabled={!text.trim() || busy} onClick={add}><Icon name="message" size={13} />Ajouter</button>
         </div>
-      ) : null}
-      {pending && (
-        <div className="quick-actions">
-          {[["Flouter", "Floute ça"], ["Pixeliser", "Pixelise ça"], ["Cacher", "Cache ça en noir"],
-            ["Entourer", "Entoure ça"], ["Zoomer dessus", "Zoom sur ça"], ["Cadrer dessus", "Cadre sur ça"]].map(([l, t]) => (
-            <button key={l} className="chip" disabled={busy} onClick={() => addComment(text.trim() ? `${t}. ${text.trim()}` : t) && setText("")}>{l}</button>
-          ))}
-        </div>
-      )}
-      <div className="comment-row">
-        <button className={`small-btn pick-btn ${picking ? "on" : ""}`} disabled={!hit || busy}
-          onClick={() => setPicking(!picking)} title="Sélectionner un élément directement sur l'image">
-          <Icon name="square" size={12} />{picking ? "Trace la zone…" : "Sélectionner sur la vidéo"}
-        </button>
-        <label className="inline small"><input type="checkbox" checked={general || !hit} disabled={!hit || !!pending}
+        {pickWhy && <p className="why-off">{pickWhy}</p>}
+        <label className="inline small cm-general"><input type="checkbox" checked={general || !hit} disabled={!hit || !!pending}
           onChange={(e) => setGeneral(e.target.checked)} /> Tout le montage</label>
-        <button className="small-btn primary-soft" disabled={!text.trim() || busy} onClick={add}><Icon name="message" size={13} />Ajouter</button>
       </div>
-      {sorted.length > 0 && (
+      {sorted.length > 0 ? (
         <ul className="comment-list">
           {sorted.map((c) => {
             const t = commentTime(tl, c);
@@ -133,7 +89,7 @@ export function CommentsPanel() {
                 <div className="cm-head">
                   <b>{c.media_id ? (t != null ? fmtTime(t, true) : "passage retiré") : "Général"}</b>
                   <span className={`cm-status s-${c.status}`}>{label[c.status]}</span>
-                  <button className="link" title="Supprimer" onClick={(e) => { e.stopPropagation(); deleteItem("comment", c.id); }} aria-label="Supprimer"><Icon name="x" size={13} /></button>
+                  <button className="icon-btn" title="Supprimer" onClick={(e) => { e.stopPropagation(); deleteItem("comment", c.id); }} aria-label="Supprimer le commentaire"><Icon name="x" size={13} /></button>
                 </div>
                 <div>{c.region && <span className="zone-tag" title="Commentaire sur une zone de l'image"><Icon name="square" size={11} strokeWidth={2.4} /></span>} {c.text}</div>
                 {c.reply && <div className="cm-reply">Réponse : {c.reply}</div>}
@@ -141,127 +97,44 @@ export function CommentsPanel() {
             );
           })}
         </ul>
+      ) : (
+        <p className="muted small cm-empty">Les commentaires restent attachés au moment filmé : ils sont respectés même quand tout le montage est refait.</p>
       )}
-      <button className="primary" disabled={!open.length || busy} onClick={apply}>
-        {busy && job?.kind === "commentaires" ? "Application…" : `Appliquer les commentaires (${open.length})`}
-      </button>
-      <p className="muted small">Les commentaires restent attachés au moment filmé : ils sont respectés même quand tout le montage est refait.</p>
+      <div className="cm-foot">
+        <button className="primary" disabled={!open.length || busy} onClick={apply}>
+          {busy && job?.kind === "commentaires" ? "Application…" : `Appliquer les commentaires (${open.length})`}
+        </button>
+        {applyWhy && <p className="why-off">{applyWhy}</p>}
+      </div>
     </section>
   );
 }
 
-/** Réglages du plan sélectionné : raison, score, entrée/sortie, zoom, son, fondus, mouvement, effets. */
+/** Réglages du plan sélectionné : en-tête, raison, note, puis sous-onglets (voir `right/ClipInspector`). */
 export function ClipEditor({ c }: { c: Clip }) {
-  const catalog = useStore((s) => s.catalog);
-  const segments = useStore((s) => s.segments);
-  const multi = useStore((s) => s.selectedIds.length);
-  const { updateClip } = useStore.getState();
-  const segText = (id: string | null) => segments.find((s) => s.id === id)?.text ?? "";
-  return (
-    <>
-      <header><h3>{multi > 1 ? `${multi} plans sélectionnés` : "Plan sélectionné"}</h3></header>
-      {multi > 1 && (
-        <p className="multi-note" data-testid="multi-note">
-          Zoom, volume, vitesse, fondus, transition, effets et couleurs s'appliquent aux <b>{multi} plans</b>.
-          L'entrée, la sortie et les images clés ne changent que ce plan.
-        </p>
-      )}
-      <p className="why"><b>Pourquoi ce plan est gardé :</b> {c.reason || "—"}</p>
-      {segText(c.segment_id) && <p className="quote">« {segText(c.segment_id)} »</p>}
-      <div className="score-row">Score <div className="bar"><div style={{ width: `${c.score * 100}%` }} /></div> {Math.round(c.score * 100)}</div>
-      <div className="field-row">
-        <label>Entrée (s)
-          <input type="number" step={0.05} value={c.src_in.toFixed(2)}
-            onChange={(e) => useStore.getState().trimClip(c.id, "in", +e.target.value)} />
-        </label>
-        <label>Sortie (s)
-          <input type="number" step={0.05} value={c.src_out.toFixed(2)}
-            onChange={(e) => useStore.getState().trimClip(c.id, "out", +e.target.value)} />
-        </label>
-      </div>
-      <label>Zoom {Math.round((c.zoom - 1) * 100)} %
-        <input type="range" min={1} max={1.5} step={0.01} value={c.zoom} onChange={(e) => updateClip(c.id, { zoom: +e.target.value })} />
-      </label>
-      <label>Volume {Math.round(c.volume * 100)} %
-        <input type="range" min={0} max={2} step={0.05} value={c.volume} onChange={(e) => updateClip(c.id, { volume: +e.target.value })} />
-      </label>
-      <label className="inline">
-        <input type="checkbox" checked={c.audio_effects.includes("muet")}
-          onChange={(e) => updateClip(c.id, { audio_effects: e.target.checked ? [...c.audio_effects.filter((x) => x !== "muet"), "muet"] : c.audio_effects.filter((x) => x !== "muet") })} />
-        Couper le son de ce plan
-      </label>
-      <div className="field-row">
-        <label>Fondu d'entrée (s)
-          <input type="number" min={0} max={5} step={0.1} value={c.fade_in ?? 0}
-            onChange={(e) => updateClip(c.id, { fade_in: Math.max(0, Math.min(5, +e.target.value || 0)) })} />
-        </label>
-        <label>Fondu de sortie (s)
-          <input type="number" min={0} max={5} step={0.1} value={c.fade_out ?? 0}
-            onChange={(e) => updateClip(c.id, { fade_out: Math.max(0, Math.min(5, +e.target.value || 0)) })} />
-        </label>
-      </div>
-      <MotionEditor c={c} />
-      <ColorSection c={c} />
-      {catalog && <ClipEffects c={c} catalog={catalog} />}
-    </>
-  );
+  return <ClipInspector c={c} />;
 }
 
-const COLOR_SLIDERS: { key: keyof ColorAdjust; label: string; hint: string }[] = [
-  { key: "exposure", label: "Exposition", hint: "Plus sombre ou plus lumineux" },
-  { key: "contrast", label: "Contraste", hint: "Écart entre les clairs et les ombres" },
-  { key: "saturation", label: "Saturation", hint: "Intensité des couleurs (tout à gauche : noir et blanc)" },
-  { key: "temperature", label: "Température", hint: "Du froid (bleuté) au chaud (orangé)" },
-];
-
-/** Correction colorimétrique du plan : 4 curseurs de -100 % à +100 %, 0 = image d'origine. */
-function ColorSection({ c }: { c: Clip }) {
-  const { updateClip } = useStore.getState();
-  const cur: ColorAdjust = c.color ?? { exposure: 0, contrast: 0, saturation: 0, temperature: 0 };
-  return (
-    <div className="fx-section color-section">
-      <div className="fx-title">
-        Correction des couleurs
-        <button className="small-btn" disabled={!hasColor(c.color)} onClick={() => updateClip(c.id, { color: null })}>Réinitialiser</button>
-      </div>
-      {COLOR_SLIDERS.map(({ key, label, hint }) => (
-        <label key={key} title={hint}>{label} {cur[key] > 0 ? "+" : ""}{Math.round(cur[key] * 100)} %
-          <input type="range" min={-1} max={1} step={0.01} value={cur[key]}
-            onChange={(e) => updateClip(c.id, { color: { ...cur, [key]: +e.target.value } })} />
-        </label>
-      ))}
-    </div>
-  );
-}
-
-/** Passages écartés par le montage, réintégrables. */
+/** Passages écartés par le montage, réintégrables. La liste est dans une section repliable du panneau Film. */
 export function RejectedList() {
   const tl = useStore((s) => s.timeline);
   const segments = useStore((s) => s.segments);
-  const [show, setShow] = useState(false);
   if (!tl || !tl.rejected.length) return null;
   const segText = (id: string | null) => segments.find((s) => s.id === id)?.text ?? "";
   return (
-    <div className="rejected">
-      <button className="link" onClick={() => setShow(!show)}>
-        <Icon name={show ? "chevron-down" : "chevron-right"} size={13} /> Passages écartés ({tl.rejected.length})
-      </button>
-      {show && (
-        <ul>
-          {tl.rejected.slice(0, 150).map((r) => (
-            <li key={r.id}>
-              <div className="small"><b>{fmtTime(r.src_in, true)}</b> {segText(r.segment_id).slice(0, 90) || `${(r.src_out - r.src_in).toFixed(1)} s`}</div>
-              <div className="muted small">{r.reason}</div>
-              <button className="small-btn" onClick={() => useStore.getState().restoreRejected(r)}>Réintégrer</button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <ul className="rejected-list">
+      {tl.rejected.slice(0, 150).map((r) => (
+        <li key={r.id}>
+          <div className="small"><b className="mono">{fmtTime(r.src_in, true)}</b> {segText(r.segment_id).slice(0, 90) || `${(r.src_out - r.src_in).toFixed(1)} s`}</div>
+          <div className="muted small">{r.reason}</div>
+          <button className="small-btn" onClick={() => useStore.getState().restoreRejected(r)}>Réintégrer</button>
+        </li>
+      ))}
+    </ul>
   );
 }
 
-/** Musique du montage : bibliothèque, fichier, volume, baisse sous la voix. */
+/** Musique du montage : bibliothèque, fichier, volume, baisse sous la voix. Le titre est porté par la section qui l'accueille. */
 export function MusicSection() {
   const project = useStore((s) => s.project);
   const tl = useStore((s) => s.timeline);
@@ -270,15 +143,14 @@ export function MusicSection() {
   const [libOpen, setLibOpen] = useState(false);
   if (!tl || !project) return null;
   return (
-    <div className="fx-section">
+    <div className="music-section">
       {libOpen && <MusicLibraryDialog current={tl.music.track} onClose={() => setLibOpen(false)}
         onPick={(path) => setTimelineProps({ music: { ...tl.music, track: path } })} />}
-      <div className="fx-title">Musique de fond</div>
-      <div className="music-row">
-        <span>{tl.music.track ? tl.music.track.split(/[\\/]/).pop() : "Aucune musique"}</span>
-        <button className="small-btn" onClick={() => setLibOpen(true)} title="Bibliothèque, musiques libres de droits, son d'un lien"><Icon name="music" size={13} />Bibliothèque…</button>
-        <button className="small-btn" onClick={() => musicInput.current?.click()}>Fichier…</button>
-        {tl.music.track && <button className="small-btn" onClick={() => setTimelineProps({ music: { ...tl.music, track: null } })}>Retirer</button>}
+      <p className="music-name">{tl.music.track ? tl.music.track.split(/[\\/]/).pop() : "Aucune musique"}</p>
+      <div className="row-btns">
+        <button className="small-btn" onClick={() => setLibOpen(true)}><Icon name="music" size={13} />Bibliothèque</button>
+        <button className="small-btn" onClick={() => musicInput.current?.click()}><Icon name="upload" size={13} />Fichier</button>
+        {tl.music.track && <button className="small-btn danger" onClick={() => setTimelineProps({ music: { ...tl.music, track: null } })}><Icon name="trash" size={13} />Retirer</button>}
         <input ref={musicInput} type="file" accept="audio/*" hidden onChange={async (e) => {
           const f = e.target.files?.[0];
           e.target.value = "";
@@ -289,13 +161,12 @@ export function MusicSection() {
           } catch (err) { notify((err as Error).message); }
         }} />
       </div>
+      {!tl.music.track && <p className="muted small">Bibliothèque : musiques libres de droits, ou le son d'un lien.</p>}
       {tl.music.track && (
         <>
-          <label>Volume musique {Math.round(tl.music.volume * 100)} %
-            <input type="range" min={0} max={1} step={0.01} value={tl.music.volume}
-              onChange={(e) => setTimelineProps({ music: { ...tl.music, volume: +e.target.value } })} />
-          </label>
-          <label className="inline"><input type="checkbox" checked={tl.music.ducking}
+          <RangeField label="Volume de la musique" min={0} max={1} step={0.01} value={tl.music.volume} display={`${Math.round(tl.music.volume * 100)} %`}
+            onChange={(v) => setTimelineProps({ music: { ...tl.music, volume: v } })} />
+          <label className="inline"><input type="checkbox" className="switch" checked={tl.music.ducking}
             onChange={(e) => setTimelineProps({ music: { ...tl.music, ducking: e.target.checked } })} /> Baisser la musique sous la voix</label>
         </>
       )}
@@ -303,94 +174,24 @@ export function MusicSection() {
   );
 }
 
-function Chips({ opts, value, onToggle }: { opts: Opt[]; value: string[]; onToggle: (id: string) => void }) {
-  return (
-    <div className="fx-chips">
-      {opts.map((o) => (
-        <button key={o.id} type="button" className={`fx-chip ${value.includes(o.id) ? "on" : ""}`} onClick={() => onToggle(o.id)}>
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-const toggle = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
-
-function ClipEffects({ c, catalog }: { c: Clip; catalog: EffectsCatalog }) {
-  const { updateClip } = useStore.getState();
-  const groups = Array.from(new Set(catalog.video_effects.map((o) => o.group || "Effets")));
-  return (
-    <div className="fx-section">
-      <div className="field-row">
-        <label>Transition d'entrée
-          <select value={c.transition} onChange={(e) => updateClip(c.id, { transition: e.target.value })}>
-            {catalog.transitions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-          </select>
-        </label>
-      </div>
-      {c.transition !== "aucune" && (
-        <label>Durée de transition {c.transition_duration.toFixed(2)} s
-          <input type="range" min={0.1} max={1.5} step={0.05} value={c.transition_duration}
-            onChange={(e) => updateClip(c.id, { transition_duration: +e.target.value })} />
-        </label>
-      )}
-      {groups.map((g) => (
-        <div key={g}>
-          <div className="fx-title">{GROUP_LABELS[g] ?? g}</div>
-          <Chips opts={catalog.video_effects.filter((o) => (o.group || "Effets") === g)} value={c.effects}
-            onToggle={(id) => updateClip(c.id, {
-              // Un seul fond de détourage à la fois sur un plan.
-              effects: CUTOUTS.includes(id) && !c.effects.includes(id)
-                ? [...c.effects.filter((e) => !CUTOUTS.includes(e)), id] : toggle(c.effects, id),
-            })} />
-          {g === "ia" && <CutoutTools c={c} />}
-        </div>
-      ))}
-      <div className="fx-title">Effets sur la voix</div>
-      <Chips opts={catalog.audio_effects} value={c.audio_effects}
-        onToggle={(id) => updateClip(c.id, { audio_effects: toggle(c.audio_effects, id) })} />
-    </div>
-  );
-}
-
-const GROUP_LABELS: Record<string, string> = {
-  couleur: "Couleur", style: "Style", mouvement: "Mouvement", "3d": "3D", ia: "Détourage (sans fond vert)",
-};
-
+/** Look global : étalonnage et décompte des ajouts. Les ajouts (texte, bruitage, impact, image) se font depuis le panneau de gauche. */
 export function GlobalFx({ tl, catalog }: { tl: Timeline; catalog: EffectsCatalog }) {
-  const { setTimelineProps, addText, addSfx, addImpact } = useStore.getState();
-  const [kind, setKind] = useState(catalog.sfx[0]?.id ?? "whoosh");
-  const [ik, setIk] = useState(catalog.impacts?.[0]?.id ?? "secousse");
+  const { setTimelineProps } = useStore.getState();
   const n = tl.clips.reduce((a, c) => a + c.effects.length + c.audio_effects.length + (c.transition !== "aucune" ? 1 : 0), 0);
+  const stats: [string, number][] = [
+    ["effets et transitions", n], ["textes", tl.texts?.length ?? 0], ["bruitages", tl.sfx?.length ?? 0],
+    ["plans de coupe", tl.overlays?.length ?? 0], ["impacts", tl.impacts?.length ?? 0],
+  ];
   return (
-    <div className="fx-section">
+    <div className="global-fx">
       <label>Étalonnage (look global)
         <select value={tl.look || "aucun"} onChange={(e) => setTimelineProps({ look: e.target.value })}>
           {catalog.looks.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
       </label>
-      <p className="muted small">
-        {n} effet(s) et transition(s) sur les plans · {tl.texts?.length ?? 0} texte(s) · {tl.sfx?.length ?? 0} bruitage(s) ·{" "}
-        {tl.overlays?.length ?? 0} plan(s) de coupe · {tl.impacts?.length ?? 0} impact(s)
-      </p>
-      <div className="field-row">
-        <button className="small-btn" onClick={() => addText()}><Icon name="plus" size={13} strokeWidth={2.4} />Texte au curseur</button>
-      </div>
-      <div className="sfx-row">
-        <select value={kind} onChange={(e) => setKind(e.target.value)}>
-          {catalog.sfx.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-        </select>
-        <button className="small-btn" onClick={() => new Audio(api.sfxUrl(kind)).play().catch(() => undefined)} aria-label="Écouter"><Icon name="play" size={12} /></button>
-        <button className="small-btn" onClick={() => addSfx(kind)}><Icon name="plus" size={13} strokeWidth={2.4} />Bruitage</button>
-      </div>
-      <div className="sfx-row">
-        <select value={ik} onChange={(e) => setIk(e.target.value)}>
-          {(catalog.impacts ?? []).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-        </select>
-        <button className="small-btn" onClick={() => addImpact(ik)}><Icon name="plus" size={13} strokeWidth={2.4} />Impact 3D</button>
-      </div>
-      <ImageButtons />
+      <ul className="fx-count">
+        {stats.map(([name, v]) => <li key={name}><b className="mono">{v}</b> {name}</li>)}
+      </ul>
     </div>
   );
 }
@@ -404,14 +205,15 @@ export function ItemEditor() {
   if (!tl || !it || it.kind === "clip" || !project) return null;
   const up = (patch: Record<string, unknown>) => updateItem(it.kind as ItemKind, it.id, patch);
   const del = () => deleteItem(it.kind as ItemKind, it.id);
-  const back = <button className="link" onClick={() => selectItem(null)}><Icon name="back" size={13} /> Désélectionner</button>;
+  const back = () => selectItem(null);
+  const delBtn = (text: string) => <button className="small-btn danger" onClick={del}><Icon name="trash" size={13} />{text}</button>;
 
   if (it.kind === "text") {
     const x = tl.texts.find((t) => t.id === it.id);
     if (!x) return null;
     return (
-      <>
-        <header><h3>Texte à l'écran</h3>{back}</header>
+      <div className="rw item-editor">
+        <ItemHead icon="type" title="Texte à l'écran" onBack={back} />
         <label>Texte<textarea rows={2} value={x.text} onChange={(e) => up({ text: e.target.value })} /></label>
         <div className="field-row">
           <label>Style
@@ -429,8 +231,8 @@ export function ItemEditor() {
           <label>Début (s)<input type="number" step={0.1} value={x.start.toFixed(2)} onChange={(e) => up({ start: Math.max(0, +e.target.value) })} /></label>
           <label>Durée (s)<input type="number" step={0.1} value={x.duration.toFixed(2)} onChange={(e) => up({ duration: Math.max(0.3, +e.target.value) })} /></label>
         </div>
-        <button className="small-btn danger" onClick={del}>Supprimer le texte</button>
-      </>
+        {delBtn("Supprimer le texte")}
+      </div>
     );
   }
   if (it.kind === "impact") {
@@ -438,8 +240,8 @@ export function ItemEditor() {
     if (!x) return null;
     const located = x.kind === "etincelles" || x.kind === "onde";
     return (
-      <>
-        <header><h3>Impact 3D</h3>{back}</header>
+      <div className="rw item-editor">
+        <ItemHead icon="zap" title="Impact 3D" onBack={back} />
         {x.reason && <p className="muted small">{x.reason}</p>}
         <div className="field-row">
           <label>Effet
@@ -449,17 +251,15 @@ export function ItemEditor() {
           </label>
           <label>Position (s)<input type="number" step={0.02} value={x.start.toFixed(2)} onChange={(e) => up({ start: Math.max(0, +e.target.value) })} /></label>
         </div>
-        <label>Intensité {Math.round(x.intensity * 100)} %
-          <input type="range" min={0.2} max={2.5} step={0.05} value={x.intensity} onChange={(e) => up({ intensity: +e.target.value })} />
-        </label>
+        <RangeField label="Intensité" min={0.2} max={2.5} step={0.05} value={x.intensity} display={`${Math.round(x.intensity * 100)} %`} onChange={(v) => up({ intensity: v })} />
         {located && (
-          <div className="field-row">
-            <label>Point X {Math.round(x.x * 100)} %<input type="range" min={0} max={1} step={0.01} value={x.x} onChange={(e) => up({ x: +e.target.value })} /></label>
-            <label>Point Y {Math.round(x.y * 100)} %<input type="range" min={0} max={1} step={0.01} value={x.y} onChange={(e) => up({ y: +e.target.value })} /></label>
-          </div>
+          <>
+            <RangeField label="Point X" min={0} max={1} step={0.01} value={x.x} display={`${Math.round(x.x * 100)} %`} onChange={(v) => up({ x: v })} />
+            <RangeField label="Point Y" min={0} max={1} step={0.01} value={x.y} display={`${Math.round(x.y * 100)} %`} onChange={(v) => up({ y: v })} />
+          </>
         )}
-        <button className="small-btn danger" onClick={del}>Supprimer l'impact</button>
-      </>
+        {delBtn("Supprimer l'impact")}
+      </div>
     );
   }
   if (it.kind === "audio") {
@@ -467,8 +267,9 @@ export function ItemEditor() {
     if (!a) return null;
     const full = a.src_out;
     return (
-      <>
-        <header><h3>{a.kind === "voix" ? "Voix off" : a.kind === "musique" ? "Musique" : "Son"}</h3>{back}</header>
+      <div className="rw item-editor">
+        <ItemHead icon={a.kind === "voix" ? "mic" : a.kind === "musique" ? "music" : "volume"}
+          title={a.kind === "voix" ? "Voix off" : a.kind === "musique" ? "Musique" : "Son"} onBack={back} />
         <audio controls src={api.audioUrl(project.id, a.asset)} style={{ width: "100%" }} />
         {a.text && <p className="small">« {a.text} »</p>}
         {a.check && (
@@ -498,37 +299,30 @@ export function ItemEditor() {
           <label>Durée (s)<input type="number" step={0.05} min={0.1} value={(a.src_out - a.src_in).toFixed(2)}
             onChange={(e) => up({ src_out: Math.max(a.src_in + 0.1, a.src_in + +e.target.value) })} /></label>
         </div>
-        <label>Couper le début {a.src_in.toFixed(2)} s
-          <input type="range" min={0} max={Math.max(0, full - 0.1)} step={0.05} value={a.src_in} onChange={(e) => up({ src_in: Math.min(+e.target.value, a.src_out - 0.1) })} />
-        </label>
-        <label>Volume {Math.round(a.volume * 100)} %
-          <input type="range" min={0} max={2} step={0.05} value={a.volume} onChange={(e) => up({ volume: +e.target.value })} />
-        </label>
-        <div className="field-row">
-          <label>Fondu d'entrée {a.fade_in.toFixed(1)} s
-            <input type="range" min={0} max={3} step={0.1} value={a.fade_in} onChange={(e) => up({ fade_in: +e.target.value })} />
-          </label>
-          <label>Fondu de sortie {a.fade_out.toFixed(1)} s
-            <input type="range" min={0} max={3} step={0.1} value={a.fade_out} onChange={(e) => up({ fade_out: +e.target.value })} />
-          </label>
-        </div>
+        <RangeField label="Couper le début" min={0} max={Math.max(0, full - 0.1)} step={0.05} value={a.src_in} display={`${a.src_in.toFixed(2)} s`}
+          onChange={(v) => up({ src_in: Math.min(v, a.src_out - 0.1) })} />
+        <RangeField label="Volume" min={0} max={2} step={0.05} value={a.volume} display={`${Math.round(a.volume * 100)} %`} onChange={(v) => up({ volume: v })} />
+        <RangeField label="Fondu d'entrée" min={0} max={3} step={0.1} value={a.fade_in} display={`${a.fade_in.toFixed(1)} s`} onChange={(v) => up({ fade_in: v })} />
+        <RangeField label="Fondu de sortie" min={0} max={3} step={0.1} value={a.fade_out} display={`${a.fade_out.toFixed(1)} s`} onChange={(v) => up({ fade_out: v })} />
         <p className="muted small">La musique de fond baisse toute seule sous la voix off quand « baisse auto » est activée.</p>
-        <button className="danger" onClick={del}>Supprimer ce son</button>
-      </>
+        <button className="danger" onClick={del}><Icon name="trash" size={13} />Supprimer ce son</button>
+      </div>
     );
   }
 
   if (it.kind === "image") {
     const x = (tl.images ?? []).find((t) => t.id === it.id);
     if (!x) return null;
-    const spots: [string, number, number][] = [["↖", 0.1, 0.1], ["↑", 0.5, 0.1], ["↗", 0.9, 0.1], ["←", 0.1, 0.5], ["•", 0.5, 0.5],
-      ["→", 0.9, 0.5], ["↙", 0.1, 0.9], ["↓", 0.5, 0.9], ["↘", 0.9, 0.9]];
+    // Neuf emplacements : chaque bouton porte un nom, la flèche décorative n'existe plus.
+    const spots: [string, number, number][] = [["Haut gauche", 0.1, 0.1], ["Haut", 0.5, 0.1], ["Haut droite", 0.9, 0.1],
+      ["Gauche", 0.1, 0.5], ["Centre", 0.5, 0.5], ["Droite", 0.9, 0.5],
+      ["Bas gauche", 0.1, 0.9], ["Bas", 0.5, 0.9], ["Bas droite", 0.9, 0.9]];
     return (
-      <>
-        <header><h3>Image</h3>{back}</header>
+      <div className="rw item-editor">
+        <ItemHead icon="image" title="Image" onBack={back} />
         <img className="asset-thumb" src={api.assetUrl(project.id, x.asset)} alt="" />
         <label className="inline">
-          <input type="checkbox" checked={x.duration == null} onChange={(e) => up(e.target.checked ? { duration: null, start: 0 } : { duration: 3 })} />
+          <input type="checkbox" className="switch" checked={x.duration == null} onChange={(e) => up(e.target.checked ? { duration: null, start: 0 } : { duration: 3 })} />
           Sur toute la vidéo (filigrane)
         </label>
         {x.duration != null && (
@@ -538,32 +332,33 @@ export function ItemEditor() {
           </div>
         )}
         <div className="fx-title">Position</div>
-        <div className="spot-grid">
-          {spots.map(([l, sx, sy]) => (
-            <button key={l} className={`fx-chip ${Math.abs(x.x - sx) < 0.02 && Math.abs(x.y - sy) < 0.02 ? "on" : ""}`} onClick={() => up({ x: sx, y: sy })}>{l}</button>
-          ))}
+        <div className="spot-grid" role="group" aria-label="Position de l'image">
+          {spots.map(([l, sx, sy]) => {
+            const on = Math.abs(x.x - sx) < 0.02 && Math.abs(x.y - sy) < 0.02;
+            return (
+              <button key={l} type="button" className={`spot-btn ${on ? "on" : ""}`} aria-label={l} aria-pressed={on} onClick={() => up({ x: sx, y: sy })}>
+                <Icon name="dot" size={14} />
+              </button>
+            );
+          })}
         </div>
-        <label>Taille {Math.round(x.scale * 100)} % de la largeur
-          <input type="range" min={0.04} max={1} step={0.01} value={x.scale} onChange={(e) => up({ scale: +e.target.value })} />
-        </label>
-        <label>Opacité {Math.round(x.opacity * 100)} %
-          <input type="range" min={0.1} max={1} step={0.05} value={x.opacity} onChange={(e) => up({ opacity: +e.target.value })} />
-        </label>
+        <RangeField label="Taille (largeur)" min={0.04} max={1} step={0.01} value={x.scale} display={`${Math.round(x.scale * 100)} %`} onChange={(v) => up({ scale: v })} />
+        <RangeField label="Opacité" min={0.1} max={1} step={0.05} value={x.opacity} display={`${Math.round(x.opacity * 100)} %`} onChange={(v) => up({ opacity: v })} />
         <label>Animation
           <select value={x.anim} onChange={(e) => up({ anim: e.target.value })}>
             <option value="aucune">Aucune</option><option value="fondu">Fondu</option><option value="pop">Pop</option>
           </select>
         </label>
-        <button className="small-btn danger" onClick={del}>Retirer l'image</button>
-      </>
+        {delBtn("Retirer l'image")}
+      </div>
     );
   }
   if (it.kind === "marker") {
     const x = (tl.markers ?? []).find((t) => t.id === it.id);
     if (!x) return null;
     return (
-      <>
-        <header><h3>Repère</h3>{back}</header>
+      <div className="rw item-editor">
+        <ItemHead icon="flag" title="Repère" onBack={back} />
         <label>Libellé
           <input value={x.label} placeholder="Ex. : Intro, Le marché, Conclusion" onChange={(e) => up({ label: e.target.value })} />
         </label>
@@ -575,21 +370,21 @@ export function ItemEditor() {
             </select>
           </label>
         </div>
-        <label className="inline"><input type="checkbox" checked={x.chapter} onChange={(e) => up({ chapter: e.target.checked })} /> Chapitre YouTube (kit de publication)</label>
+        <label className="inline"><input type="checkbox" className="switch" checked={x.chapter} onChange={(e) => up({ chapter: e.target.checked })} /> Chapitre YouTube (kit de publication)</label>
         <p className="muted small">Les repères « chapitre » deviennent les chapitres de la description du kit (premier à 0:00, 10 s minimum, au moins 3). Tous passent en repères dans l'export XML.</p>
-        <div className="field-row">
-          <button className="small-btn" onClick={() => useStore.getState().setPlayhead(x.t)}>Aller au repère</button>
-          <button className="small-btn danger" onClick={del}>Supprimer</button>
+        <div className="row-btns">
+          <button className="small-btn" onClick={() => useStore.getState().setPlayhead(x.t)}><Icon name="crosshair" size={13} />Aller au repère</button>
+          {delBtn("Supprimer")}
         </div>
-      </>
+      </div>
     );
   }
   if (it.kind === "sfx") {
     const x = tl.sfx.find((t) => t.id === it.id);
     if (!x) return null;
     return (
-      <>
-        <header><h3>Bruitage</h3>{back}</header>
+      <div className="rw item-editor">
+        <ItemHead icon="volume" title="Bruitage" onBack={back} />
         <div className="field-row">
           <label>Son
             <select value={x.kind} onChange={(e) => up({ kind: e.target.value })}>
@@ -598,22 +393,20 @@ export function ItemEditor() {
           </label>
           <label>Position (s)<input type="number" step={0.05} value={x.start.toFixed(2)} onChange={(e) => up({ start: Math.max(0, +e.target.value) })} /></label>
         </div>
-        <label>Volume {Math.round(x.volume * 100)} %
-          <input type="range" min={0} max={1.5} step={0.05} value={x.volume} onChange={(e) => up({ volume: +e.target.value })} />
-        </label>
-        <div className="field-row">
+        <RangeField label="Volume" min={0} max={1.5} step={0.05} value={x.volume} display={`${Math.round(x.volume * 100)} %`} onChange={(v) => up({ volume: v })} />
+        <div className="row-btns">
           <button className="small-btn" onClick={() => new Audio(api.sfxUrl(x.kind)).play().catch(() => undefined)}><Icon name="play" size={12} />Écouter</button>
-          <button className="small-btn danger" onClick={del}>Supprimer</button>
+          {delBtn("Supprimer")}
         </div>
-      </>
+      </div>
     );
   }
   const x = tl.overlays.find((t) => t.id === it.id);
   if (!x) return null;
   const m = project.media.find((mm) => mm.id === x.media_id);
   return (
-    <>
-      <header><h3>Plan de coupe (B-roll)</h3>{back}</header>
+    <div className="rw item-editor">
+      <ItemHead icon="layers" title="Plan de coupe (B-roll)" onBack={back} />
       <p className="muted small">{m?.filename} · {x.reason}</p>
       <label>Affichage
         <select value={x.mode} onChange={(e) => up({ mode: e.target.value })}>
@@ -622,9 +415,8 @@ export function ItemEditor() {
         </select>
       </label>
       {x.mode === "partage" && (
-        <label>Cadrage du plan de coupe (gauche ↔ droite)
-          <input type="range" min={0} max={1} step={0.01} value={x.focus_x ?? 0.5} onChange={(e) => up({ focus_x: +e.target.value })} />
-        </label>
+        <RangeField label="Cadrage du plan de coupe (gauche ↔ droite)" min={0} max={1} step={0.01} value={x.focus_x ?? 0.5}
+          display={`${Math.round((x.focus_x ?? 0.5) * 100)} %`} onChange={(v) => up({ focus_x: v })} />
       )}
       <div className="field-row">
         <label>Source début<input type="number" step={0.05} value={x.src_in.toFixed(2)} onChange={(e) => up({ src_in: Math.max(0, Math.min(+e.target.value, x.src_out - 0.2)) })} /></label>
@@ -647,8 +439,8 @@ export function ItemEditor() {
         )}
       </div>
       {x.chroma && x.chroma !== "aucun" && <p className="muted small">Le fond est retiré à l'export ; l'aperçu le montre encore.</p>}
-      <button className="small-btn danger" onClick={del}>Retirer le plan de coupe</button>
-    </>
+      {delBtn("Retirer le plan de coupe")}
+    </div>
   );
 }
 
@@ -676,7 +468,12 @@ export function TranscriptPanel() {
 
   if (!tl || !project) return null;
   if (!Object.keys(transcripts).length)
-    return <section className="panel transcript"><header><h3>Texte</h3></header><p className="muted small">La transcription apparaîtra après le montage automatique.</p></section>;
+    return (
+      <section className="panel transcript">
+        <EmptyHint icon="align-left" text="La transcription apparaît après le montage automatique."
+          action={tl.clips.length ? undefined : { label: "Monter avec l'IA", onClick: () => useStore.getState().openLeft("ia") }} />
+      </section>
+    );
 
   const cut = () => {
     if (!sel) return;
@@ -691,11 +488,10 @@ export function TranscriptPanel() {
 
   return (
     <section className="panel transcript">
-      <header>
-        <h3>Texte</h3>
+      <div className="tr-bar">
         <button className="small-btn" disabled={!sel} onClick={cut}><Icon name="scissors" size={13} />Couper la sélection</button>
-      </header>
-      <p className="muted small">Clic : aller au mot · Maj+clic : sélectionner · double-clic : corriger</p>
+        <p className="muted small">{sel ? "Maj+clic étend la sélection." : "Clic : aller au mot · Maj+clic : sélectionner · double-clic : corriger"}</p>
+      </div>
       <div className="words">
         {items.map(({ c, ci, start, words }) => (
           <p key={c.id}>

@@ -2,7 +2,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { Icon, IconName } from "../icons";
-import { useStore } from "../store";
+import { LEFT_MODULES, leftModuleOf, leftTabLabel, RIGHT_TABS } from "../labels";
+import { LeftTab, RightTab, useStore } from "../store";
 import { Kbd } from "./Shortcuts";
 
 interface Command {
@@ -19,6 +20,41 @@ interface Command {
 
 /** Sans accents ni majuscules, pour une recherche tolérante. */
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+/** Mots-clés de recherche conservés des anciens libellés, pour que la palette retrouve les mêmes termes. */
+const LEFT_ALT: Record<LeftTab, string> = {
+  rushes: "rushes import vidéos médias chutier projet bibliothèque",
+  ia: "montage automatique monter style durée ia réalisation",
+  audio: "voix off son musique synthèse doublage",
+  texte: "titres sous-titres légendes",
+  effets: "transitions impacts bruitages images détourage",
+  versions: "versions et shorts",
+  modeles: "modèles de style",
+  marque: "identité de marque logo couleurs",
+};
+const RIGHT_ALT: Record<RightTab, string> = {
+  consigne: "consigne commentaires réalisateur discuter",
+  montage: "format sous-titres rôles fiche du film",
+  plan: "plan sélectionné inspecteur élément",
+  habillage: "look lut textes images habillage",
+  audio: "audio et voix musique doublage voix off mixage",
+  qualite: "contrôle relecture",
+  export: "rendu télécharger mp4",
+  texte: "transcription mots paroles script",
+  recherche: "chercher info internet faits recherche web",
+};
+
+/** Commandes « Ouvrir » : les huit onglets de gauche et les neuf de droite, avec les libellés des rails. */
+function tabCommands(): Command[] {
+  const s = useStore.getState();
+  const left: Command[] = LEFT_MODULES.flatMap((m) => m.tabs).map((tab) => ({
+    id: `tab-left-${tab}`, group: "Ouvrir", label: leftTabLabel(tab), icon: leftModuleOf(tab).icon, alt: LEFT_ALT[tab], run: () => s.openLeft(tab),
+  }));
+  const right: Command[] = RIGHT_TABS.map((t) => ({
+    id: `tab-right-${t.id}`, group: "Ouvrir", label: t.label, keys: [String(t.key)], icon: t.icon, alt: `${t.title} ${RIGHT_ALT[t.id]}`, run: () => s.openRight(t.id),
+  }));
+  return [...left, ...right];
+}
 
 function commands(): Command[] {
   const s = useStore.getState();
@@ -59,19 +95,7 @@ function commands(): Command[] {
     { id: "cap-karaoke", group: "Format", label: "Sous-titres animés mot par mot", alt: "karaoke", run: () => s.setTimelineProps({ captions: "karaoke" }) },
     { id: "cap-classic", group: "Format", label: "Sous-titres classiques", run: () => s.setTimelineProps({ captions: "classique" }) },
     { id: "cap-none", group: "Format", label: "Sans sous-titres", alt: "aucun", run: () => s.setTimelineProps({ captions: "aucun" }) },
-    { id: "tab-rushes", group: "Ouvrir", label: "Rushes", icon: "film", alt: "import vidéos médias", run: () => s.setLeftTab("rushes") },
-    { id: "tab-ia", group: "Ouvrir", label: "Montage automatique", icon: "wand", alt: "monter style durée ia", run: () => s.setLeftTab("ia") },
-    { id: "tab-versions", group: "Ouvrir", label: "Versions et shorts", icon: "branch", run: () => s.setLeftTab("versions") },
-    { id: "tab-modeles", group: "Ouvrir", label: "Modèles de style", icon: "grid", run: () => s.setLeftTab("modeles") },
-    { id: "tab-marque", group: "Ouvrir", label: "Identité de marque", icon: "palette", alt: "logo couleurs", run: () => s.setLeftTab("marque") },
-    { id: "tab-consigne", group: "Ouvrir", label: "Consigne et commentaires", keys: ["1"], icon: "message", run: () => s.setRightTab("consigne") },
-    { id: "tab-montage", group: "Ouvrir", label: "Montage (format, sous-titres, rôles)", keys: ["2"], icon: "film", run: () => s.setRightTab("montage") },
-    { id: "tab-plan", group: "Ouvrir", label: "Plan sélectionné", keys: ["3"], icon: "square", alt: "inspecteur élément", run: () => s.setRightTab("plan") },
-    { id: "tab-habillage", group: "Ouvrir", label: "Habillage (look, LUT, textes, images)", keys: ["4"], icon: "sparkles", run: () => s.setRightTab("habillage") },
-    { id: "tab-audio", group: "Ouvrir", label: "Audio et voix (musique, doublage, voix off)", keys: ["5"], icon: "volume", run: () => s.setRightTab("audio") },
-    { id: "tab-qualite", group: "Ouvrir", label: "Qualité (contrôle, relecture)", keys: ["6"], icon: "check", run: () => s.setRightTab("qualite") },
-    { id: "tab-texte", group: "Ouvrir", label: "Texte de la transcription", alt: "mots paroles", run: () => s.setRightTab("texte") },
-    { id: "tab-recherche", group: "Ouvrir", label: "Recherche web", icon: "globe", alt: "chercher info internet faits", run: () => { s.setRightTab("recherche"); if (!s.layout.rightOpen) s.setLayout({ rightOpen: true }); } },
+    ...tabCommands(),
     { id: "export", group: "Ouvrir", label: "Exporter…", icon: "download", alt: "rendu télécharger mp4", run: () => s.setExportOpen(true), enabled: hasClips },
     { id: "settings", group: "Ouvrir", label: "Réglages", icon: "settings", alt: "clé claude whisper", run: () => { location.hash = "#/reglages"; } },
     { id: "projects", group: "Ouvrir", label: "Retour aux projets", icon: "back", alt: "accueil",
@@ -125,7 +149,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     const pid = st.project?.id;
     if (!pid) return;
     const before = st.timeline;
-    st.setRightTab("consigne");
+    st.openRight("consigne");
     st.runJob("Consigne", () => api.command(pid, text), {
       timeline: true,
       onDone: (done) => {

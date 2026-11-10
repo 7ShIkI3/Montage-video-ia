@@ -217,7 +217,6 @@ export function Settings({ onBack }: { onBack: () => void }) {
 
   const langName = (code: string) => langs.find((l) => l.code === code)?.name ?? code;
   const source = cfg?.key_source === "env" ? "variable d'environnement" : "fichier";
-  const saveBtn = <button className="primary" disabled={saving} onClick={saveAll}>{saving ? "Enregistrement…" : "Enregistrer"}</button>;
 
   return (
     <div className="settings-page">
@@ -263,7 +262,6 @@ export function Settings({ onBack }: { onBack: () => void }) {
                 <label>Effort de réflexion<Choice value={effort} options={EFFORTS} onChange={setEffort} /></label>
               </div>
               <div className="row-btns">
-                {saveBtn}
                 <button disabled={testing || !!key.trim() || !cfg.anthropic_api_key_set} onClick={testKey}
                   title={key.trim() ? "Enregistre d'abord la clé saisie" : undefined}>{testing ? "Test…" : "Tester la clé"}</button>
                 <button className="danger" disabled={saving || cfg.key_source !== "fichier"} onClick={clearKey}
@@ -310,7 +308,6 @@ export function Settings({ onBack }: { onBack: () => void }) {
                 </label>
               </div>
               <p className="muted small" style={{ margin: 0 }}>Auto prend le GPU NVIDIA s'il fonctionne, sinon le processeur. Un modèle plus gros comprend mieux mais est plus lent. Langue vide : détection automatique.</p>
-              <div className="row-btns">{saveBtn}</div>
               <h4 style={{ margin: "18px 0 8px" }}>Modèles sur le disque</h4>
               <WhisperModels onChanged={() => useStore.getState().refreshCaps()} />
             </section>
@@ -350,18 +347,19 @@ export function Settings({ onBack }: { onBack: () => void }) {
                   <p>Pris en compte au prochain lancement de l'application de bureau. Si le port est occupé, un port libre est choisi.</p>
                 </div>
               </header>
-              <div className="row-btns" style={{ alignItems: "flex-end", gap: 16 }}>
-                <label style={{ width: 200 }}>Port
-                  <input type="number" min={1024} max={65535} value={port} onChange={(e) => setPort(e.target.value)} />
-                </label>
-                {saveBtn}
-              </div>
+              <label style={{ width: 200 }}>Port
+                <input type="number" min={1024} max={65535} value={port} onChange={(e) => setPort(e.target.value)} />
+              </label>
             </section>
 
             <section id="systeme" className="settings-section">
               <header><div><h3>Système</h3></div></header>
               <SystemBar />
             </section>
+            <div className="settings-save">
+              <span className="muted small">Un seul bouton pour toutes les sections : clé, modèle, transcription et port.</span>
+              <button className="primary" disabled={saving} onClick={saveAll}>{saving ? "Enregistrement…" : "Enregistrer"}</button>
+            </div>
           </div>
         </div>
       )}

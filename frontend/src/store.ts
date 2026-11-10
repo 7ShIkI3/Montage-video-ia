@@ -126,28 +126,51 @@ export function snapTo(t: number, points: number[], pps: number, px = 8): { t: n
   return best == null ? { t, snapped: null } : { t: best, snapped: best };
 }
 
-export type LeftTab = "rushes" | "ia" | "versions" | "modeles" | "marque";
+export type LeftTab = "rushes" | "ia" | "audio" | "texte" | "effets" | "versions" | "modeles" | "marque";
 export type RightTab = "consigne" | "montage" | "plan" | "habillage" | "audio" | "qualite" | "export" | "texte" | "recherche";
 export const RIGHT_TAB_ORDER: RightTab[] = ["consigne", "montage", "plan", "habillage", "audio", "qualite", "export", "texte", "recherche"];
 
 /** Espace de travail : largeur des panneaux, hauteur de la timeline, panneaux repliés. Mémorisé dans le navigateur. */
 export interface Layout { left: number; right: number; bottom: number; leftOpen: boolean; rightOpen: boolean; /** Vignettes dans les plans de la timeline. */ thumbs: boolean }
-export const DEFAULT_LAYOUT: Layout = { left: 360, right: 340, bottom: 268, leftOpen: true, rightOpen: true, thumbs: true };
-export const LAYOUT_LIMITS = { left: [240, 640], right: [260, 640], bottom: [150, 0.7] } as const;  // bottom : fraction de la fenêtre
-const LAYOUT_KEY = "monteur.layout";
-function loadLayout(): Layout {
+/** Disposition par défaut : grande fenêtre (1400 px et plus) ou fenêtre serrée. Appelée à chaud, jamais figée. */
+export function defaultLayout(width: number = typeof window !== "undefined" ? window.innerWidth : 1440): Layout {
+  return width >= 1400
+    ? { left: 400, right: 360, bottom: 300, leftOpen: true, rightOpen: true, thumbs: true }
+    : { left: 340, right: 320, bottom: 250, leftOpen: true, rightOpen: true, thumbs: true };
+}
+/** Valeur à l'import du module (compatibilité) ; pour réinitialiser, appeler `defaultLayout()`. */
+export const DEFAULT_LAYOUT: Layout = defaultLayout();
+export const LAYOUT_LIMITS = { left: [320, 640], right: [280, 640], bottom: [150, 0.7] } as const;  // bottom : fraction de la fenêtre
+const LAYOUT_KEY = "monteur.layout.v2";
+/** Ancienne clé : seul `thumbs` en est repris, les largeurs d'alors ne vont plus avec la nouvelle disposition. */
+const LEGACY_LAYOUT_KEY = "monteur.layout";
+export function loadLayout(width?: number): Layout {
+  const base = defaultLayout(width);
   try {
     const raw = localStorage.getItem(LAYOUT_KEY);
-    if (!raw) return DEFAULT_LAYOUT;
-    const l = { ...DEFAULT_LAYOUT, ...JSON.parse(raw) } as Layout;
-    return clampLayout(l);
-  } catch { return DEFAULT_LAYOUT; }
+    if (raw) return clampLayout({ ...base, ...JSON.parse(raw) } as Layout);
+    const old = localStorage.getItem(LEGACY_LAYOUT_KEY);
+    if (old) {
+      const thumbs = (JSON.parse(old) as Partial<Layout>).thumbs;
+      return typeof thumbs === "boolean" ? { ...base, thumbs } : base;
+    }
+    return base;
+  } catch { return base; }
 }
 export function clampLayout(l: Layout): Layout {
   const k = (v: number, lo: number, hi: number) => Math.round(Math.max(lo, Math.min(hi, v)));
   const maxBottom = typeof window !== "undefined" ? window.innerHeight * LAYOUT_LIMITS.bottom[1] : 800;
   return { ...l, left: k(l.left, LAYOUT_LIMITS.left[0], LAYOUT_LIMITS.left[1]), right: k(l.right, LAYOUT_LIMITS.right[0], LAYOUT_LIMITS.right[1]),
     bottom: k(l.bottom, LAYOUT_LIMITS.bottom[0], Math.max(LAYOUT_LIMITS.bottom[0], maxBottom)) };
+}
+
+/** Étape du parcours, posée sur l'éditeur (`data-step`) : un seul bouton plein par zone en découle.
+ *  `timeline` est la timeline en cours d'édition : `project.timeline` n'est pas remis à jour à chaque retouche. */
+export function editStep(s: { project: Project | null; timeline?: Timeline | null }): "importer" | "monter" | "exporter" {
+  if (!s.project) return "importer";
+  if (!s.project.media.length) return "importer";
+  const clips = (s.timeline ?? s.project.timeline)?.clips;
+  return clips && clips.length ? "exporter" : "monter";
 }
 
 export function clipAt(tl: Timeline, t: number): { index: number; start: number } | null {
@@ -430,6 +453,18 @@ interface State {
   setRate: (r: number) => void;
   setLeftTab: (t: LeftTab | null) => void;
   setRightTab: (t: RightTab) => void;
+  /** Ouvre un onglet du panneau gauche et le déplie s'il est replié. */
+  openLeft: (t: LeftTab) => void;
+  /** Ouvre un onglet du panneau droit et le déplie s'il est replié. */
+  openRight: (t: RightTab) => void;
+  /** Onglet Chat du panneau droit : « Discuter » ou « Commentaires ». */
+  assistantView: "chat" | "comments";
+  setAssistantView: (v: "chat" | "comments") => void;
+  /** Instant (Date.now) de la dernière arrivée d'un montage ; 0 = aucun. La timeline s'en sert pour son animation. */
+  builtAt: number;
+  markBuilt: () => void;
+  /** Ouvre la zone de commentaire (onglet Chat, vue « Commentaires ») et lui donne le focus. */
+  focusComment: () => void;
   setHelp: (open: boolean) => void;
   setPalette: (open: boolean) => void;
   setPitch: (open: boolean) => void;
@@ -520,9 +555,12 @@ export const useStore = create<State>((set, get) => ({
   setLayout: (patch) => {
     const layout = clampLayout({ ...get().layout, ...patch });
     set({ layout });
-    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch { /* navigation privée : non mémorisé */ }
+    try {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+      localStorage.removeItem(LEGACY_LAYOUT_KEY);  // la nouvelle clé a pris le relais
+    } catch { /* navigation privée : non mémorisé */ }
   },
-  resetLayout: () => get().setLayout(DEFAULT_LAYOUT),
+  resetLayout: () => get().setLayout(defaultLayout()),
   catalog: null,
   item: null,
   selectedIds: [],
@@ -670,6 +708,25 @@ export const useStore = create<State>((set, get) => ({
   setRate: (r) => set({ rate: [1, 2, 4].includes(r) ? r : 1 }),
   setLeftTab: (t) => set({ leftTab: t }),
   setRightTab: (t) => set({ rightTab: t }),
+  openLeft: (t) => {
+    set({ leftTab: t });
+    if (!get().layout.leftOpen) get().setLayout({ leftOpen: true });
+  },
+  openRight: (t) => {
+    set({ rightTab: t });
+    if (!get().layout.rightOpen) get().setLayout({ rightOpen: true });
+  },
+  assistantView: "chat",
+  setAssistantView: (v) => set({ assistantView: v }),
+  builtAt: 0,
+  markBuilt: () => set({ builtAt: Date.now() }),
+  focusComment: () => {
+    get().openRight("consigne");
+    get().setAssistantView("comments");
+    // Le panneau droit replié se remonte en deux rendus : on attend deux images avant de chercher la zone.
+    if (typeof requestAnimationFrame !== "function" || typeof document === "undefined") return;
+    requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById("comment-box")?.focus()));
+  },
   setHelp: (open) => set({ helpOpen: open, paletteOpen: open ? false : get().paletteOpen }),
   setPalette: (open) => set({ paletteOpen: open, helpOpen: open ? false : get().helpOpen }),
   setPitch: (open) => set({ pitchOpen: open, pitchPending: null }),

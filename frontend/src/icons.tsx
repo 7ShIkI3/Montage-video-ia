@@ -50,6 +50,20 @@ const PATHS: Record<string, string> = {
   globe: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18",
   link: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
   refresh: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5",
+  // Refonte « Studio » : navigation, timeline et états vides.
+  type: "M4 7V4h16v3M9 20h6M12 4v16",
+  layers: "M12 2L2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
+  crosshair: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM22 12h-4M6 12H2M12 6V2M12 22v-4",
+  "shield-check": "M20 13c0 5-3.5 7.5-7.7 8.9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1zM9 12l2 2 4-4",
+  "align-left": "M21 6H3M15 12H3M17 18H3",
+  more: "M5 12h.01M12 12h.01M19 12h.01",
+  repeat: "M17 2l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3",
+  flag: "M4 22V4M4 4h13l-2 4.5 2 4.5H4",
+  range: "M4 5v14M20 5v14M8 12h8M11 9l-3 3 3 3M13 9l3 3-3 3",
+  maximize: "M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3",
+  "chevron-left": "M15 6l-6 6 6 6",
+  transition: "M3 5l9 7-9 7zM21 5l-9 7 9 7z",
+  clapper: "M3 11h18v10H3zM3.4 6.9l17.2-3.1.8 4L4.2 10.9zM8.2 5.9l2 3.7M13 5l2 3.7",
 };
 
 export type IconName = keyof typeof PATHS;

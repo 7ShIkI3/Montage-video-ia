@@ -1,0 +1,69 @@
+/* =====================================================================
+   Accueil, réglages et état du poste (lot B).
+   Toutes les règles sont préfixées .home, .settings-wrap, .sysbar ou .popover.home-sys ; aucun jeton défini ici.
+   Importée par components/Home.tsx (les réglages en profitent : main.tsx importe les deux composants).
+   ===================================================================== */
+
+/* ---------- Accueil ---------- */
+.home { min-height: 100%; display: flex; flex-direction: column; }
+.home.over { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.home .home-main { flex: 1; width: 100%; max-width: 1240px; margin: 0 auto; padding: var(--s-5) 32px 48px; display: flex; flex-direction: column; gap: 32px; }
+
+/* Bandeau héros : une grande zone de dépôt */
+.home .home-hero { display: flex; flex-direction: column; align-items: center; gap: var(--s-3); padding: 40px 32px; border: 1.5px dashed var(--line-2); border-radius: var(--r-modal); background: var(--panel); text-align: center; transition: border-color var(--t-fast), background var(--t-fast); }
+.home.over .home-hero { border-color: var(--accent); background: var(--accent-soft); }
+.home .home-hero-icon { display: grid; place-items: center; width: 56px; height: 56px; border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent-2); }
+.home .home-hero h1 { margin: 0; font-size: clamp(26px, 3vw, 36px); line-height: 1.1; letter-spacing: -0.02em; }
+.home .home-hero p { margin: 0; max-width: 520px; font-size: 15px; color: var(--muted); }
+.home .home-hero-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--s-4); margin-top: var(--s-2); }
+.home .home-import { min-height: 44px; padding: 0 24px; font-size: 14px; }
+.home .home-hero-actions .link { min-height: var(--h-md); font-size: 13px; }
+.home .home-hero-actions .link:hover:not(:disabled) { text-decoration: underline; }
+.home .home-hero .warn { margin: 0; }
+
+/* Projets */
+.home .home-phead { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: var(--s-4); }
+.home .home-phead h2 { margin: 0; font: 600 18px var(--display); letter-spacing: -0.01em; text-transform: none; color: var(--text); }
+.home .home-phead .count { font-size: 12px; color: var(--faint); }
+.home .home-phead input[type="search"] { width: 260px; min-height: var(--h-md); }
+.home .home-phead select { width: auto; min-height: var(--h-md); }
+.home .home-projects .empty { padding: 32px 0; text-align: center; color: var(--faint); }
+.home .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-4); }
+.home .card { border-radius: var(--r-panel); }
+.home .card-thumb svg { color: var(--faint); }
+.home .card-body { padding: 12px 14px 14px; }
+.home .card-body b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home .card .more { opacity: 0; }
+.home .card:hover .more, .home .card .more:focus-visible, .home .card.menu-open .more { opacity: 1; }
+.home .home-foot { padding: var(--s-4) 32px 24px; text-align: center; color: var(--faint); font-size: 12px; }
+.home .home-foot p { margin: 0; }
+
+/* Puce « Poste » de la barre : ouvre l'état complet du poste */
+.home .sys-wrap { position: relative; }
+.home .home-sys-chip { cursor: pointer; }
+.home .home-sys-chip:hover { border-color: var(--line-2); background: var(--surface-2); color: var(--text); }
+.popover.home-sys { top: calc(100% + 8px); right: 0; width: 400px; z-index: 60; }
+
+@media (max-width: 1100px) { .home .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 800px) {
+  .home .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .home .home-main { padding: var(--s-4) 16px 32px; }
+  .home .home-hero { padding: 28px 16px; }
+  .home .home-phead input[type="search"] { width: 100%; }
+}
+@media (max-width: 560px) { .home .grid { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) {
+  .home .card, .home .home-hero { transition: none; }
+  .home .card:hover { transform: none; }
+}
+
+/* ---------- Réglages : un seul bouton « Enregistrer », collant en bas ---------- */
+.settings-wrap .settings-section { border-radius: var(--r-panel); }
+.settings-wrap .settings-save { position: sticky; bottom: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); padding: var(--s-3) var(--s-4); border: 1px solid var(--line-2); border-radius: var(--r-panel); background: var(--surface); }
+.settings-wrap .settings-save .small { flex: 1; min-width: 0; }
+.settings-wrap .settings-save .primary { flex: none; min-width: 140px; }
+
+/* ---------- État du poste ---------- */
+.sysbar .sysbar-detail { border-radius: var(--r-card); }
+.sysbar button.sys-pill { font-size: 12px; }
+.popover.home-sys h4 { margin: 0 0 var(--s-3); font: 600 14px var(--display); }

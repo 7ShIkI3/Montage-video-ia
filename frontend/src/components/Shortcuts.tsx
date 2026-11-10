@@ -1,6 +1,7 @@
 // Aide des raccourcis clavier (touche « ? ») : la liste sert aussi à la palette de commandes.
 import { useEffect } from "react";
 import { Icon } from "../icons";
+import { RIGHT_TABS } from "../labels";
 
 export interface Shortcut { keys: string[]; label: string }
 export const SHORTCUT_GROUPS: { title: string; items: Shortcut[] }[] = [
@@ -53,7 +54,7 @@ export const SHORTCUT_GROUPS: { title: string; items: Shortcut[] }[] = [
     { keys: ["Ctrl", "molette"], label: "Zoomer sous la souris" },
     { keys: ["Maj", "Z"], label: "Zoom ajusté : tout le montage" },
     { keys: ["Ctrl", "K"], label: "Palette de commandes" },
-    { keys: ["1", "…", "9"], label: "Onglets du panneau droit : consigne, montage, plan, habillage, audio, qualité, export, texte, recherche" },
+    { keys: ["1", "…", "9"], label: `Onglets du panneau droit : ${RIGHT_TABS.map((t) => t.label.toLowerCase()).join(", ")}` },
     { keys: ["C"], label: "Écrire un commentaire de montage" },
     { keys: ["Échap"], label: "Désélectionner, fermer" },
     { keys: ["?"], label: "Cette aide" },

@@ -1,10 +1,11 @@
-// Onglet Audio & voix : mixage, musique de fond, pistes audio, doublage, voix de synthèse, voix off au micro.
+// Onglet Mixage : volumes par groupe de sons, musique de fond et liste des pistes audio.
+// L'enregistrement de voix off, les sons, le doublage et la voix de synthèse sont dans le module Audio du panneau de gauche.
 import { fmtTime, MixGroup, Mixer } from "../../api";
 import { useStore } from "../../store";
 import { Icon } from "../../icons";
-import { AddSoundButton, VoiceOverButton } from "../AudioTools";
-import { AIVoiceoverPanel, DubPanel } from "../Lot3";
 import { MusicSection } from "../RightPanel";
+import { EmptyHint } from "../ui/EmptyHint";
+import { Section } from "../ui/Section";
 
 const MIX_GROUPS: { id: MixGroup; label: string; hint: string }[] = [
   { id: "rushes", label: "Son des plans", hint: "Le son des vidéos du montage" },
@@ -24,20 +25,19 @@ function MixerSection() {
     setTimelineProps({ mix: { ...NEUTRAL_MIX, ...cur, [g]: { ...NEUTRAL_MIX[g], ...cur[g], ...patch } } });
   };
   return (
-    <div className="fx-section mixer">
-      <div className="fx-title">Mixage</div>
+    <div className="mixer">
       {MIX_GROUPS.map(({ id, label, hint }) => {
         const ch = { ...NEUTRAL_MIX[id], ...mix[id] };
         return (
-          <div key={id} className={`mixer-row ${ch.mute ? "muted-row" : ""}`} title={hint}>
-            <span className="mixer-name">{label}</span>
-            <input type="range" min={0} max={2} step={0.05} value={ch.volume} aria-label={`Volume : ${label}`}
-              onChange={(e) => set(id, { volume: +e.target.value })} />
+          <div key={id} className={`mixer-row ${ch.mute ? "muted-row" : ""}`}>
+            <span className="mixer-name" title={hint}>{label}</span>
             <span className="mixer-val">{Math.round(ch.volume * 100)} %</span>
             <button className={`small-btn mute-btn ${ch.mute ? "on" : ""}`} aria-pressed={ch.mute}
-              title={ch.mute ? "Remettre le son" : "Couper ce groupe"} onClick={() => set(id, { mute: !ch.mute })}>
+              aria-label={`${ch.mute ? "Remettre le son" : "Couper"} : ${label}`} onClick={() => set(id, { mute: !ch.mute })}>
               <Icon name="volume" size={13} />{ch.mute ? "Muet" : "Son"}
             </button>
+            <input type="range" min={0} max={2} step={0.05} value={ch.volume} aria-label={`Volume : ${label}`}
+              onChange={(e) => set(id, { volume: +e.target.value })} />
           </div>
         );
       })}
@@ -48,25 +48,25 @@ function MixerSection() {
 export function AudioTab() {
   const tl = useStore((s) => s.timeline);
   const item = useStore((s) => s.item);
-  const { selectItem, setPlayhead, setRightTab } = useStore.getState();
+  const { selectItem, setPlayhead, openRight, openLeft } = useStore.getState();
   if (!tl) return null;
   const audio = [...(tl.audio || [])].sort((a, b) => a.lane - b.lane || a.start - b.start);
+  if (!tl.clips.length && !audio.length && !tl.music.track)
+    return (
+      <div className="rw">
+        <EmptyHint icon="volume" text="Monte d'abord, puis règle le son ici." action={{ label: "Monter avec l'IA", onClick: () => openLeft("ia") }} />
+      </div>
+    );
   return (
-    <section className="panel inspector">
-      <header><h3>Audio et voix</h3></header>
-      <MixerSection />
-      <MusicSection />
-      <div className="fx-section">
-        <div className="fx-title">Pistes audio</div>
-        <div className="add-grid">
-          <VoiceOverButton />
-          <AddSoundButton />
-        </div>
+    <div className="rw audio-tab">
+      <Section title="Mixage" defaultOpen><MixerSection /></Section>
+      <Section title="Musique de fond" defaultOpen><MusicSection /></Section>
+      <Section title={`Pistes audio${audio.length ? ` (${audio.length})` : ""}`} defaultOpen>
         {audio.length > 0 && (
           <ul className="audio-list">
             {audio.map((a) => (
               <li key={a.id} className={item?.kind === "audio" && item.id === a.id ? "sel" : ""}>
-                <button className="link" onClick={() => { selectItem({ kind: "audio", id: a.id }); setPlayhead(a.start); setRightTab("plan"); }}>
+                <button className="link" onClick={() => { selectItem({ kind: "audio", id: a.id }); setPlayhead(a.start); openRight("plan"); }}>
                   <Icon name={a.kind === "voix" ? "mic" : a.kind === "musique" ? "music" : "volume"} size={13} />
                   <span>{a.label || a.asset}</span>
                   <small className="muted">Audio {a.lane + 1} · {fmtTime(a.start, true)} · {(a.src_out - a.src_in).toFixed(1)} s · {Math.round(a.volume * 100)} %</small>
@@ -75,9 +75,9 @@ export function AudioTab() {
             ))}
           </ul>
         )}
-      </div>
-      <DubPanel />
-      <AIVoiceoverPanel />
-    </section>
+        <p className="muted small">Voix off, sons, voix de synthèse et doublage s'ajoutent depuis le module Audio, à gauche.</p>
+        <button className="small-btn" onClick={() => openLeft("audio")}><Icon name="music" size={13} />Ouvrir le module Audio</button>
+      </Section>
+    </div>
   );
 }

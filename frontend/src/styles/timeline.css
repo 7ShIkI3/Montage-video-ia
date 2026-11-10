@@ -1,0 +1,102 @@
+/* =====================================================================
+   Timeline : barre d'outils en quatre groupes, pistes, plans, têtes de lecture (lot B).
+   Toutes les règles sont préfixées .timeline ; aucun jeton défini ici.
+   Couplages de hauteur à ne pas toucher : CLIP_H = 74 (Timeline.tsx) <-> .track-video 86 px <-> .clip top/bottom 6 px ;
+   forme d'onde 26 px <-> .wave bottom 10 px.
+   ===================================================================== */
+
+/* ---------- Barre d'outils : une seule ligne de 40 px ---------- */
+.timeline .timeline-toolbar { container-type: inline-size; display: flex; align-items: center; flex-wrap: nowrap; gap: 6px; height: 40px; min-height: 40px; padding: 0 12px; overflow: hidden; border-bottom: 1px solid var(--line); background: var(--panel); }
+.timeline .timeline-toolbar button { flex: none; min-height: var(--h-sm); padding: 0 10px; gap: 6px; font-size: 12px; white-space: nowrap; background: var(--surface-2); }
+.timeline .timeline-toolbar button:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.timeline .timeline-toolbar button.rec.on { background: #C8323C; border-color: #C8323C; color: #fff; }
+.timeline .timeline-toolbar button.icon-btn { width: var(--h-sm); padding: 0; background: transparent; }
+.timeline .timeline-toolbar button.icon-btn.on { background: var(--accent-soft); color: var(--accent-2); }
+.timeline .timeline-toolbar button.icon-btn:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.timeline .timeline-toolbar button.tb-cut { border-color: var(--accent); color: var(--accent-2); }
+.timeline .timeline-toolbar button.tb-cut:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-2); }
+.timeline .timeline-toolbar .sep { flex: none; width: 1px; height: 20px; margin: 0 4px; background: var(--line); }
+.timeline .timeline-toolbar .spacer { flex: 1 1 0; min-width: 0; }
+.timeline .timeline-toolbar .stat { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--faint); }
+.timeline .timeline-toolbar .stat b { color: var(--text-2); font-weight: 600; }
+.timeline .timeline-toolbar .sel-count, .timeline .timeline-toolbar .sel-count b { color: var(--accent-2); }
+.timeline .timeline-toolbar .zoom { flex: none; flex-direction: row; align-items: center; gap: 6px; width: auto; margin: 0 2px; font-size: 12px; color: var(--muted); }
+.timeline .timeline-toolbar .zoom input { width: 120px; }
+.timeline .timeline-toolbar .rec-time { font: 500 12px var(--mono); font-variant-numeric: tabular-nums; }
+.timeline .timeline-toolbar .range-tools { flex: none; gap: 2px; }
+.timeline .timeline-toolbar .range-stat { flex: none; font-size: 12px; }
+.timeline .timeline-toolbar .range-tools button.icon-btn.on { background: var(--accent-soft); color: var(--ok); }
+/* Sous 1360 px de barre (donc à 1280), les libellés disparaissent : les icônes gardent aria-label et title. */
+@container (max-width: 1360px) {
+  .timeline .timeline-toolbar .tb-label { display: none; }
+  .timeline .timeline-toolbar .zoom input { width: 96px; }
+  .timeline .timeline-toolbar button:not(.icon-btn) { padding: 0 8px; }
+}
+
+/* ---------- Pistes ---------- */
+.timeline .track-video { height: 86px; }
+.timeline .track-broll, .timeline .track-texts, .timeline .track-sfx, .timeline .track-comments, .timeline .track-audio { height: 28px; }
+.timeline .track-images, .timeline .track-impacts { height: 26px; }
+.timeline .track-captions { height: 34px; }
+.timeline .track-music { height: 30px; }
+/* Une piste vide se replie à 0 (sa pastille déborderait sinon) ; « Toutes les pistes » (.show-all sur .timeline-inner) les rouvre.
+   Vidéo, Sous-titres et Musique restent : ce sont les pistes que l'on s'attend à voir. */
+.timeline .timeline-inner:not(.show-all) .track.is-empty:not(.track-video):not(.track-captions):not(.track-music) { height: 0; overflow: hidden; border-bottom-width: 0; }
+
+/* Étiquette de piste : pastille collante dans la piste, sans gouttière ni décalage de l'origine horizontale */
+.timeline .track[data-label]::after { height: 18px; margin-top: 4px; padding: 0 6px; border-radius: var(--r-ctl); background: var(--scrim); color: var(--text-2); font: 500 11px/18px var(--font); letter-spacing: 0; text-transform: none; }
+/* Là où la piste contient déjà son propre libellé (plans, sous-titres, musique), la pastille ne sert que tant que la piste est vide. */
+.timeline .track-video:not(.is-empty)::after, .timeline .track-captions:not(.is-empty)::after, .timeline .track-music:not(.is-empty)::after { display: none; }
+
+/* Dépôt d'un rush glissé depuis le panneau Médias */
+body.dragging-media .timeline .track-video { outline: 2px dashed var(--accent); outline-offset: -2px; background: var(--accent-soft); }
+body.dragging-media .timeline .track-video::before { content: "Déposer ici"; position: absolute; right: 12px; top: 8px; z-index: 6; padding: 2px 10px; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-ink); font: 600 11px var(--font); pointer-events: none; }
+
+/* ---------- Plans ---------- */
+.timeline .clip { top: 6px; bottom: 6px; border-radius: var(--r-ctl); box-shadow: inset 0 0 0 1px var(--line-2); }
+.timeline .clip.sel { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--sel-glow); z-index: 2; }
+/* Filet de 3 px en haut, dans la couleur pleine du rush (la pellicule, elle, est atténuée). Le ::before reste au repère d'insertion. */
+.timeline .clip::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: inherit; z-index: 2; pointer-events: none; }
+.timeline .clip-label { top: 3px; left: 0; right: 0; padding: 3px 8px 12px; background: linear-gradient(var(--scrim), transparent); color: var(--text); font-size: 11px; font-weight: 500; text-shadow: 0 1px 2px var(--scrim); }
+.timeline .clip-label .badge { font-size: 11px; }
+/* Les classes .left et .right du panneau gauche/droit s'appliquent aussi aux poignées : on les remet à zéro. */
+.timeline .handle { display: block; width: 10px; background: transparent; border: 0; }
+.timeline .handle:hover { background: rgba(255,255,255,0.35); }
+.timeline .trans-mark { display: flex; left: 6px; bottom: 12px; padding: 1px 3px; border-radius: 3px; background: var(--scrim); color: var(--text); text-shadow: none; }
+.timeline .score { height: 3px; background: var(--text-2); }
+.timeline .score.score-hi { background: var(--ok); }
+.timeline .score.score-mid { background: var(--warn); }
+.timeline .score.score-lo { background: var(--danger); }
+
+/* ---------- Éléments des pistes : 22 px, couleur de piste à 28 % avec liseré de 1 px ---------- */
+/* Préfixe « .track » : il fait gagner ces règles sur les variantes de styles.css (.item-block.audio.k-son, etc.). */
+.timeline .track .item-block, .timeline .track .cap-block, .timeline .track .music-block {
+  --c: var(--text-2);
+  border: 1px solid var(--c); background: var(--surface-2); background: color-mix(in srgb, var(--c) 28%, transparent);
+  color: var(--text); font-size: 11px; font-weight: 500;
+}
+.timeline .track .item-block { top: 0; bottom: 0; height: 22px; min-width: 14px; margin: auto 0; padding: 0 6px; border-radius: var(--r-ctl); }
+.timeline .track .item-block.broll { --c: var(--trk-broll); box-shadow: inset 3px 0 0 var(--rush, var(--trk-broll)); }
+.timeline .track .item-block.text { --c: var(--trk-text); }
+.timeline .track .item-block.sfx { --c: var(--trk-sfx); }
+.timeline .track .item-block.image { --c: var(--trk-image); }
+.timeline .track .item-block.audio { --c: var(--trk-sound); }
+.timeline .track .item-block.audio.k-voix { --c: var(--trk-voice); }
+.timeline .track .item-block.audio.k-son { --c: var(--trk-sound); }
+.timeline .track .item-block.audio.k-musique { --c: var(--trk-music); }
+.timeline .track .item-block.sel { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--sel-glow); z-index: 2; }
+.timeline .track .cap-block { --c: var(--trk-caption); top: 6px; bottom: 6px; border-radius: var(--r-ctl); color: var(--text-2); }
+.timeline .track .music-block { --c: var(--trk-music); top: 5px; bottom: 5px; border-radius: var(--r-ctl); padding: 3px 8px; }
+.timeline .impact-pin { top: 5px; }
+.timeline .cm-pin { top: 5px; }
+
+/* ---------- Tête de lecture : 2 px accent, tête carrée de 12 px, halo léger ---------- */
+.timeline .playhead { width: 2px; background: var(--accent); box-shadow: 0 0 0 2px var(--sel-glow); }
+.timeline .playhead::before { top: 0; left: -5px; width: 12px; height: 12px; border-radius: 2px; background: var(--accent); }
+
+/* ---------- Arrivée d'un montage : cascade de 40 ms par plan, 10 plans au plus, 1,6 s en tout ---------- */
+@keyframes clip-in { from { opacity: 0; transform: scaleY(0.6); } to { opacity: 1; transform: none; } }
+.timeline.just-built .clip.cascade { animation: clip-in 320ms cubic-bezier(0.2, 0.8, 0.3, 1) both; animation-delay: calc(var(--i, 0) * 40ms); }
+@media (prefers-reduced-motion: reduce) {
+  .timeline.just-built .clip.cascade { animation: none; }
+}

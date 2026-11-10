@@ -62,7 +62,7 @@ export function Pitch({ onClose }: { onClose: () => void }) {
         </div>
         <footer className="pitch-actions">
           <button className="primary" onClick={play} disabled={!tl.clips.length}><Icon name="play" size={14} />Lire le montage</button>
-          <button onClick={() => { onClose(); st.setRightTab("plan"); }}><Icon name="list-video" size={14} />Voir le plan</button>
+          <button onClick={() => { onClose(); st.openRight("plan"); }}><Icon name="list-video" size={14} />Voir le plan</button>
           <button onClick={() => { onClose(); st.setExportOpen(true); }}><Icon name="download" size={14} />Exporter</button>
         </footer>
       </div>

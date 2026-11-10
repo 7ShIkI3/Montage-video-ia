@@ -12,7 +12,8 @@ import { renderLite } from "./Research";
 const EXAMPLES = ["Quels combats ai-je gagnés ? Regarde les images.", "Refais le montage autour de mes meilleurs kills",
   "Pose un repère à chaque élimination", "Fais une version de 30 secondes", "Passe en vertical"];
 
-export function DirectorChat() {
+/** `visible` : faux quand la vue est masquée (sous-onglet Commentaires) ; le fil se recale en bas au retour. */
+export function DirectorChat({ visible = true }: { visible?: boolean }) {
   const project = useStore((s) => s.project);
   const caps = useStore((s) => s.caps);
   const busy = useStore((s) => isBusy(s));
@@ -29,7 +30,7 @@ export function DirectorChat() {
   const active = (j: typeof job) => !!j && (j.status === "en_cours" || j.status === "en_attente");
   const running = active(job);
   const looking = active(visionJob);
-  useEffect(() => { list.current?.scrollTo({ top: list.current.scrollHeight }); }, [n, busy, job?.preview, job?.message]);
+  useEffect(() => { if (visible) list.current?.scrollTo({ top: list.current.scrollHeight }); }, [visible, n, busy, job?.preview, job?.message]);
   // Combien d'images une passe de vision enverrait : relu quand les rushes changent ou qu'une passe finit.
   useEffect(() => {
     if (!pid) return;
@@ -82,12 +83,13 @@ export function DirectorChat() {
 
   return (
     <section className="panel chat" data-testid="director-chat">
-      <header>
-        <h3>Réalisateur</h3>
+      <div className="chat-tools">
+        <button className="link small" onClick={showDossier} aria-expanded={dossier !== null}>
+          <Icon name={dossier !== null ? "eye-off" : "eye"} size={13} />{dossier !== null ? "Masquer le dossier" : "Ce qu'il sait de tes rushes"}
+        </button>
         <span className="spacer" />
-        <button className="link small" onClick={showDossier} title="Ce que le réalisateur sait de tes rushes">{dossier !== null ? "Masquer le dossier" : "Ce qu'il sait"}</button>
         {messages.length > 0 && <button className="icon-btn" title="Effacer la conversation" aria-label="Effacer la conversation" onClick={clear}><Icon name="trash" size={14} /></button>}
-      </header>
+      </div>
       {vision && vision.claude && vision.media.length > 0 && (
         <div className="chat-vision" data-testid="chat-vision">
           <Icon name={vision.pending ? "eye-off" : "eye"} size={14} />
@@ -141,16 +143,16 @@ export function DirectorChat() {
           </div>
         )}
       </div>
+      <CapHint reason={caps && !caps.claude ? "Sans clé Claude (Réglages), le réalisateur ne discute pas et ne regarde pas les images : il applique les consignes simples (durée, format, sous-titres, musique, zooms, couper un passage)." : null} />
+      <div className="chips chat-examples">
+        {EXAMPLES.map((x) => <button key={x} className="chip" disabled={busy} onClick={() => setText(x)}>{x}</button>)}
+      </div>
       <form onSubmit={(e) => { e.preventDefault(); send(text); }}>
         <textarea rows={2} value={text} placeholder="Parle au réalisateur : une question sur tes rushes, ou un changement à faire…" disabled={busy}
           aria-label="Message au réalisateur" onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(text); } }} />
         <button className="primary" disabled={busy || !text.trim()}>{running ? "…" : <><Icon name="message" size={14} />Envoyer</>}</button>
       </form>
-      <CapHint reason={caps && !caps.claude ? "Sans clé Claude (Réglages), le réalisateur ne discute pas et ne regarde pas les images : il applique les consignes simples (durée, format, sous-titres, musique, zooms, couper un passage)." : null} />
-      <div className="chips">
-        {EXAMPLES.map((x) => <button key={x} className="chip" disabled={busy} onClick={() => setText(x)}>{x}</button>)}
-      </div>
     </section>
   );
 }
