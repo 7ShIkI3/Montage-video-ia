@@ -3,25 +3,75 @@
     cd frontend && npm ci && npm run build && cd ..
     pip install -r desktop/requirements.txt
     python desktop/build.py              # ajoute --ffmpeg CHEMIN pour embarquer ffmpeg et ffprobe
+    python desktop/build.py --installer  # Windows : construit aussi l'installateur (Inno Setup 6 requis)
 
-Résultat : dist/Monteur IA/ (dossier à zipper), ou dist/Monteur IA.app sur macOS.
+Résultat : dist/Monteur IA/ (dossier de l'application), ou dist/Monteur IA.app sur macOS ; avec --installer,
+dist/installer/MonteurIA-Setup-<version>.exe, le seul fichier à donner à quelqu'un pour installer l'application.
 """
 from __future__ import annotations
 
 import argparse
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SEP = ";" if os.name == "nt" else ":"
+VERSION = "1.0.0"  # version affichée par l'installateur et dans « Applications installées »
+ICON = ROOT / "desktop" / "monteur.ico"  # redessinée par desktop/make_icon.py
+
+
+def find_iscc() -> Path | None:
+    """Le compilateur d'Inno Setup : dans le PATH, ou à l'un de ses emplacements d'installation habituels."""
+    found = shutil.which("ISCC") or shutil.which("iscc")
+    if found:
+        return Path(found)
+    for base in (os.environ.get("LOCALAPPDATA", ""), os.environ.get("ProgramFiles(x86)", ""), os.environ.get("ProgramFiles", "")):
+        for sub in ("Programs/Inno Setup 6", "Inno Setup 6"):
+            exe = Path(base) / sub / "ISCC.exe" if base else None
+            if exe and exe.exists():
+                return exe
+    return None
+
+
+def build_installer() -> int:
+    """Emballe dist/Monteur IA dans un installateur (un seul .exe, sans droits d'administrateur)."""
+    if os.name != "nt":
+        print("L'installateur n'existe que pour Windows.", file=sys.stderr)
+        return 1
+    app = ROOT / "dist" / "Monteur IA" / "Monteur IA.exe"
+    if not app.exists():
+        print(f"{app} introuvable : construis d'abord l'application (python desktop/build.py).", file=sys.stderr)
+        return 1
+    iscc = find_iscc()
+    if not iscc:
+        print("Inno Setup 6 est introuvable (ISCC.exe). Installe-le : winget install --id JRSoftware.InnoSetup -e",
+              file=sys.stderr)
+        return 1
+    print("Construction de l'installateur (plusieurs minutes : près de 3 Go à compresser)…")
+    done = subprocess.run([str(iscc), f"/DAppVersion={VERSION}", "/Qp", str(ROOT / "desktop" / "installer.iss")])
+    if done.returncode:
+        return done.returncode
+    out = ROOT / "dist" / "installer" / f"MonteurIA-Setup-{VERSION}.exe"
+    print(f"Installateur prêt : {out} ({out.stat().st_size / 1e6:.0f} Mo)")
+    return 0
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ffmpeg", help="dossier contenant ffmpeg et ffprobe à embarquer")
+    ap.add_argument("--installer", action="store_true", help="Windows : construit aussi l'installateur (Inno Setup 6)")
+    ap.add_argument("--installer-only", action="store_true", help="n'emballe que dist/Monteur IA, sans le reconstruire")
     args = ap.parse_args()
+    if args.installer_only:
+        return build_installer()
+    if args.installer and not find_iscc():
+        # On le dit avant les longues minutes de PyInstaller, pas après.
+        print("Inno Setup 6 est introuvable (ISCC.exe). Installe-le : winget install --id JRSoftware.InnoSetup -e",
+              file=sys.stderr)
+        return 1
     dist = ROOT / "frontend" / "dist"
     if not (dist / "index.html").exists():
         print("Construis d'abord l'interface : cd frontend && npm ci && npm run build", file=sys.stderr)
@@ -46,6 +96,7 @@ def main() -> int:
         "--add-data", f"{demo_clip}{SEP}assets",
         str(ROOT / "desktop" / "launcher.py"),
         "--name", "Monteur IA", "--noconfirm", "--windowed",
+        *(["--icon", str(ICON)] if ICON.exists() and os.name == "nt" else []),
         "--distpath", str(ROOT / "dist"), "--workpath", str(ROOT / "build"),
         "--paths", str(ROOT / "backend"),
         "--add-data", f"{dist}{SEP}frontend/dist",
@@ -77,7 +128,7 @@ def main() -> int:
         print("Attention : ffmpeg n'est ni embarqué (--ffmpeg) ni installé sur cette machine.", file=sys.stderr)
     pyi.run(opts)
     print(f"Application prête dans {ROOT / 'dist'}")
-    return 0
+    return build_installer() if args.installer else 0
 
 
 if __name__ == "__main__":

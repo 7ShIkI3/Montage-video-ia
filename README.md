@@ -216,6 +216,14 @@ Ou en développement avec rechargement à chaud : `./scripts/dev.sh` puis http:/
 autonome : `pip install -r desktop/requirements.txt` puis `python desktop/build.py --ffmpeg <dossier de ffmpeg>`
 (sur la machine cible : Windows, macOS ou Linux), résultat dans `dist/`.
 
+**Installateur Windows** : `python desktop/build.py --ffmpeg <dossier de ffmpeg> --installer` produit en plus
+`dist/installer/MonteurIA-Setup-<version>.exe` ([Inno Setup 6](https://jrsoftware.org/isinfo.php) requis :
+`winget install --id JRSoftware.InnoSetup -e`). C'est le seul fichier à donner à quelqu'un : double-clic, pas de
+droits d'administrateur, raccourcis du Bureau et du menu Démarrer, désinstallation dans « Applications
+installées ». Les bibliothèques NVIDIA (2 Go) ne sont copiées que sur une machine qui a une carte NVIDIA ; les
+projets, dans `Documents/Monteur IA`, ne sont touchés ni par une mise à jour ni par la désinstallation.
+`--installer-only` remballe un `dist/Monteur IA` déjà construit ; l'icône se redessine avec `desktop/make_icon.py`.
+
 **Doublage** : `espeak-ng` (Linux : `apt install espeak-ng`, macOS : `brew install espeak-ng`) suffit. Pour des
 voix naturelles, `pip install piper-tts` et dépose une voix Piper (`fr_FR-siwis-medium.onnx` et son `.json`)
 dans `data/voices/`.
