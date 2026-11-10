@@ -30,6 +30,7 @@ SHAKES_PER_COMBO = 2  # coup final compris
 HOLD_BEST = 0.9  # secondes gardées après le coup final du meilleur combo : le temps de le voir
 SLOW = 0.4  # vitesse du ralenti sur le coup final
 CLOSING_QUIET = 6.0  # secondes sans coup après une rafale : le combat est fini
+FIGHT_MIN_HITS = 12  # coups rapprochés à partir desquels une série est un vrai combat, avec une issue à regarder
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +124,19 @@ def candidates(media: list, hits_by_media: dict[str, list], blocked: dict[str, l
         # Dernière rafale d'un combat : presque plus de coups pendant plusieurs secondes après (un clic de menu
         # isolé ne compte pas). C'est là que se joue l'issue, kill ou mort : le jury la regarde en premier.
         c["closing"] = sum(1 for h in clean[mid] if c["end"] < h[0] <= c["end"] + CLOSING_QUIET) <= 1
+        c["fight"] = 0
+    # Un vrai duel finit souvent dans le bruit (message de victoire, feux d'artifice, clics) : le silence ne suffit
+    # pas à repérer sa fin. La dernière rafale de chaque combat nourri en est une aussi, et on retient la taille
+    # du combat : les plus gros duels sont montrés au jury d'abord.
+    for mid, hits in clean.items():
+        mine = [c for m2, c in out if m2 == mid]
+        for g in hits_an.combos(hits):
+            if g["n"] < FIGHT_MIN_HITS:
+                continue
+            inside = [c for c in mine if g["start"] - 1e-6 <= c["start"] and c["end"] <= g["end"] + 1e-6]
+            if inside:
+                last = max(inside, key=lambda c: c["end"])
+                last["closing"], last["fight"] = True, g["n"]
     return out
 
 
@@ -138,9 +152,10 @@ def shortlist(cands: list[tuple[str, dict]], limit: int, known: set | None = Non
         groups.setdefault((mid, int(c["start"] // span)), []).append(c)
     for g in groups.values():
         g.sort(key=lambda c: -c["score"])
-    # La moitié des places va aux fins de combat (l'issue s'y voit), les plus longues d'abord.
-    closing = sorted(((k[0], c) for k, g in groups.items() for c in g if c.get("closing")), key=lambda x: -x[1]["score"])
-    out: list[tuple[str, dict]] = closing[: limit // 2]
+    # La plus grande part des places va aux fins de combat (c'est là que se voient les kills), gros duels d'abord.
+    closing = sorted(((k[0], c) for k, g in groups.items() for c in g if c.get("closing")),
+                     key=lambda x: (-x[1].get("fight", 0), -x[1]["score"]))
+    out: list[tuple[str, dict]] = closing[: limit * 7 // 10]
     taken = {(mid, jury.key(c)) for mid, c in out}
     rank = 0
     while len(out) < limit and any(len(g) > rank for g in groups.values()):
