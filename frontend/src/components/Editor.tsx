@@ -78,7 +78,8 @@ function useShortcuts() {
       else if ((e.key === "+" || e.key === "=") && !mod) { s.setZoom(s.pxPerSec * 1.25); }
       else if (e.key === "-" && !mod) { s.setZoom(s.pxPerSec / 1.25); }
       else if (k === "z" && e.shiftKey && !mod) { s.zoomFit(); }
-      else if (mod && k === "d") { e.preventDefault(); if (clip) s.duplicateClip(clip); }
+      else if (mod && k === "d") { e.preventDefault(); if (clip) s.duplicateSelection(); }
+      else if (mod && k === "a" && !e.shiftKey && !e.altKey) { e.preventDefault(); s.selectAllClips(); }
       else if (mod && !e.shiftKey && !e.altKey && (k === "c" || k === "x")) {
         if (window.getSelection()?.toString()) return;  // du texte est sélectionné dans la page : copie normale du navigateur
         if (!s.item) return;
@@ -86,7 +87,7 @@ function useShortcuts() {
         if (k === "c") s.copySelection(); else s.cutSelection();
       }
       else if (mod && !e.shiftKey && !e.altKey && k === "v") { e.preventDefault(); s.paste(); }
-      else if (mod && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); if (clip) s.nudgeClip(clip, e.key === "ArrowLeft" ? -1 : 1); }
+      else if (mod && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); if (clip) s.nudgeSelection(e.key === "ArrowLeft" ? -1 : 1); }
       else if (k === "i" && !mod) { if (clip) s.trimToPlayhead(clip, "in"); else s.markRange("in"); }
       else if (k === "o" && !mod) { if (clip) s.trimToPlayhead(clip, "out"); else s.markRange("out"); }
       else if (k === "x" && !mod) { if (e.shiftKey) s.setRange(null); else s.rangeFromClip(); }
@@ -97,10 +98,7 @@ function useShortcuts() {
       else if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); s.redo(); }
       else if (e.key.toLowerCase() === "s" && !mod) { s.splitAtPlayhead(); }
       else if (e.key.toLowerCase() === "c" && !mod) { e.preventDefault(); s.setPlaying(false); document.getElementById("comment-box")?.focus(); }
-      else if ((e.key === "Delete" || e.key === "Backspace") && s.item) {
-        if (s.item.kind === "clip") s.deleteClip(s.item.id);
-        else s.deleteItem(s.item.kind, s.item.id);
-      }
+      else if ((e.key === "Delete" || e.key === "Backspace") && s.item) { s.deleteSelection(); }
       else if (e.key === "ArrowLeft") { s.setPlayhead(s.playhead - (e.shiftKey ? 1 : 1 / 30)); }
       else if (e.key === "ArrowRight") { s.setPlayhead(s.playhead + (e.shiftKey ? 1 : 1 / 30)); }
       else if (e.key === "Escape") { s.selectItem(null); s.setPicking(false); s.setPendingRegion(null); }

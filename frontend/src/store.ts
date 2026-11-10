@@ -131,8 +131,8 @@ export type RightTab = "consigne" | "montage" | "plan" | "habillage" | "audio" |
 export const RIGHT_TAB_ORDER: RightTab[] = ["consigne", "montage", "plan", "habillage", "audio", "qualite", "export", "texte", "recherche"];
 
 /** Espace de travail : largeur des panneaux, hauteur de la timeline, panneaux repliés. Mémorisé dans le navigateur. */
-export interface Layout { left: number; right: number; bottom: number; leftOpen: boolean; rightOpen: boolean }
-export const DEFAULT_LAYOUT: Layout = { left: 360, right: 340, bottom: 268, leftOpen: true, rightOpen: true };
+export interface Layout { left: number; right: number; bottom: number; leftOpen: boolean; rightOpen: boolean; /** Vignettes dans les plans de la timeline. */ thumbs: boolean }
+export const DEFAULT_LAYOUT: Layout = { left: 360, right: 340, bottom: 268, leftOpen: true, rightOpen: true, thumbs: true };
 export const LAYOUT_LIMITS = { left: [240, 640], right: [260, 640], bottom: [150, 0.7] } as const;  // bottom : fraction de la fenêtre
 const LAYOUT_KEY = "monteur.layout";
 function loadLayout(): Layout {
@@ -191,17 +191,31 @@ function newClip(mediaId: string, srcIn: number, srcOut: number): Clip {
   };
 }
 
-/** Insère un plan, le sélectionne et met le curseur à sa fin. */
-function insertPlan(clip: Clip, where: "playhead" | "end" | number): string | null {
+/** Insère des plans à la suite, les sélectionne et met le curseur à la fin du dernier. */
+function insertPlans(clips: Clip[], where: "playhead" | "end" | number): string | null {
   const st = useStore.getState();
-  if (!st.timeline) return null;
+  if (!st.timeline || !clips.length) return null;
   const playhead = st.playhead;
-  st.edit((tl) => { placeClip(tl, clip, where, playhead); });
+  st.edit((tl) => {
+    let at = placeClip(tl, clips[0], where, playhead);
+    for (const c of clips.slice(1)) tl.clips.splice(++at, 0, c);
+  });
   const tl = useStore.getState().timeline!;
-  const i = tl.clips.findIndex((c) => c.id === clip.id);
-  useStore.setState({ selected: clip.id, item: { kind: "clip", id: clip.id }, playhead: clipStarts(tl)[i] + clipDur(clip) });
-  return clip.id;
+  const last = clips[clips.length - 1];
+  const i = tl.clips.findIndex((c) => c.id === last.id);
+  useStore.setState({
+    selected: last.id, item: { kind: "clip", id: last.id }, selectedIds: clips.map((c) => c.id),
+    playhead: clipStarts(tl)[i] + clipDur(last),
+  });
+  return clips[0].id;
 }
+const insertPlan = (clip: Clip, where: "playhead" | "end" | number) => insertPlans([clip], where);
+
+/** Réglages qu'un changement dans l'inspecteur applique à tous les plans sélectionnés.
+ *  L'entrée, la sortie, le cadrage et les images clés restent propres à chaque plan. */
+const SHARED_CLIP_KEYS: ReadonlySet<string> = new Set([
+  "zoom", "volume", "speed", "speed_end", "fade_in", "fade_out", "transition", "transition_duration", "effects", "audio_effects", "color",
+]);
 
 /** Type de données du glisser-déposer d'un rush du chutier (distinct de celui qui réordonne les plans). */
 export const MEDIA_DRAG_TYPE = "application/x-monteur-media";
@@ -224,8 +238,8 @@ const COPYABLE = { text: "texts", sfx: "sfx", overlay: "overlays", image: "image
 const ID_PREFIX = { text: "t_", sfx: "s_", overlay: "o_", image: "g_", impact: "i_", audio: "a_" } as const;
 export type CopyKind = keyof typeof COPYABLE;
 const isCopyKind = (k: string): k is CopyKind => k in COPYABLE;
-/** Presse-papiers interne : un plan, ou un élément (texte, bruitage, plan de coupe, image, impact, son). */
-export type ClipboardEntry = { kind: "clip"; clip: Clip } | { kind: "item"; type: CopyKind; data: Record<string, unknown> };
+/** Presse-papiers interne : un ou plusieurs plans, ou un élément (texte, bruitage, plan de coupe, image, impact, son). */
+export type ClipboardEntry = { kind: "clip"; clips: Clip[] } | { kind: "item"; type: CopyKind; data: Record<string, unknown> };
 
 /** Tâche suivie côté interface : le libellé et la façon de la relancer ne viennent pas du serveur. */
 export interface TrackedJob extends Job {
@@ -340,6 +354,21 @@ interface State {
   resetLayout: () => void;
   catalog: EffectsCatalog | null;
   item: Sel | null;
+  /** Plans sélectionnés, dans l'ordre des clics. Contient toujours `selected` (le plan principal, celui de l'inspecteur). */
+  selectedIds: string[];
+  /** Ctrl + clic : ajoute le plan à la sélection, ou l'en retire. */
+  toggleSelect: (id: string) => void;
+  /** Maj + clic : sélectionne tous les plans entre le plan principal et celui-ci. */
+  selectRange: (id: string) => void;
+  selectAllClips: () => void;
+  /** Supprime l'élément sélectionné, ou tous les plans sélectionnés (ils vont dans les plans écartés). */
+  deleteSelection: () => void;
+  /** Copie des plans sélectionnés insérée juste après le dernier d'entre eux. */
+  duplicateSelection: () => void;
+  /** Déplace d'un cran le plan ou le groupe de plans sélectionnés. */
+  nudgeSelection: (dir: -1 | 1) => void;
+  /** Regroupe les plans `ids` (dans l'ordre du montage) et les pose avant le plan d'index `to`. */
+  moveClips: (ids: string[], to: number) => void;
   picking: boolean;
   pendingRegion: { media_id: string; src_t: number; region: Region } | null;
   setPicking: (p: boolean) => void;
@@ -469,6 +498,7 @@ export const useStore = create<State>((set, get) => ({
   resetLayout: () => get().setLayout(DEFAULT_LAYOUT),
   catalog: null,
   item: null,
+  selectedIds: [],
   picking: false,
   pendingRegion: null,
   setPicking: (p) => set({ picking: p, playing: p ? false : get().playing }),
@@ -602,7 +632,7 @@ export const useStore = create<State>((set, get) => ({
     set({ playhead: Math.max(0, Math.min(t, max)) });
   },
   setPlaying: (p) => set({ playing: p }),
-  select: (id) => set({ selected: id, item: id ? { kind: "clip", id } : null }),
+  select: (id) => set({ selected: id, item: id ? { kind: "clip", id } : null, selectedIds: id ? [id] : [] }),
   setZoom: (pps) => set({ pxPerSec: Math.max(4, Math.min(300, pps)) }),
   zoomFit: () => {
     const { timeline, timelineWidth } = get();
@@ -642,12 +672,13 @@ export const useStore = create<State>((set, get) => ({
     return insertPlan(newClip(mediaId, +a.toFixed(3), +b.toFixed(3)), where);
   },
   copySelection: () => {
-    const { timeline, item } = get();
+    const { timeline, item, selectedIds } = get();
     if (!timeline || !item) return false;
     if (item.kind === "clip") {
-      const c = timeline.clips.find((x) => x.id === item.id);
-      if (!c) return false;
-      set({ clipboard: { kind: "clip", clip: clone(c) } });
+      const ids = new Set(selectedIds.length ? selectedIds : [item.id]);
+      const clips = timeline.clips.filter((c) => ids.has(c.id));  // dans l'ordre du montage, pas celui des clics
+      if (!clips.length) return false;
+      set({ clipboard: { kind: "clip", clips: clone(clips) } });
       return true;
     }
     if (!isCopyKind(item.kind)) return false;
@@ -660,7 +691,8 @@ export const useStore = create<State>((set, get) => ({
     if (!get().copySelection()) return;
     const item = get().item!;
     if (item.kind === "clip") {
-      get().edit((tl) => { tl.clips = tl.clips.filter((c) => c.id !== item.id); });  // pas dans les plans écartés : c'est un déplacement
+      const ids = new Set(get().selectedIds.length ? get().selectedIds : [item.id]);
+      get().edit((tl) => { tl.clips = tl.clips.filter((c) => !ids.has(c.id)); });  // pas dans les plans écartés : c'est un déplacement
       set({ selected: null, item: null });
       get().setPlayhead(get().playhead);  // le montage a raccourci
     } else get().deleteItem(item.kind, item.id);
@@ -669,9 +701,14 @@ export const useStore = create<State>((set, get) => ({
     const { clipboard, timeline, project, playhead } = get();
     if (!timeline) return;
     if (!clipboard) return get().notify("Rien à coller : copie d'abord un plan ou un élément (Ctrl+C).");
-    const mediaId = clipboard.kind === "clip" ? clipboard.clip.media_id : (clipboard.data.media_id as string | undefined);
-    if (mediaId && !project?.media.some((m) => m.id === mediaId)) return get().notify("Le rush de cet élément n'est plus dans le projet.");
-    if (clipboard.kind === "clip") { insertPlan({ ...clone(clipboard.clip), id: uid() }, "playhead"); return; }
+    const known = (mediaId?: string) => !mediaId || !!project?.media.some((m) => m.id === mediaId);
+    if (clipboard.kind === "clip") {
+      const copies = clipboard.clips.filter((c) => known(c.media_id)).map((c) => ({ ...clone(c), id: uid() }));
+      if (!copies.length) return get().notify("Le rush de cet élément n'est plus dans le projet.");
+      insertPlans(copies, "playhead");
+      return;
+    }
+    if (!known(clipboard.data.media_id as string | undefined)) return get().notify("Le rush de cet élément n'est plus dans le projet.");
     const { type, data } = clipboard;
     const id = rid(ID_PREFIX[type]);
     const start = +playhead.toFixed(3);
@@ -689,6 +726,80 @@ export const useStore = create<State>((set, get) => ({
     });
     get().selectItem({ kind: type, id });
   },
+  toggleSelect: (id) => {
+    const { selectedIds, selected } = get();
+    if (selectedIds.includes(id)) {
+      const rest = selectedIds.filter((x) => x !== id);
+      const main = selected === id ? rest[rest.length - 1] ?? null : selected;
+      set({ selectedIds: rest, selected: main, item: main ? { kind: "clip", id: main } : null });
+    } else set({ selectedIds: [...selectedIds, id], selected: id, item: { kind: "clip", id } });
+  },
+  selectRange: (id) => {
+    const { timeline, selected } = get();
+    if (!timeline) return;
+    const b = timeline.clips.findIndex((c) => c.id === id);
+    if (b < 0) return;
+    const a = timeline.clips.findIndex((c) => c.id === selected);
+    const from = a < 0 ? b : a;
+    const ids = timeline.clips.slice(Math.min(from, b), Math.max(from, b) + 1).map((c) => c.id);
+    const main = timeline.clips[from].id;  // l'ancre reste le plan principal
+    set({ selectedIds: ids, selected: main, item: { kind: "clip", id: main } });
+  },
+  selectAllClips: () => {
+    const { timeline, selected } = get();
+    if (!timeline?.clips.length) return;
+    const ids = timeline.clips.map((c) => c.id);
+    const main = selected && ids.includes(selected) ? selected : ids[0];
+    set({ selectedIds: ids, selected: main, item: { kind: "clip", id: main } });
+  },
+  deleteSelection: () => {
+    const { item, selectedIds } = get();
+    if (!item) return;
+    if (item.kind !== "clip") return get().deleteItem(item.kind, item.id);
+    if (selectedIds.length < 2) return get().deleteClip(item.id);
+    const ids = new Set(selectedIds);
+    get().edit((tl) => {
+      const gone = tl.clips.filter((c) => ids.has(c.id));
+      tl.clips = tl.clips.filter((c) => !ids.has(c.id));
+      tl.rejected.unshift(...gone.map((c) => ({ ...c, reason: "Retiré à la main. " + c.reason })));
+    });
+    set({ selected: null, item: null });
+    get().setPlayhead(get().playhead);  // le montage a raccourci
+  },
+  duplicateSelection: () => {
+    const { timeline, item, selectedIds } = get();
+    if (!timeline || item?.kind !== "clip") return;
+    if (selectedIds.length < 2) return get().duplicateClip(item.id);
+    const ids = new Set(selectedIds);
+    const src = timeline.clips.filter((c) => ids.has(c.id));
+    if (!src.length) return;
+    const copies = src.map((c) => ({ ...clone(c), id: uid(), reason: "Copie. " + c.reason }));
+    const after = timeline.clips.findIndex((c) => c.id === src[src.length - 1].id) + 1;
+    get().edit((tl) => { tl.clips.splice(after, 0, ...copies); });
+    set({ selectedIds: copies.map((c) => c.id), selected: copies[0].id, item: { kind: "clip", id: copies[0].id } });
+  },
+  moveClips: (ids, to) => {
+    const tl = get().timeline;
+    if (!tl) return;
+    const group = new Set(ids);
+    const moving = tl.clips.filter((c) => group.has(c.id));
+    const rest = tl.clips.filter((c) => !group.has(c.id));
+    const at = tl.clips.slice(0, Math.max(0, to)).filter((c) => !group.has(c.id)).length;
+    const order = [...rest.slice(0, at), ...moving, ...rest.slice(at)].map((c) => c.id);
+    if (!moving.length || order.every((id, i) => id === tl.clips[i].id)) return;  // rien ne bouge : pas d'étape d'annulation
+    get().edit((d) => {
+      const by = new Map(d.clips.map((c) => [c.id, c] as const));
+      d.clips = order.map((id) => by.get(id)!);
+    });
+  },
+  nudgeSelection: (dir) => {
+    const { timeline, item, selectedIds } = get();
+    if (!timeline || item?.kind !== "clip") return;
+    if (selectedIds.length < 2) return get().nudgeClip(item.id, dir);
+    const idx = timeline.clips.map((c, i) => (selectedIds.includes(c.id) ? i : -1)).filter((i) => i >= 0);
+    if (!idx.length) return;
+    get().moveClips(selectedIds, dir < 0 ? idx[0] - 1 : idx[idx.length - 1] + 2);
+  },
   jumpClip: (dir) => {
     const { timeline, playhead } = get();
     if (!timeline?.clips.length) return;
@@ -702,7 +813,8 @@ export const useStore = create<State>((set, get) => ({
       idx = starts.length - 1;
       while (idx > 0 && starts[idx] >= playhead - eps) idx--;
     }
-    set({ playhead: starts[idx], selected: timeline.clips[idx].id, item: { kind: "clip", id: timeline.clips[idx].id } });
+    const id = timeline.clips[idx].id;
+    set({ playhead: starts[idx], selected: id, item: { kind: "clip", id }, selectedIds: [id] });
   },
   duplicateClip: (id) => {
     let nid = "";
@@ -712,7 +824,7 @@ export const useStore = create<State>((set, get) => ({
       nid = uid();
       tl.clips.splice(i + 1, 0, { ...clone(tl.clips[i]), id: nid, reason: "Copie. " + tl.clips[i].reason });
     });
-    if (nid) set({ selected: nid, item: { kind: "clip", id: nid } });
+    if (nid) set({ selected: nid, item: { kind: "clip", id: nid }, selectedIds: [nid] });
   },
   nudgeClip: (id, dir) => {
     const tl = get().timeline;
@@ -844,7 +956,14 @@ export const useStore = create<State>((set, get) => ({
   updateClip: (id, patch) =>
     get().edit((tl) => {
       const c = tl.clips.find((x) => x.id === id);
-      if (c) Object.assign(c, patch);
+      if (!c) return;
+      Object.assign(c, patch);
+      // Sélection multiple : les réglages communs suivent sur les autres plans sélectionnés.
+      const ids = get().selectedIds;
+      if (ids.length < 2 || !ids.includes(id)) return;
+      const shared = Object.fromEntries(Object.entries(patch).filter(([k]) => SHARED_CLIP_KEYS.has(k)));
+      if (!Object.keys(shared).length) return;
+      for (const o of tl.clips) if (o.id !== id && ids.includes(o.id)) Object.assign(o, clone(shared));
     }),
   deleteClip: (id) => {
     get().edit((tl) => {
@@ -899,7 +1018,7 @@ export const useStore = create<State>((set, get) => ({
     }),
   setTimelineProps: (patch) => get().edit((tl) => Object.assign(tl, patch)),
   markSaved: (sent) => { if (!sent || get().timeline === sent) set({ dirty: false }); },
-  selectItem: (it) => set({ item: it, selected: it?.kind === "clip" ? it.id : null }),
+  selectItem: (it) => set({ item: it, selected: it?.kind === "clip" ? it.id : null, selectedIds: it?.kind === "clip" ? [it.id] : [] }),
   addText: (patch) => {
     const id = rid("t_");
     const start = get().playhead;
@@ -996,3 +1115,17 @@ export const useStore = create<State>((set, get) => ({
     set({ item: null });
   },
 }));
+
+// La sélection multiple suit la sélection simple : `selectedIds` contient toujours `selected`, se vide avec lui,
+// et oublie les plans qui ne sont plus dans le montage (suppression, annulation, nouveau montage de l'IA).
+useStore.subscribe((s, prev) => {
+  if (s.selected === prev.selected && s.selectedIds === prev.selectedIds && s.timeline === prev.timeline) return;
+  let ids = s.selectedIds;
+  if (!s.selected) ids = [];
+  else if (!ids.includes(s.selected)) ids = [s.selected];
+  if (ids.length > 1 && s.timeline !== prev.timeline) {
+    const live = new Set(s.timeline?.clips.map((c) => c.id));
+    ids = ids.filter((id) => live.has(id) || id === s.selected);
+  }
+  if (ids.length !== s.selectedIds.length || ids.some((id, i) => id !== s.selectedIds[i])) useStore.setState({ selectedIds: ids });
+});

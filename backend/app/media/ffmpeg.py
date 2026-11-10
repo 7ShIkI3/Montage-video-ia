@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import functools
 import json
+import math
 import os
 import re
 import shutil
@@ -164,6 +165,59 @@ def decode_gray_small(src: str | Path, fps: float, width: int = 480) -> np.ndarr
 def thumbnail(src: str | Path, dst: str | Path, at: float) -> None:
     run(["-ss", f"{max(0.0, at):.3f}", "-i", str(src), "-frames:v", "1",
          "-vf", "scale=320:-2", "-q:v", "4", str(dst)])
+
+
+# Pellicule de la timeline : une seule image qui contient toutes les vignettes d'un rush, rangées en grille.
+STRIP_W, STRIP_H, STRIP_COLS, STRIP_MAX, STRIP_EVERY = 128, 72, 16, 240, 2.0
+
+
+def filmstrip_count(duration: float) -> int:
+    """Nombre de vignettes de la pellicule : une toutes les 2 s, entre 4 et 240 (un long rush espace les siennes)."""
+    return max(4, min(STRIP_MAX, math.ceil(max(0.0, duration) / STRIP_EVERY)))
+
+
+def filmstrip(src: str | Path, dst: str | Path, duration: float, count: int | None = None) -> int:
+    """Écrit la pellicule de `src` (JPEG) et renvoie son nombre de vignettes.
+
+    La vignette k (de gauche à droite, puis ligne suivante) montre l'instant (k + 0,5) × durée / nombre.
+    Un saut direct par vignette, plusieurs à la fois : sur un rush de 19 min, 4 s au lieu de 47 s en le décodant
+    en entier. Une vignette illisible reste noire ; si aucune n'est lisible, c'est une erreur.
+    """
+    import cv2
+    from concurrent.futures import ThreadPoolExecutor
+
+    n = count or filmstrip_count(duration)
+    size = STRIP_W * STRIP_H * 3
+    vf = f"scale={STRIP_W}:{STRIP_H}:force_original_aspect_ratio=increase,crop={STRIP_W}:{STRIP_H}"
+
+    def grab(k: int) -> np.ndarray | None:
+        t = (k + 0.5) * max(0.0, duration) / n
+        proc = subprocess.run(
+            [FFMPEG, "-nostdin", "-loglevel", "error", "-ss", f"{t:.3f}", "-i", str(src), "-an", "-frames:v", "1",
+             "-vf", vf, "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
+            capture_output=True,
+        )
+        if proc.returncode != 0 or len(proc.stdout) < size:
+            return None
+        return np.frombuffer(proc.stdout[:size], np.uint8).reshape(STRIP_H, STRIP_W, 3)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        frames = list(pool.map(grab, range(n)))
+    if not any(f is not None for f in frames):
+        raise FFmpegError(f"Aucune image lisible dans {Path(src).name}")
+    rows = math.ceil(n / STRIP_COLS)
+    sheet = np.zeros((rows * STRIP_H, STRIP_COLS * STRIP_W, 3), np.uint8)
+    for k, f in enumerate(frames):
+        if f is not None:
+            y, x = (k // STRIP_COLS) * STRIP_H, (k % STRIP_COLS) * STRIP_W
+            sheet[y:y + STRIP_H, x:x + STRIP_W] = f
+    ok, jpg = cv2.imencode(".jpg", sheet, [cv2.IMWRITE_JPEG_QUALITY, 78])
+    if not ok:
+        raise FFmpegError("Encodage de la pellicule impossible")
+    tmp = Path(dst).with_suffix(".tmp")
+    tmp.write_bytes(jpg.tobytes())
+    os.replace(tmp, dst)  # jamais de pellicule à moitié écrite sur le disque
+    return n
 
 
 @functools.lru_cache(maxsize=1)

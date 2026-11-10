@@ -1,8 +1,59 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { fmtTime } from "../api";
 import { clipDur, clipStarts, commentTime, localToSrc, MEDIA_DRAG_TYPE, rampOf, Sel, snapPoints, snapTo, sourceRange, timelineDuration, useStore } from "../store";
 import { AddSoundButton, VoiceOverButton } from "./AudioTools";
 import { Icon } from "../icons";
+
+/** Hauteur d'un plan sur la piste vidéo, en pixels (piste de 86 px moins les marges : voir `.track-video` et `.clip`). */
+const CLIP_H = 74;
+
+/** Pellicule d'un rush : une image qui contient toutes ses vignettes en grille (voir `media_filmstrip` côté serveur). */
+interface Strip { url: string; count: number; cols: number; tw: number; th: number }
+const stripLoads: Record<string, Promise<Strip | null>> = {};
+const stripReady: Record<string, Strip | null> = {};
+function loadStrip(pid: string, mediaId: string): Promise<Strip | null> {
+  const key = `${pid}/${mediaId}`;
+  return (stripLoads[key] ??= fetch(`/api/projects/${pid}/media/${mediaId}/filmstrip`)
+    .then(async (r): Promise<Strip | null> => {
+      if (!r.ok) return null;  // rush sans image : rien à montrer, on ne redemande pas
+      const [tw, th] = (r.headers.get("X-Strip-Tile") ?? "128x72").split("x").map(Number);
+      const count = +(r.headers.get("X-Strip-Count") ?? 0);
+      const cols = +(r.headers.get("X-Strip-Cols") ?? 16);
+      if (!count || !cols || !tw || !th) return null;
+      return { url: URL.createObjectURL(await r.blob()), count, cols, tw, th };
+    })
+    .then((st) => (stripReady[key] = st))
+    .catch(() => { delete stripLoads[key]; return null; }));  // panne réseau : on réessaiera au prochain affichage
+}
+
+/** Vignettes du rush sous un plan : chaque case montre l'image du rush à l'endroit qu'elle recouvre. */
+const Filmstrip = memo(function Filmstrip({ pid, mediaId, duration, srcIn, srcOut, width }: {
+  pid: string; mediaId: string; duration: number; srcIn: number; srcOut: number; width: number;
+}) {
+  const [strip, setStrip] = useState<Strip | null>(stripReady[`${pid}/${mediaId}`] ?? null);
+  useEffect(() => {
+    let alive = true;
+    loadStrip(pid, mediaId).then((st) => { if (alive) setStrip(st); });
+    return () => { alive = false; };
+  }, [pid, mediaId]);
+  if (!strip || duration <= 0) return null;
+  const tileW = (CLIP_H * strip.tw) / strip.th;
+  const n = Math.max(1, Math.min(80, Math.ceil(width / tileW)));
+  const step = Math.max(tileW, width / n);  // plan très large : au-delà de 80 cases, elles s'espacent
+  const rows = Math.ceil(strip.count / strip.cols);
+  const tiles = [];
+  for (let j = 0; j < n; j++) {
+    const x = j * step;
+    const t = srcIn + (Math.min(width, x + tileW / 2) / width) * (srcOut - srcIn);
+    const k = Math.max(0, Math.min(strip.count - 1, Math.floor((t / duration) * strip.count)));
+    tiles.push(<i key={j} data-k={k} style={{
+      left: x, width: tileW, height: CLIP_H, backgroundImage: `url(${strip.url})`,
+      backgroundSize: `${strip.cols * tileW}px ${rows * CLIP_H}px`,
+      backgroundPosition: `-${(k % strip.cols) * tileW}px -${Math.floor(k / strip.cols) * CLIP_H}px`,
+    }} />);
+  }
+  return <div className="strip" aria-hidden="true">{tiles}</div>;
+});
 
 type Env = { hop: number; envelope: number[] };
 const envCache: Record<string, Env | "loading"> = {};
@@ -54,12 +105,13 @@ export function TimelineView() {
   const tl = useStore((s) => s.timeline);
   const playhead = useStore((s) => s.playhead);
   const pps = useStore((s) => s.pxPerSec);
-  const selected = useStore((s) => s.selected);
+  const selectedIds = useStore((s) => s.selectedIds);
+  const thumbs = useStore((s) => s.layout.thumbs);
   const item = useStore((s) => s.item);
   const captions = useStore((s) => s.captions);
   const catalog = useStore((s) => s.catalog);
   const loopRange = useStore((s) => s.loopRange);
-  const { setPlayhead, select, moveClip, trimClip, setZoom, splitAtPlayhead, deleteClip, selectItem, deleteItem, addText } =
+  const { setPlayhead, select, moveClip, trimClip, setZoom, splitAtPlayhead, selectItem, addText } =
     useStore.getState();
   const scroller = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<number | null>(null);
@@ -163,8 +215,14 @@ export function TimelineView() {
     const perSec = (c.src_out - c.src_in) / Math.max(1e-3, clipDur(c));  // secondes de rush par seconde de montage (vitesse)
     const x0 = e.clientX;
     let first = true;
-    document.body.classList.add("slipping");
+    let moved = false;  // Maj + clic sans bouger : ce n'est pas un slip, la sélection s'étend jusqu'à ce plan
     const move = (ev: MouseEvent) => {
+      if (!moved) {
+        if (Math.abs(ev.clientX - x0) < 4) return;
+        moved = true;
+        document.body.classList.add("slipping");
+        if (useStore.getState().selectedIds.join() !== id) select(id);
+      }
       const shift = Math.max(-c.src_in, Math.min(maxT - c.src_out, -((ev.clientX - x0) / pps) * perSec));
       const src_in = +(c.src_in + shift).toFixed(3);
       const st = useStore.getState();
@@ -175,6 +233,7 @@ export function TimelineView() {
       first = false;
     };
     const up = () => {
+      if (!moved) useStore.getState().selectRange(id);
       document.body.classList.remove("slipping");
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
@@ -259,11 +318,11 @@ export function TimelineView() {
         <VoiceOverButton />
         <AddSoundButton />
         <button
-          onClick={() => item && (item.kind === "clip" ? deleteClip(item.id) : deleteItem(item.kind, item.id))}
+          onClick={() => useStore.getState().deleteSelection()}
           disabled={!item}
-          title="Supprimer (Suppr)"
+          title={selectedIds.length > 1 ? `Supprimer les ${selectedIds.length} plans sélectionnés (Suppr)` : "Supprimer (Suppr)"}
         >
-          <Icon name="trash" size={14} />Supprimer
+          <Icon name="trash" size={14} />Supprimer{selectedIds.length > 1 ? ` (${selectedIds.length})` : ""}
         </button>
         <button onClick={() => useStore.getState().addMarker()} title="Poser un repère au curseur (M) : chapitre YouTube, repère XML"><Icon name="dot" size={14} />Repère</button>
         <span className="sep" />
@@ -283,7 +342,10 @@ export function TimelineView() {
         <button className="icon-btn" onClick={() => useStore.getState().undo()} title="Annuler (Ctrl+Z)" aria-label="Annuler"><Icon name="undo" size={15} /></button>
         <button className="icon-btn" onClick={() => useStore.getState().redo()} title="Rétablir (Ctrl+Y)" aria-label="Rétablir"><Icon name="redo" size={15} /></button>
         <span className="spacer" />
+        {selectedIds.length > 1 && <span className="stat sel-count" data-testid="sel-count"><b>{selectedIds.length}</b> plans sélectionnés</span>}
         <span className="stat"><b>{tl.clips.length}</b> plans · <b>{fmtTime(total)}</b></span>
+        <button className={`icon-btn ${thumbs ? "on" : ""}`} title="Vignettes dans les plans" aria-label="Vignettes dans les plans" aria-pressed={thumbs}
+          data-testid="thumbs-toggle" onClick={() => useStore.getState().setLayout({ thumbs: !thumbs })}><Icon name="film" size={15} /></button>
         <label className="zoom">
           Zoom
           <input type="range" min={4} max={300} value={pps} onChange={(e) => setZoom(+e.target.value)} />
@@ -339,11 +401,15 @@ export function TimelineView() {
               st.insertClip(mediaId, r[0], r[1], at);
             }}>
             {tl.clips.map((c, i) => {
+              const groupDrag = drag !== null && selectedIds.length > 1 && selectedIds.includes(tl.clips[drag]?.id ?? "");
               const w = clipDur(c) * pps;
+              const md = project.media.find((x) => x.id === c.media_id);
+              const inSel = selectedIds.includes(c.id);
               return (
                 <div
                   key={c.id}
-                  className={`clip ${selected === c.id ? "sel" : ""} ${drag === i ? "dragging" : ""} ${dropAt === i ? "drop-before" : ""}`}
+                  className={`clip ${inSel ? "sel" : ""} ${drag === i || (groupDrag && inSel) ? "dragging" : ""} ${dropAt === i ? "drop-before" : ""}`}
+                  data-clip={c.id}
                   style={{ left: starts[i] * pps, width: Math.max(2, w), background: colorFor(c.media_id) }}
                   draggable
                   onDragStart={(e) => {
@@ -356,18 +422,28 @@ export function TimelineView() {
                     setDropAt(e.clientX < r.left + r.width / 2 ? i : i + 1);
                   }}
                   onDragEnd={() => {
-                    if (drag !== null && dropAt !== null && dropAt !== drag && dropAt !== drag + 1) moveClip(drag, dropAt);
+                    if (drag !== null && dropAt !== null) {
+                      // Un plan d'une sélection multiple emmène tout le groupe ; sinon il bouge seul.
+                      if (groupDrag) useStore.getState().moveClips(selectedIds, dropAt);
+                      else if (dropAt !== drag && dropAt !== drag + 1) moveClip(drag, dropAt);
+                    }
                     setDrag(null);
                     setDropAt(null);
                   }}
                   onMouseDown={(e) => {
-                    select(c.id);
-                    if (e.shiftKey) { startSlip(e, c.id); return; }
+                    if (e.ctrlKey || e.metaKey) { e.preventDefault(); useStore.getState().toggleSelect(c.id); return; }
+                    if (e.shiftKey) { startSlip(e, c.id); return; }  // glisser : slip ; simple clic : étendre la sélection
+                    // Un plan d'un groupe garde le groupe au clic enfoncé (on peut glisser le tout) ; le clic relâché le réduit.
+                    if (!(inSel && selectedIds.length > 1)) select(c.id);
                     const r = e.currentTarget.getBoundingClientRect();
                     setPlayhead(starts[i] + (e.clientX - r.left) / pps);
                   }}
-                  title={`${mediaName(c.media_id)} · ${c.src_in.toFixed(2)}–${c.src_out.toFixed(2)} s\n${c.reason}\nMaj + glisser : décaler le contenu du plan`}
+                  onClick={(e) => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey && inSel && selectedIds.length > 1) select(c.id); }}
+                  title={`${mediaName(c.media_id)} · ${c.src_in.toFixed(2)}–${c.src_out.toFixed(2)} s\n${c.reason}\nMaj + glisser : décaler le contenu du plan\nCtrl + clic : ajouter à la sélection · Maj + clic : sélectionner jusqu'ici`}
                 >
+                  {thumbs && w > 24 && md?.has_video && (
+                    <Filmstrip pid={project.id} mediaId={c.media_id} duration={md.duration} srcIn={c.src_in} srcOut={c.src_out} width={w} />
+                  )}
                   <div className="handle left" onMouseDown={(e) => startTrim(e, c.id, "in")} />
                   {c.transition !== "aucune" && i > 0 && (
                     <div className="trans-mark" title={`Transition : ${labelOf(catalog?.transitions, c.transition)}`}>⟡</div>
