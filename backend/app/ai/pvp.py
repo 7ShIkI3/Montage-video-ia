@@ -5,8 +5,10 @@
    On garde les meilleures jusqu'à la durée cible.
 2. Chaque combo devient un plan, plus un ralenti sur le coup final (velocity edit).
 3. Les durées sont calées sur la grille de temps de la musique : chaque coupe tombe sur un temps.
-4. Habillage : secousses 3D, étincelles, flashs, zoom choc sur chaque coup ; transitions 3D entre
-   les combos ; textes 3D « COMBO xN » ; bruitages ; musique au tempo (générée si aucune n'est choisie).
+4. Habillage sobre, pour que le final ressorte : une secousse sur le coup final de chaque combo et sur son
+   coup le plus fort, des coupes franches sur le temps (un seul flash, à l'entrée du meilleur combo), une seule
+   carte « COMBO xN » (le meilleur), un aperçu du meilleur combo en accroche, le pic de la musique posé sur
+   une coupe ; musique au tempo (générée si aucune n'est choisie).
 """
 from __future__ import annotations
 
@@ -23,7 +25,9 @@ from ..models import Clip, EditSettings, ImpactItem, MusicSettings, SfxItem, Tex
 from . import jury
 
 DEFAULT_BPM = 128
-TRANSITION_CYCLE = ["cube_3d", "flash", "flip_3d", "glitch", "porte_3d", "zoom_avant"]
+CUT = "flash"  # la seule transition de l'edit, à l'entrée du meilleur combo ; ailleurs, coupes franches sur le temps
+SHAKES_PER_COMBO = 2  # coup final compris
+HOLD_BEST = 0.9  # secondes gardées après le coup final du meilleur combo : le temps de le voir
 SLOW = 0.4  # vitesse du ralenti sur le coup final
 CLOSING_QUIET = 6.0  # secondes sans coup après une rafale : le combat est fini
 
@@ -190,15 +194,27 @@ def _title(title: str) -> str:
     return t.upper()[:18]
 
 
-def _plan_combo(c: dict, media_id: str, duration: float, beat: float, slow: bool = True) -> list[Clip]:
+def _music_peak(path: str | None) -> tuple[float, float] | None:
+    """(instant du pic d'énergie du morceau, sa durée), ou None pour le rythme généré ou un morceau illisible."""
+    if not path or Path(path).name.startswith("beat_pvp_"):
+        return None
+    try:
+        from . import soundsheet
+        prof = soundsheet.music_profile(path)
+    except Exception:
+        return None
+    return (prof["peak"], prof["duration"]) if prof else None
+
+
+def _plan_combo(c: dict, media_id: str, duration: float, beat: float, slow: bool = True, hold: float = 0.5) -> list[Clip]:
     """Plans d'un combo. `slow` : ralenti sur le coup final (réservé au meilleur combo et aux kills, sinon tous
-    les combos ont la même forme et plus rien ne ressort)."""
+    les combos ont la même forme et plus rien ne ressort). `hold` : secondes gardées après le coup final."""
     hits = c["hits"]
     last = hits[-1][0]
     s0 = max(0.0, hits[0][0] - 0.55)
     clips: list[Clip] = []
     if c["n"] >= 4 and slow:
-        slow_in, slow_out = max(s0 + 0.4, last - 0.3), min(duration, last + 0.5)
+        slow_in, slow_out = max(s0 + 0.4, last - 0.3), min(duration, last + hold)
         main = Clip(media_id=media_id, src_in=round(s0, 3), src_out=round(slow_in, 3), score=c["score"],
                     reason=f"Combo de {c['n']} coups.")
         slow = Clip(media_id=media_id, src_in=round(slow_in, 3), src_out=round(slow_out, 3), speed=SLOW,
@@ -283,16 +299,27 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
 
     clips: list[Clip] = []
     groups: list[tuple[str, dict, list[Clip]]] = []
-    for k, (mid, c) in enumerate(chosen):
-        part = _plan_combo(c, mid, durations.get(mid, c["end"] + 2), beat, slow=(mid, c) == best or _kill(mid, c))
+    # Accroche : une seconde du coup final du meilleur combo, en aperçu, avant de dérouler l'edit.
+    teaser: Clip | None = None
+    if len(chosen) >= 3:
+        last = best[1]["hits"][-1][0]
+        d = max(3, round(1.2 / beat)) * beat  # un nombre entier de temps, comme les combos
+        a = max(0.0, min(last - 0.75 * d, durations.get(best[0], last + 1) - d))
+        teaser = Clip(media_id=best[0], src_in=round(a, 3), src_out=round(a + d, 3), score=best[1]["score"],
+                      reason="Aperçu du meilleur combo, en accroche.")
+        clips.append(teaser)
+    for mid, c in chosen:
+        is_best = (mid, c) == best
+        part = _plan_combo(c, mid, durations.get(mid, c["end"] + 2), beat, slow=is_best or _kill(mid, c),
+                           hold=HOLD_BEST if is_best else 0.5)
         v = verdicts.get((mid, jury.key(c)))
         if v:
             part[0].reason += f" Jury IA : {jury.label(v).rstrip('.')}."
         elif verdicts:
             part[0].reason += " Pas regardé par le jury IA."
-        if k > 0:
-            part[0].transition = TRANSITION_CYCLE[(k - 1) % len(TRANSITION_CYCLE)]
-            part[0].transition_duration = round(min(0.55, beat), 3)
+        if clips and is_best:  # une transition à chaque raccord annonce chaque coupe : on la garde pour le final
+            part[0].transition = CUT
+            part[0].transition_duration = round(min(0.3, beat), 3)
         clips += part
         groups.append((mid, c, part))
     clips[0].effects = ["3d_bascule"]
@@ -309,70 +336,86 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
     impacts: list[ImpactItem] = []
     texts: list[TextItem] = []
     sfx: list[SfxItem] = []
-    for gi, (mid, c, part) in enumerate(groups):
+    quiet: tuple[float, float] | None = None  # respiration avant le final : aucun effet dans cette fenêtre
+    for mid, c, part in groups:
         n = c["n"]
-        # Le grand final (flash, onde, zoom, boom) est réservé au meilleur combo et aux kills : posé sur chaque
-        # combo, il fait de l'edit une suite de boucles identiques où plus rien ne ressort.
-        big = (mid, c) == best or _kill(mid, c)
-        for hi, (ht, strength) in enumerate(c["hits"]):
-            tt = _to_timeline_time(clips, starts, mid, ht)
+        is_best = (mid, c) == best
+        # Le grand final (flash, onde, zoom, boom) est réservé au meilleur combo et aux kills.
+        big = is_best or _kill(mid, c)
+        # Secousses : le coup final, plus les coups les plus forts du combo s'ils en sont loin. Le reste se regarde
+        # sans effet : une secousse sur chaque coup rend l'image illisible et l'effet ne veut plus rien dire.
+        keep = {n - 1}
+        for i in sorted(range(n - 1), key=lambda i: -c["hits"][i][1]):
+            if len(keep) >= SHAKES_PER_COMBO:
+                break
+            if all(abs(c["hits"][i][0] - c["hits"][j][0]) >= 1.2 for j in keep):
+                keep.add(i)
+        for hi in sorted(keep):
+            ht, strength = c["hits"][hi][0], c["hits"][hi][1]
+            tt = _to_timeline_time(clips[1:] if teaser else clips, starts[1:] if teaser else starts, mid, ht)
             if tt is None:
                 continue
             final = hi == n - 1
-            # Secousse douce sur chaque coup, franche sur le coup final seulement.
-            A = round(0.35 + 0.5 * strength, 2)
-            impacts.append(ImpactItem(start=round(tt, 3), kind="secousse", intensity=(1.6 if big else 1.1) if final else A,
+            impacts.append(ImpactItem(start=round(tt, 3), kind="secousse",
+                                      intensity=(1.6 if big else 1.0) if final else round(0.4 + 0.4 * strength, 2),
                                       reason="Coup détecté dans le son."))
-            if strength > 0.9 or final:
-                impacts.append(ImpactItem(start=round(tt, 3), kind="etincelles", intensity=(1.6 if big else 1.0) if final else A,
-                                          x=0.5, y=0.47))
+            if final and big:
+                impacts.append(ImpactItem(start=round(tt, 3), kind="etincelles", intensity=1.6, x=0.5, y=0.47))
             if final and big:
                 impacts += [ImpactItem(start=round(tt, 3), kind="flash", intensity=1.0),
                             ImpactItem(start=round(tt, 3), kind="onde", intensity=1.0, x=0.5, y=0.5),
                             ImpactItem(start=round(tt, 3), kind="zoom", intensity=1.2)]
                 sfx.append(SfxItem(start=round(tt, 3), kind="boom", volume=0.7))
-            elif final:
-                impacts.append(ImpactItem(start=round(tt, 3), kind="zoom", intensity=0.8))
-            elif hi % 3 == 2:
-                impacts.append(ImpactItem(start=round(tt, 3), kind="zoom", intensity=0.6))
-        if len(part) > 1:
-            k0 = clips.index(part[1])
-            texts.append(TextItem(start=round(starts[k0], 3), duration=round(min(2.2, part[1].duration), 3),
-                                  text=f"COMBO x{n}", style="texte_3d", position="haut"))
-        elif n >= 6:  # combo sans ralenti : le compteur arrive sur ses derniers coups
-            k0 = clips.index(part[0])
-            d = min(1.4, part[0].duration * 0.5)
-            texts.append(TextItem(start=round(starts[k0] + part[0].duration - d, 3), duration=round(d, 3),
-                                  text=f"COMBO x{n}", style="texte_3d", position="haut"))
-        if (mid, c) == best and len(part) > 1:
-            k1 = clips.index(part[-1])
-            texts.append(TextItem(start=round(starts[k1] + part[-1].duration * 0.55, 3),
-                                  duration=round(max(0.8, part[-1].duration * 0.45), 3),
-                                  text="ÉPIQUE !", style="texte_3d", position="centre"))
         k = clips.index(part[0])
-        if k > 0:
-            sfx.append(SfxItem(start=round(max(0.0, starts[k] - 0.25), 3), kind="whoosh", volume=0.5))
-    # Pulsation au rythme : petit zoom sur chaque début de mesure loin des coups.
-    hit_times = sorted(i.start for i in impacts)
-    bar = 4 * beat
-    b = 0.0  # la musique démarre sur un temps (voir `skip`)
-    while b < total:
-        j = int(np.searchsorted(hit_times, b))
-        near = any(abs(b - hit_times[x]) < 0.3 for x in (j - 1, j) if 0 <= x < len(hit_times))
-        if not near and b > 0.5:
-            impacts.append(ImpactItem(start=round(b, 3), kind="zoom", intensity=0.35, reason="Temps fort de la musique."))
-        b += bar
+        if is_best:
+            if len(part) > 1:  # une seule carte dans l'edit : le compteur du meilleur combo, sur son ralenti
+                k0 = clips.index(part[1])
+                quiet = (starts[k0] - 0.8, starts[k0])
+                # La carte arrive sur les derniers coups du combo, avant le ralenti : on voit ce qu'elle compte.
+                at = max(starts[k] + 0.2, starts[k0] - 1.2)
+                texts.append(TextItem(start=round(at, 3), duration=round(max(0.6, min(3.2, total - at - 0.3)), 3),
+                                      text=f"COMBO x{n}", style="texte_3d", position="haut"))
+            if k > 0:
+                sfx.append(SfxItem(start=round(max(0.0, starts[k] - 0.25), 3), kind="whoosh", volume=0.5))
+        elif _kill(mid, c):
+            tt = _to_timeline_time(clips[1:] if teaser else clips, starts[1:] if teaser else starts, mid, c["hits"][-1][0])
+            if tt is not None:
+                texts.append(TextItem(start=round(tt, 3), duration=round(max(0.6, min(1.2, total - tt - 0.2)), 3),
+                                      text="KILL", style="texte_3d", position="haut"))
+    if quiet:
+        impacts = [i for i in impacts if not quiet[0] <= i.start < quiet[1] - 0.01]
+    # Pas de zoom « au rythme » entre les coups : un effet qui ne tombe sur aucun son se remarque comme un défaut.
     impacts.sort(key=lambda i: i.start)
+    # Le pic de la musique (son « drop ») tombe sur une coupe : le début du dernier combo qu'il peut atteindre.
+    peak_note = ""
+    pk = _music_peak(music_path)
+    if pk:
+        peak = first_beat + round((pk[0] - first_beat) / beat) * beat  # sur la grille de temps du montage
+        cuts = [starts[clips.index(part[0])] for _, _, part in groups]
+        reach = [x for x in cuts if peak - x >= skip - 1e-6]
+        if reach:
+            start = skip + max(0, round((peak - max(reach) - skip) / beat)) * beat
+            if pk[1] - start >= total:  # il reste assez de morceau pour tout l'edit
+                tl.music.start = round(start, 3)
+                at = max(reach)
+                peak_note = f" Pic de la musique posé sur la coupe à {int(at // 60)}:{at % 60:04.1f}."
     title_txt = _title(title)
-    texts.insert(0, TextItem(start=0.15, duration=min(1.8, clips[0].duration), text=title_txt, style="texte_3d",
-                             position="centre"))
+    if teaser:
+        # L'aperçu parle de lui-même : annoncer le compte dès l'ouverture dévoilerait le final. Seul un vrai titre
+        # de projet s'y affiche, le temps du plan.
+        if title_txt != "HIGHLIGHTS PVP":
+            texts.insert(0, TextItem(start=0.1, duration=round(max(0.6, teaser.duration - 0.2), 3), text=title_txt,
+                                     style="texte_3d", position="centre"))
+    else:
+        texts.insert(0, TextItem(start=0.15, duration=min(1.8, clips[0].duration), text=title_txt, style="texte_3d",
+                                 position="centre"))
     tl.impacts = impacts
     tl.texts = texts
     tl.sfx = sfx
     tl.look = "vif"
     tl.title = title_txt
     tl.summary = (f"Edit PvP : {len(groups)} combos sur {len(all_combos)} rafales, {sum(c['n'] for _, c, _ in groups)} coups "
-                  f"synchronisés, coupes calées sur le tempo ({bpm:.0f} BPM), durée {int(total // 60)}:{total % 60:04.1f}.")
+                  f"synchronisés, coupes calées sur le tempo ({bpm:.0f} BPM), durée {int(total // 60)}:{total % 60:04.1f}.{peak_note}")
     seen = [v for (m, k), v in verdicts.items() if any(m == mid and k == jury.key(c) for mid, c in all_combos)]
     if seen:
         mine = sum(v["verdict"] == "joueur_domine" for v in seen)

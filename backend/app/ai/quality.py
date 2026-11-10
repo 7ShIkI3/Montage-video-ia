@@ -93,7 +93,8 @@ def plan_checks(tl: Timeline, transcripts: dict[str, Transcript], settings: Edit
 
     # 3. Plans longs sans mouvement.
     limit = LONG_SHOT.get(settings.style, 12.0)
-    for c, t0 in zip(tl.clips, starts):
+    # Un edit PvP est du jeu filmé à la première personne : la caméra bouge sans arrêt, aucun plan n'y est « fixe ».
+    for c, t0 in ([] if tl.director == "pvp" else zip(tl.clips, starts)):
         static = c.zoom <= 1.01 and not c.keyframes and not any(e in c.effects for e in ("zoom_lent", "pulsation", "3d_flottant"))
         covered = any(o.start < t0 + c.duration and o.start + o.duration > t0 for o in tl.overlays)
         if c.duration > limit and static and not covered:
@@ -255,7 +256,9 @@ def apply_fixes(tl: Timeline, report: QualityReport, transcripts: dict[str, Tran
                 x.text = _shorten(x.text, mx)
                 done.append(f"texte raccourci : « {x.text} »")
             else:
-                x.duration = round(0.6 + 0.28 * len(x.text.split()) + 0.2, 2)
+                want = round(0.6 + 0.28 * len(x.text.split()) + 0.2, 2)
+                room = round(tl.duration - x.start - 0.15, 2)  # jamais au-delà de la fin de la vidéo : il serait coupé
+                x.duration = min(want, max(x.duration, room))
                 done.append(f"texte « {x.text[:24]} » affiché plus longtemps")
         elif f == "flashs":
             kept, last = [], -9.0
