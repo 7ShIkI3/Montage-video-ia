@@ -41,7 +41,27 @@ export interface Clip {
   masks: Mask[];
   speed_end?: number | null;
   keyframes?: Keyframe[];
+  /** Correction colorimétrique du plan (null = aucune). */
+  color?: ColorAdjust | null;
 }
+
+/** Correction colorimétrique d'un plan : -1..1, 0 partout = image d'origine. */
+export interface ColorAdjust {
+  exposure: number;
+  contrast: number;
+  saturation: number;
+  /** Du froid (-1) au chaud (1). */
+  temperature: number;
+}
+
+export type MixGroup = "rushes" | "music" | "sfx" | "tracks";
+export interface MixChannel {
+  /** 0..2, 1 = inchangé. */
+  volume: number;
+  mute: boolean;
+}
+/** Mixeur audio : un volume et une coupure par groupe (rushes = son des plans, tracks = pistes audio). */
+export type Mixer = Record<MixGroup, MixChannel>;
 
 export interface Keyframe {
   t: number;
@@ -300,6 +320,17 @@ export interface Timeline {
   markers?: Marker[];
   /** Zone d'entrée/sortie (I/O sans sélection) : boucle, export de la zone seule. */
   range?: { start: number; end: number } | null;
+  /** Mixeur audio (volumes et coupures par groupe de sons). */
+  mix?: Mixer;
+}
+
+/** Sauvegarde automatique du projet (voir /api/projects/{id}/backups). */
+export interface Backup {
+  name: string;
+  /** Date de la sauvegarde (secondes Unix). */
+  at: number;
+  clips: number;
+  duration: number;
 }
 
 export interface EditSettings {
@@ -714,6 +745,9 @@ export const api = {
   thumbUrl: (id: string, mid: string) => `/api/projects/${id}/media/${mid}/thumb`,
   musicUrl: (id: string, v: string) => `/api/projects/${id}/music/current?v=${encodeURIComponent(v)}`,
   exportUrl: (id: string, name: string) => `/api/projects/${id}/exports/${encodeURIComponent(name)}`,
+  backups: (id: string) => req<Backup[]>(`/api/projects/${id}/backups`),
+  restoreBackup: (id: string, name: string) =>
+    req<Project>(`/api/projects/${id}/backups/${encodeURIComponent(name)}/restore`, { method: "POST" }),
 };
 
 export async function waitJob(job: Job, onUpdate: (j: Job) => void): Promise<Job> {

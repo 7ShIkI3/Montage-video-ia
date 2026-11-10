@@ -899,3 +899,17 @@ body.slipping, body.slipping * { cursor: ew-resize !important; user-select: none
 .sm-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
 .sm-actions .kbd { margin-left: 2px; }
 .sm-done { margin-left: auto; }
+/* ---------- Couleur, mixage, sauvegardes ---------- */
+.color-section .fx-title, .backups .fx-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-transform: uppercase; }
+.color-section .fx-title .small-btn, .backups .fx-title .small-btn { text-transform: none; letter-spacing: 0; }
+.mixer-row { display: grid; grid-template-columns: 86px minmax(0, 1fr) 42px auto; align-items: center; gap: 8px; font-size: 12px; }
+.mixer-row.muted-row .mixer-name, .mixer-row.muted-row .mixer-val { color: var(--muted); text-decoration: line-through; }
+.mixer-row.muted-row input[type=range] { opacity: 0.45; }
+.mixer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mixer-val { text-align: right; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.mixer-row .mute-btn { gap: 4px; min-width: 62px; justify-content: center; }
+.mixer-row .mute-btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-2); }
+.backup-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.backup-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12px; }
+.backup-list .backup-when { font-variant-numeric: tabular-nums; }
+.backup-list small { flex: 1; min-width: 0; }

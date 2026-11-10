@@ -218,6 +218,24 @@ def delete_project(pid: str):
     return {"ok": True}
 
 
+@app.get("/api/projects/{pid}/backups")
+def list_backups(pid: str):
+    _project(pid)
+    return storage.list_backups(pid)
+
+
+@app.post("/api/projects/{pid}/backups/{name}/restore")
+def restore_backup(pid: str, name: str):
+    """Remet une sauvegarde automatique en place (l'état courant est gardé comme sauvegarde avant)."""
+    _project(pid)
+    try:
+        return storage.restore_backup(pid, name)
+    except ValueError:
+        raise HTTPException(400, "Nom de sauvegarde invalide")
+    except FileNotFoundError:
+        raise HTTPException(404, "Sauvegarde introuvable")
+
+
 # --- Médias -------------------------------------------------------------------
 
 @app.post("/api/projects/{pid}/media")
