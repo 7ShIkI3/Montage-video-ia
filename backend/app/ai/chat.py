@@ -164,7 +164,8 @@ TOOLS: list[dict] = [
           "Modifie un plan du montage actuel, désigné par son numéro dans le dossier : nouveau début ou nouvelle fin "
           "(secondes dans le rush), vitesse, correction des couleurs, ou suppression. À appeler pour une retouche "
           "ciblée, par exemple un plan trop sombre ou trop terne que tu viens de regarder. Couleur : chaque valeur va "
-          "de -1 à 1, 0 = image d'origine (exposition : plus clair ou plus sombre ; température : -1 froid, 1 chaud).",
+          "de -1 à 1, 0 = image d'origine (exposition : plus clair ou plus sombre ; température : -1 froid, 1 chaud). "
+          "La correction donnée REMPLACE celle du plan (elle ne s'y ajoute pas) : redonne les quatre valeurs voulues.",
           {"numero": {"type": "integer"}, "debut": {"type": "number"}, "fin": {"type": "number"},
            "vitesse": {"type": "number"}, "supprimer": {"type": "boolean"},
            "couleur": {"type": "object", "properties": {
