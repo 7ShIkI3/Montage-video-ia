@@ -49,3 +49,34 @@ def test_filmstrip_route_builds_grid_once(rush, monkeypatch):
 def test_filmstrip_unknown_media_is_404():
     pid = client.post("/api/projects", json={"name": "Vide"}).json()["id"]
     assert client.get(f"/api/projects/{pid}/media/m_absent/filmstrip").status_code == 404
+
+
+def test_filmstrip_survives_stuck_ffmpeg(rush, tmp_path, monkeypatch):
+    """Un FFmpeg qui ne répond pas ne bloque pas la fabrication : la vignette reste noire, les autres sont là."""
+    import subprocess
+    real, calls = subprocess.run, []
+
+    def run(cmd, **kw):
+        calls.append(kw.get("timeout"))
+        if len(calls) == 2:
+            raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+        return real(cmd, **kw)
+
+    monkeypatch.setattr(ffmpeg.subprocess, "run", run)
+    out = tmp_path / "strip.jpg"
+    assert ffmpeg.filmstrip(rush, out, 24.0) == 12
+    assert all(t == ffmpeg.STRIP_TIMEOUT for t in calls), "chaque saut a un délai maximum"
+    sheet = cv2.imdecode(np.frombuffer(out.read_bytes(), np.uint8), cv2.IMREAD_COLOR)
+    dark = [k for k in range(12) if sheet[:, k * ffmpeg.STRIP_W:(k + 1) * ffmpeg.STRIP_W].mean() < 8]
+    assert len(dark) == 1, "une seule vignette manque"
+
+
+def test_filmstrip_missing_file_is_retryable(rush):
+    pid = client.post("/api/projects", json={"name": "Rush absent"}).json()["id"]
+    with rush.open("rb") as f:
+        client.post(f"/api/projects/{pid}/media", files=[("files", ("rush.mp4", f, "video/mp4"))])
+    p = storage.load_project(pid)
+    m = p.media[-1]
+    m.path, m.proxy = str(storage.cache_dir(pid) / "parti.mp4"), None
+    storage.save_project(p)
+    assert client.get(f"/api/projects/{pid}/media/{m.id}/filmstrip").status_code == 503

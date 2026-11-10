@@ -169,6 +169,7 @@ def thumbnail(src: str | Path, dst: str | Path, at: float) -> None:
 
 # Pellicule de la timeline : une seule image qui contient toutes les vignettes d'un rush, rangées en grille.
 STRIP_W, STRIP_H, STRIP_COLS, STRIP_MAX, STRIP_EVERY = 128, 72, 16, 240, 2.0
+STRIP_TIMEOUT = 30.0  # secondes par vignette : un FFmpeg bloqué ne retient pas la fabrication des pellicules suivantes
 
 
 def filmstrip_count(duration: float) -> int:
@@ -192,11 +193,14 @@ def filmstrip(src: str | Path, dst: str | Path, duration: float, count: int | No
 
     def grab(k: int) -> np.ndarray | None:
         t = (k + 0.5) * max(0.0, duration) / n
-        proc = subprocess.run(
-            [FFMPEG, "-nostdin", "-loglevel", "error", "-ss", f"{t:.3f}", "-i", str(src), "-an", "-frames:v", "1",
-             "-vf", vf, "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
-            capture_output=True,
-        )
+        try:
+            proc = subprocess.run(
+                [FFMPEG, "-nostdin", "-loglevel", "error", "-ss", f"{t:.3f}", "-i", str(src), "-an", "-frames:v", "1",
+                 "-vf", vf, "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
+                capture_output=True, timeout=STRIP_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:  # disque qui décroche, fichier abîmé : la vignette reste noire
+            return None
         if proc.returncode != 0 or len(proc.stdout) < size:
             return None
         return np.frombuffer(proc.stdout[:size], np.uint8).reshape(STRIP_H, STRIP_W, 3)

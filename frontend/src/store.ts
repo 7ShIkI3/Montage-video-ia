@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, ApiError, CaptionLine, Clip, AudioItem, Comment, EffectsCatalog, Health, ImageItem, ImpactItem, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript, waitJob } from "./api";
+import { api, ApiError, CaptionLine, Clip, ColorAdjust, AudioItem, Comment, EffectsCatalog, Health, ImageItem, ImpactItem, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript, waitJob } from "./api";
 
 const uid = () => "c_" + Math.random().toString(36).slice(2, 12);
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
@@ -216,6 +216,33 @@ const insertPlan = (clip: Clip, where: "playhead" | "end" | number) => insertPla
 const SHARED_CLIP_KEYS: ReadonlySet<string> = new Set([
   "zoom", "volume", "speed", "speed_end", "fade_in", "fade_out", "transition", "transition_duration", "effects", "audio_effects", "color",
 ]);
+/** Fonds de détourage : un seul à la fois sur un plan. */
+export const CUTOUTS = ["detourage_flou", "detourage_studio", "detourage_noir", "detourage_blanc", "detourage_image"];
+const NEUTRAL_COLOR: ColorAdjust = { exposure: 0, contrast: 0, saturation: 0, temperature: 0 };
+
+/** Reporte sur un autre plan sélectionné ce que le réglage vient de changer sur le plan principal, et rien d'autre :
+ *  l'effet coché ou décoché (pas la liste entière), le curseur de couleur déplacé (pas les trois autres).
+ *  `before` et `after` sont le plan principal avant et après le réglage `patch`. */
+export function spreadClipPatch(before: Clip, after: Clip, patch: Partial<Clip>, other: Clip): void {
+  for (const k of Object.keys(patch) as (keyof Clip)[]) {
+    if (!SHARED_CLIP_KEYS.has(k)) continue;
+    if (k === "effects" || k === "audio_effects") {
+      const was = before[k] ?? [];
+      const now = after[k] ?? [];
+      const added = now.filter((x) => !was.includes(x));
+      const removed = was.filter((x) => !now.includes(x));
+      let list = (other[k] ?? []).filter((x) => !removed.includes(x) && !added.includes(x));
+      if (k === "effects" && added.some((x) => CUTOUTS.includes(x))) list = list.filter((x) => !CUTOUTS.includes(x));
+      other[k] = [...list, ...added];
+    } else if (k === "color") {
+      if (!after.color) { other.color = null; continue; }  // « Réinitialiser » vaut pour tous
+      const was = before.color ?? NEUTRAL_COLOR;
+      const now = after.color;
+      const moved = (Object.keys(NEUTRAL_COLOR) as (keyof ColorAdjust)[]).filter((c) => now[c] !== was[c]);
+      if (moved.length) other.color = { ...NEUTRAL_COLOR, ...(other.color ?? {}), ...Object.fromEntries(moved.map((c) => [c, now[c]])) };
+    } else (other as unknown as Record<string, unknown>)[k] = clone(after[k]);
+  }
+}
 
 /** Type de données du glisser-déposer d'un rush du chutier (distinct de celui qui réordonne les plans). */
 export const MEDIA_DRAG_TYPE = "application/x-monteur-media";
@@ -957,13 +984,12 @@ export const useStore = create<State>((set, get) => ({
     get().edit((tl) => {
       const c = tl.clips.find((x) => x.id === id);
       if (!c) return;
+      const before = clone(c);
       Object.assign(c, patch);
-      // Sélection multiple : les réglages communs suivent sur les autres plans sélectionnés.
+      // Sélection multiple : ce qui vient de changer suit sur les autres plans sélectionnés, sans écraser leurs réglages propres.
       const ids = get().selectedIds;
       if (ids.length < 2 || !ids.includes(id)) return;
-      const shared = Object.fromEntries(Object.entries(patch).filter(([k]) => SHARED_CLIP_KEYS.has(k)));
-      if (!Object.keys(shared).length) return;
-      for (const o of tl.clips) if (o.id !== id && ids.includes(o.id)) Object.assign(o, clone(shared));
+      for (const o of tl.clips) if (o.id !== id && ids.includes(o.id)) spreadClipPatch(before, c, patch, o);
     }),
   deleteClip: (id) => {
     get().edit((tl) => {

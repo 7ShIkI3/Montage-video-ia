@@ -11,19 +11,38 @@ const CLIP_H = 74;
 interface Strip { url: string; count: number; cols: number; tw: number; th: number }
 const stripLoads: Record<string, Promise<Strip | null>> = {};
 const stripReady: Record<string, Strip | null> = {};
+let stripQueue: Promise<unknown> = Promise.resolve();
+/** Une pellicule à la fois : le serveur les fabrique une par une, et des requêtes en attente occuperaient
+ *  les connexions du navigateur dont la lecture et la sauvegarde ont besoin. */
 function loadStrip(pid: string, mediaId: string): Promise<Strip | null> {
   const key = `${pid}/${mediaId}`;
-  return (stripLoads[key] ??= fetch(`/api/projects/${pid}/media/${mediaId}/filmstrip`)
-    .then(async (r): Promise<Strip | null> => {
-      if (!r.ok) return null;  // rush sans image : rien à montrer, on ne redemande pas
+  if (!stripLoads[key]) {
+    const load = stripQueue.then(async (): Promise<Strip | null> => {
+      const r = await fetch(`/api/projects/${pid}/media/${mediaId}/filmstrip`);
+      if (r.status === 404) return null;  // rush sans image : rien à montrer, on ne redemande pas
+      if (!r.ok) throw new Error(`pellicule ${r.status}`);
       const [tw, th] = (r.headers.get("X-Strip-Tile") ?? "128x72").split("x").map(Number);
       const count = +(r.headers.get("X-Strip-Count") ?? 0);
       const cols = +(r.headers.get("X-Strip-Cols") ?? 16);
       if (!count || !cols || !tw || !th) return null;
       return { url: URL.createObjectURL(await r.blob()), count, cols, tw, th };
-    })
-    .then((st) => (stripReady[key] = st))
-    .catch(() => { delete stripLoads[key]; return null; }));  // panne réseau : on réessaiera au prochain affichage
+    });
+    stripQueue = load.catch(() => undefined);
+    stripLoads[key] = load
+      .then((st) => (stripLoads[key] === wrapped ? (stripReady[key] = st) : st))
+      .catch(() => { if (stripLoads[key] === wrapped) delete stripLoads[key]; return null; });  // panne ou rush absent : on réessaiera
+    const wrapped = stripLoads[key];
+  }
+  return stripLoads[key];
+}
+/** Oublie les pellicules chargées et libère leurs images (changement de projet, sortie de l'éditeur). */
+function dropStrips(): void {
+  for (const key of Object.keys(stripLoads)) delete stripLoads[key];
+  for (const key of Object.keys(stripReady)) {
+    const st = stripReady[key];
+    if (st) URL.revokeObjectURL(st.url);
+    delete stripReady[key];
+  }
 }
 
 /** Vignettes du rush sous un plan : chaque case montre l'image du rush à l'endroit qu'elle recouvre. */
@@ -114,6 +133,8 @@ export function TimelineView() {
   const { setPlayhead, select, moveClip, trimClip, setZoom, splitAtPlayhead, selectItem, addText } =
     useStore.getState();
   const scroller = useRef<HTMLDivElement>(null);
+  const projectId = project?.id;
+  useEffect(() => dropStrips, [projectId]);  // les pellicules d'un projet ne restent pas en mémoire après lui
   const [drag, setDrag] = useState<number | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
   const [snapAt, setSnapAt] = useState<number | null>(null);
@@ -444,7 +465,7 @@ export function TimelineView() {
                   {thumbs && w > 24 && md?.has_video && (
                     <Filmstrip pid={project.id} mediaId={c.media_id} duration={md.duration} srcIn={c.src_in} srcOut={c.src_out} width={w} />
                   )}
-                  <div className="handle left" onMouseDown={(e) => startTrim(e, c.id, "in")} />
+                  <div className="handle left" onMouseDown={(e) => startTrim(e, c.id, "in")} onClick={(e) => e.stopPropagation()} />
                   {c.transition !== "aucune" && i > 0 && (
                     <div className="trans-mark" title={`Transition : ${labelOf(catalog?.transitions, c.transition)}`}>⟡</div>
                   )}
@@ -466,7 +487,7 @@ export function TimelineView() {
                   {(c.fade_in ?? 0) > 0 && <div className="fade fade-in" title={`Fondu d'entrée ${c.fade_in} s`} style={{ width: Math.min(w, (c.fade_in ?? 0) * pps) }} />}
                   {(c.fade_out ?? 0) > 0 && <div className="fade fade-out" title={`Fondu de sortie ${c.fade_out} s`} style={{ width: Math.min(w, (c.fade_out ?? 0) * pps) }} />}
                   <div className="score" style={{ width: `${Math.round(c.score * 100)}%` }} />
-                  <div className="handle right" onMouseDown={(e) => startTrim(e, c.id, "out")} />
+                  <div className="handle right" onMouseDown={(e) => startTrim(e, c.id, "out")} onClick={(e) => e.stopPropagation()} />
                 </div>
               );
             })}

@@ -327,12 +327,13 @@ def media_filmstrip(pid: str, mid: str):
         with _STRIP_LOCK:
             if not path.exists():  # une autre requête vient peut-être de la fabriquer
                 src = m.proxy if m.proxy and Path(m.proxy).exists() else m.path
+                # 503 et non 404 : l'interface réessaiera (disque rebranché), alors qu'un 404 est définitif.
                 if not Path(src).exists():
-                    raise HTTPException(404, "Fichier du rush introuvable")
+                    raise HTTPException(503, "Fichier du rush introuvable pour l'instant")
                 try:
                     ffmpeg.filmstrip(src, path, m.duration, n)
                 except ffmpeg.FFmpegError as e:
-                    raise HTTPException(500, f"Vignettes impossibles : {e}")
+                    raise HTTPException(503, f"Vignettes impossibles : {e}")
     return FileResponse(path, media_type="image/jpeg", headers={
         "X-Strip-Count": str(n), "X-Strip-Cols": str(ffmpeg.STRIP_COLS),
         "X-Strip-Tile": f"{ffmpeg.STRIP_W}x{ffmpeg.STRIP_H}", "Cache-Control": "private, max-age=86400",
