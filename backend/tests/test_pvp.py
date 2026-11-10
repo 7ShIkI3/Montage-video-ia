@@ -115,7 +115,8 @@ def test_pvp_edit_and_3d_export(tmp_path):
     tl = c.get(f"/api/projects/{pid}").json()["timeline"]
     assert tl["director"] == "pvp" and len(tl["clips"]) >= 3
     assert any(x["speed"] < 1 for x in tl["clips"]), "ralenti sur le coup final"
-    assert sum(i["kind"] == "secousse" for i in tl["impacts"]) >= len(COMBO_A + COMBO_B) - 1
+    shakes = sum(i["kind"] == "secousse" for i in tl["impacts"])
+    assert 2 <= shakes <= 2 * pvp.SHAKES_PER_COMBO, "une secousse par coup final, quelques coups forts, pas chaque coup"
     assert any(t["style"] == "texte_3d" for t in tl["texts"])
     assert any(x["transition"] in TRANSITIONS_3D or x["transition"] != "aucune" for x in tl["clips"][1:])
     # chaque coupe entre combos tombe sur un temps de la musique
@@ -285,27 +286,90 @@ def test_pvp_brief_is_about_combos_not_speech():
     assert by == "local" and "combos" in b["objectif"] and "menu" in b["promesse"]
 
 
-def test_best_combo_closes_the_edit_and_only_it_is_slowed():
+def _four_combos():
     from app.ai import jury
-    from app.models import EditSettings
     m = _M()
     h = _train(20, 8) + _train(60, 8) + _train(100, 8) + _train(140, 8)
     cands = pvp.candidates([m], {"m1": h})
     notes = [6, 9, 7, 8]  # meilleur : 60 s ; deuxième : 140 s
     verdicts = {("m1", jury.key(c)): {"verdict": "joueur_domine", "fin": "rien", "note": n, "raison": "", "n": 8}
                 for (_, c), n in zip(cands, notes)}
+    return m, h, cands, verdicts
+
+
+def test_edit_opens_on_a_teaser_and_closes_on_the_best_combo():
+    from app.ai import jury
+    from app.models import EditSettings
+    m, h, cands, verdicts = _four_combos()
     tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=60), "2026-11-07 14-50-54", verdicts=verdicts)
-    starts = [round(c.src_in) for c in tl.clips if c.speed == 1]
-    assert starts[0] in range(137, 141), "le deuxième meilleur combo ouvre"
-    assert starts[-1] in range(57, 61), "le meilleur ferme"
+    teaser = tl.clips[0]
+    assert 60 <= teaser.src_in and teaser.src_out <= 64.5 and teaser.duration < 2, "aperçu du coup final du meilleur combo"
+    beat = 60 / pvp.DEFAULT_BPM
+    assert abs(teaser.duration / beat - round(teaser.duration / beat)) < 0.02, "l'aperçu dure un nombre entier de temps"
+    normal = [round(c.src_in) for c in tl.clips[1:] if c.speed == 1]
+    assert normal[0] in range(137, 141), "le deuxième meilleur combo suit l'aperçu"
+    assert normal[-1] in range(57, 61), "le meilleur ferme"
     assert sum(c.speed < 1 for c in tl.clips) == 1 and tl.clips[-1].speed < 1, "un seul ralenti, sur le coup final du meilleur"
-    assert tl.texts[0].text == "HIGHLIGHTS PVP", "un nom de fichier n'est pas un titre"
-    assert [t.text for t in tl.texts].count("COMBO x8") == 4
+    assert tl.clips[-1].duration >= 2.8, "le plan final laisse le temps de voir le coup"
+    texts = [t.text for t in tl.texts]
+    assert texts == ["COMBO x8"], "une seule carte, pas de slogan, et l'aperçu ne dévoile pas le compte"
+    assert all(t.start + t.duration <= tl.duration + 1e-6 for t in tl.texts), "aucun texte ne dépasse la fin"
+    assert [c.transition for c in tl.clips].count(pvp.CUT) == 1 and tl.clips[-2].transition == pvp.CUT, "un seul flash, à l'entrée du meilleur combo"
+    assert {c.transition for c in tl.clips} == {"aucune", pvp.CUT}
+    named = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=60), "Duels du samedi", verdicts=verdicts)
+    assert named.texts[0].text == "DUELS DU SAMEDI" and named.texts[0].start + named.texts[0].duration <= named.clips[0].duration
     assert pvp._title("Duels du samedi") == "DUELS DU SAMEDI" and pvp._title("") == "HIGHLIGHTS PVP"
-    # Un kill garde son ralenti même s'il n'est pas le meilleur combo.
+    # Un kill garde son ralenti et sa carte même s'il n'est pas le meilleur combo.
     verdicts[("m1", jury.key(cands[0][1]))]["fin"] = "kill"
     tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=60), "x", verdicts=verdicts)
-    assert sum(c.speed < 1 for c in tl.clips) == 2
+    assert sum(c.speed < 1 for c in tl.clips) == 2 and "KILL" in [t.text for t in tl.texts]
+
+
+def test_dressing_is_sparse_and_breathes_before_the_finale():
+    from app.models import EditSettings
+    m, h, cands, verdicts = _four_combos()
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=60), "x", verdicts=verdicts)
+    kinds = [i.kind for i in tl.impacts]
+    assert kinds.count("secousse") <= 4 * pvp.SHAKES_PER_COMBO, "32 coups, mais au plus 2 secousses par combo"
+    assert kinds.count("etincelles") == 1 and kinds.count("zoom") == 1, "étincelles et zoom seulement sur le coup final de l'edit"
+    assert kinds.count("flash") == 1 and kinds.count("onde") == 1, "un seul grand final"
+    assert [x.kind for x in tl.sfx].count("boom") == 1 and [x.kind for x in tl.sfx].count("whoosh") == 1
+    slow_start = tl.duration - tl.clips[-1].duration
+    assert not any(slow_start - 0.8 <= i.start < slow_start - 0.01 for i in tl.impacts), "respiration avant le ralenti final"
+    assert any(i.kind == "secousse" and i.intensity >= 1.5 for i in tl.impacts), "le coup final garde sa secousse franche"
+
+
+def test_music_peak_lands_on_a_cut(monkeypatch):
+    from app.models import EditSettings
+    m, h, cands, verdicts = _four_combos()
+    beat = 60 / 120
+    monkeypatch.setattr(pvp, "music_grid", lambda path: (120.0, 0.25))
+    monkeypatch.setattr(pvp, "_music_peak", lambda path: (15.25, 200.0))
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=60), "x", "morceau.mp3", verdicts=verdicts)
+    cuts, t = [], 0.0
+    for c in tl.clips:
+        if c.speed == 1:  # début de l'aperçu et de chaque combo
+            cuts.append(round(t, 3))
+        t += c.duration
+    peak_at = round(15.25 - tl.music.start, 3)  # instant du montage où tombe le pic
+    assert any(abs(peak_at - x) < 0.02 for x in cuts), (peak_at, cuts)
+    assert abs((tl.music.start - 0.25) / beat - round((tl.music.start - 0.25) / beat)) < 0.02, "la musique part toujours sur un temps"
+    assert "Pic de la musique posé sur la coupe" in tl.summary
+    # Morceau trop court pour tenir tout l'edit après ce décalage : on ne touche pas au départ.
+    monkeypatch.setattr(pvp, "_music_peak", lambda path: (15.25, 20.0))
+    tl2 = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=60), "x", "morceau.mp3", verdicts=verdicts)
+    assert tl2.music.start == 0.25 and "Pic de la musique" not in tl2.summary
+
+
+def test_quality_check_does_not_add_slow_zoom_on_gameplay_nor_push_text_past_the_end():
+    from app.ai import quality
+    from app.models import EditSettings
+    m, h, cands, verdicts = _four_combos()
+    s = EditSettings(style="pvp", target_duration=60)
+    tl = pvp.build([m], {"m1": h}, s, "x", verdicts=verdicts)
+    tl = quality.check_and_fix(tl, {}, s)
+    assert not any("zoom_lent" in c.effects for c in tl.clips), "du jeu filmé n'est pas un plan fixe"
+    assert all(t.start + t.duration <= tl.duration + 1e-6 for t in tl.texts), "un texte prolongé ne dépasse pas la fin"
 
 
 def test_everything_rejected_by_the_jury_does_not_crash():

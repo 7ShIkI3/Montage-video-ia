@@ -32,9 +32,12 @@ Le plan détaillé et la stratégie sont dans [PLAN.md](PLAN.md).
     **jury IA** regarde quatre images de chaque rafale candidate (14 par tour, deux tours au plus, les fins de
     duel d'abord) et ne garde que celles à l'avantage du joueur ; une rafale subie ou une mort n'entre jamais.
     Les verdicts sont gardés avec le rush : refaire le montage ne repaie pas. Sans clé, le classement se fait
-    au son et l'app le dit. Le meilleur combo ferme l'edit, avec le seul ralenti (les kills en ont un aussi) ;
-    chaque coupe tombe sur le tempo de la musique (rythme électro généré si aucune musique n'est choisie), avec
-    secousses, étincelles et « COMBO xN » en 3D. Ce montage n'est pas repris par le réalisateur après relecture.
+    au son et l'app le dit. L'edit s'ouvre sur un aperçu d'une seconde du meilleur combo et se ferme sur lui,
+    avec le seul ralenti (les kills en ont un aussi). L'habillage est sobre pour que ce final ressorte : coupes
+    franches sur le tempo de la musique (rythme électro généré si aucune n'est choisie), un seul flash à
+    l'entrée du dernier combo, deux secousses par combo (son coup le plus fort et son coup final), une seule
+    carte « COMBO xN », et le pic de la musique posé sur une coupe quand le morceau le permet. Ce montage
+    n'est pas repris par le réalisateur après relecture.
 
 Avec une clé API Anthropic, le réalisateur est **Claude** : il comprend le sens du discours, choisit les
 meilleurs passages, écrit un titre et applique des consignes libres. Sans clé, un réalisateur local
