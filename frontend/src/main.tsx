@@ -1,18 +1,21 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Editor } from "./components/Editor";
-import { Home } from "./components/Home";
-import { Settings } from "./components/Settings";
-import { Toasts } from "./components/Toasts";
-import { DialogHost } from "./components/Dialog";
-import { useStore } from "./store";
 // Polices embarquées : l'application marche hors ligne (plus de Google Fonts).
 import "@fontsource-variable/inter/index.css";
 import "@fontsource/space-grotesk/500.css";
 import "@fontsource/space-grotesk/600.css";
 import "@fontsource/space-grotesk/700.css";
 import "@fontsource/jetbrains-mono/500.css";
+// Ordre de la cascade : styles.css, puis les briques partagées, puis les feuilles des composants (importées par eux).
+// Ces deux imports doivent rester AVANT ceux des composants.
 import "./styles.css";
+import "./styles/ui.css";
+import { Editor } from "./components/Editor";
+import { Home } from "./components/Home";
+import { Settings } from "./components/Settings";
+import { Toasts } from "./components/Toasts";
+import { DialogHost } from "./components/Dialog";
+import { useStore } from "./store";
 
 type Route = { page: "projet"; id: string } | { page: "reglages" } | { page: "accueil" };
 

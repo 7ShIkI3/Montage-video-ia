@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api, ResearchNote } from "../api";
 import { Icon } from "../icons";
 import { isBusy, jobOf, useStore } from "../store";
+import { EmptyHint } from "./ui/EmptyHint";
 
 /** Rendu minimal du Markdown des réponses : paragraphes, puces, **gras**. */
 export function renderLite(text: string) {
@@ -55,7 +56,6 @@ export function ResearchPanel() {
 
   return (
     <section className="panel research">
-      <header><h3>Recherche</h3>{notes.length > 0 && <span className="muted small">{notes.length} note{notes.length > 1 ? "s" : ""}</span>}</header>
       <p className="muted small">Un fait, un chiffre, une règle, un contexte : la réponse est gardée ici et le réalisateur s'appuie dessus au prochain montage ou à la prochaine consigne.</p>
       <form className="search-row" onSubmit={(e) => { e.preventDefault(); ask(); }}>
         <input value={q} placeholder="Ex. : date de sortie de Minecraft 1.21, règles du PvP…" aria-label="Question" disabled={busy} onChange={(e) => setQ(e.target.value)} />
@@ -63,6 +63,8 @@ export function ResearchPanel() {
       </form>
       {busy && job && <div className="progress"><div style={{ width: `${job.progress * 100}%` }} /><span>{job.message || "Recherche…"}</span></div>}
       {caps && !caps.claude && <p className="muted small">Sans clé Claude : résultats DuckDuckGo bruts. Avec une clé (Réglages), la réponse est rédigée et sourcée.</p>}
+      {notes.length > 0 && <p className="muted small research-count">{notes.length} note{notes.length > 1 ? "s" : ""} gardée{notes.length > 1 ? "s" : ""} dans le projet</p>}
+      {notes.length === 0 && !busy && <EmptyHint icon="globe" text="Aucune recherche pour l'instant. Pose une question ci-dessus." />}
       <ul className="research-list">
         {notes.map((n) => (
           <li key={n.id} className={open === n.id ? "open" : ""}>
@@ -81,8 +83,8 @@ export function ResearchPanel() {
                 )}
                 <div className="row-btns">
                   <button className="small-btn" onClick={() => copy(n.answer)}><Icon name="copy" size={13} />Copier</button>
-                  <button className="small-btn" onClick={() => insert(n)} title="Pose la première phrase en bandeau au curseur"><Icon name="plus" size={13} />En texte</button>
-                  <button className="small-btn" onClick={() => remove(n)}><Icon name="trash" size={13} />Supprimer</button>
+                  <button className="small-btn" onClick={() => insert(n)}><Icon name="plus" size={13} />Première phrase en bandeau</button>
+                  <button className="small-btn danger" onClick={() => remove(n)}><Icon name="trash" size={13} />Supprimer</button>
                 </div>
               </div>
             )}

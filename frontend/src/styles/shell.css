@@ -1,0 +1,105 @@
+/* =====================================================================
+   Coque de l'éditeur (lot A) : barre du haut, barre de modules à gauche,
+   rail de l'inspecteur à droite, barre d'état.
+   La grille .editor, les poignées (.splitter) et .rail-panel sont dans styles.css.
+   Aucune couleur en dur : tout vient des jetons de :root.
+   ===================================================================== */
+
+/* ---------- Barre du haut (48 px) ---------- */
+.topbar { grid-area: top; position: relative; z-index: 40; display: flex; align-items: center; gap: var(--s-3); padding: 0 var(--s-3); border-bottom: 1px solid var(--line); background: var(--panel); }
+.tb-left, .tb-right { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: var(--s-2); }
+.tb-right { justify-content: flex-end; }
+.tb-center { flex: none; display: flex; align-items: center; }
+.topbar .brand-mark { width: 24px; height: 24px; border-radius: var(--r-ctl); }
+.tb-back { flex: none; gap: 2px; padding: 0 var(--s-2) 0 2px; min-height: var(--h-md); color: var(--muted); }
+.topbar .project-name { width: 220px; min-width: 0; flex: 0 1 220px; min-height: var(--h-md); padding: 0 var(--s-2); background: transparent; border-color: transparent; font: 600 15px var(--display); }
+.topbar .project-name:hover, .topbar .project-name:focus { border-color: var(--line); box-shadow: none; }
+.saved { display: inline-flex; align-items: center; gap: 6px; flex: none; font-size: 12px; color: var(--faint); white-space: nowrap; }
+.saved svg { color: var(--ok); }
+.saved.dirty svg { color: var(--warn); }
+.topbar a.icon-btn { flex: none; width: 36px; height: 36px; border-color: transparent; background: transparent; color: var(--muted); }
+.topbar a.icon-btn:hover { color: var(--text); background: var(--surface-2); }
+
+/* « Monter avec l'IA » : contour au repos, plein à l'étape « monter », pilule avec anneau pendant un job */
+.btn-ai { flex: none; gap: 7px; min-height: var(--h-md); padding: 0 14px; border-radius: var(--r-pill); background: transparent; border-color: var(--accent); color: var(--accent-2); font-weight: 600; white-space: nowrap; }
+.btn-ai:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-2); color: var(--accent-2); }
+.btn-ai.live { background: var(--accent-soft); font-variant-numeric: tabular-nums; }
+.editor[data-step="monter"] .btn-ai:not(.live) { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.editor[data-step="monter"] .btn-ai:not(.live):hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); color: var(--accent-ink); }
+.btn-ai .ring circle:last-child { transition: stroke-dashoffset var(--t-fast); }
+
+/* Pilule de la palette : l'icône seule sous 1380 px */
+.cmdk-pill { flex: 0 1 300px; min-width: 0; gap: var(--s-2); min-height: var(--h-md); padding: 0 var(--s-2) 0 var(--s-3); border-radius: var(--r-pill); background: var(--surface); border-color: var(--line); color: var(--muted); font-weight: 400; }
+.cmdk-pill:hover:not(:disabled) { border-color: var(--line-2); }
+.cmdk-pill svg { flex: none; }
+.cmdk-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: 12px; }
+.cmdk-pill .kbd { flex: none; }
+@media (max-width: 1380px) {
+  .cmdk-pill { flex: none; width: 36px; min-height: 36px; padding: 0; justify-content: center; border-color: transparent; background: transparent; border-radius: var(--r-ctl); }
+  .cmdk-pill:hover:not(:disabled) { background: var(--surface-2); color: var(--text); border-color: transparent; }
+  .cmdk-text, .cmdk-pill .kbd { display: none; }
+}
+
+/* Exporter : neutre, plein à l'étape « exporter » */
+.btn-export { flex: none; gap: 7px; min-height: var(--h-md); padding: 0 14px; font-weight: 600; white-space: nowrap; }
+.editor[data-step="exporter"] .btn-export:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.editor[data-step="exporter"] .btn-export:not(:disabled):hover { background: var(--accent-2); border-color: var(--accent-2); color: var(--accent-ink); }
+.export-why { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
+
+/* ---------- Panneau de gauche : barre de modules ---------- */
+.rail { flex: none; display: flex; flex-direction: row; height: 56px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.rail button { position: relative; flex: 1 1 0; min-width: 0; height: 56px; min-height: 56px; flex-direction: column; gap: 4px; padding: 0 2px; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: 10.5px; font-weight: 500; line-height: 1.1; }
+.rail button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail button:hover:not(:disabled) { background: var(--surface-2); color: var(--text); border-color: transparent; }
+.rail button.on { background: var(--surface-2); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.rail button.on:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.rail button:focus-visible { outline-offset: -2px; }
+.rail button.busy::after { content: ""; position: absolute; top: 8px; right: calc(50% - 20px); width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--accent); }
+/* Replié : une colonne de 56 px, icônes et libellés, et « › » en bas pour rouvrir */
+.editor.left-closed .rail { height: 100%; width: 56px; flex-direction: column; gap: 2px; padding: var(--s-1) 2px; border-bottom: 0; }
+.editor.left-closed .rail { overflow-y: auto; scrollbar-width: none; }
+.editor.left-closed .rail::-webkit-scrollbar { display: none; }
+.editor.left-closed .rail button { flex: 0 1 52px; width: 100%; height: auto; min-height: 36px; max-height: 52px; border-radius: var(--r-ctl); }
+.editor.left-closed .rail .rail-expand { flex: none; height: 40px; min-height: 40px; max-height: none; }
+.editor.left-closed .rail button.on { box-shadow: none; }
+.editor.left-closed .rail button.busy::after { top: 6px; right: 10px; }
+.rail .rail-expand { margin-top: auto; height: 40px; min-height: 40px; }
+.rail .rail-expand::after { content: none; }
+
+/* ---------- Panneau de droite : titre et rail ---------- */
+.tab-head { height: 40px; padding: 0 var(--s-1) 0 var(--s-4); }
+.tab-head .tab-close { width: 28px; min-height: 28px; margin: 0; color: var(--faint); }
+.rtabs { display: flex; flex-direction: column; flex: none; width: 52px; padding: 6px 0; border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; scrollbar-width: none; }
+.rtabs::-webkit-scrollbar { display: none; }
+.rtabs button { position: relative; flex: 1 1 0; width: 100%; height: auto; min-height: 36px; max-height: 52px; flex-direction: column; gap: 2px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: 10.5px; font-weight: 500; line-height: 1.1; }
+.rtabs button:hover:not(:disabled) { background: var(--surface-2); color: var(--text); border-color: transparent; }
+.rtabs button.on { background: var(--accent-soft); color: var(--accent-2); box-shadow: inset -2px 0 0 var(--accent); }
+.rtabs button.on:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-2); }
+.rtabs button:focus-visible { outline-offset: -2px; }
+.rtabs button.busy::after { content: ""; position: absolute; right: 9px; top: 6px; width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--accent); }
+.rtabs button.badge::after { content: attr(data-badge); position: absolute; right: 5px; top: 3px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--r-pill); background: var(--warn); color: var(--accent-ink); font: 600 11px var(--font); display: grid; place-items: center; }
+/* Les boutons se partagent la hauteur du rail (36 à 52 px) : il tient sans défiler quelle que soit la fenêtre. */
+.rtabs button.badge { margin: 0; font-family: var(--font); gap: 2px; }
+/* Dans la barre d'état, le contour de focus se dessine à l'intérieur : le conteneur rogne ce qui dépasse. */
+.statusbar :focus-visible { outline-offset: -2px; }
+
+/* ---------- Barre d'état (24 px) ---------- */
+.statusbar { grid-area: status; display: flex; align-items: center; gap: 2px; padding: 0 6px 0 8px; border-top: 1px solid var(--line); background: var(--bg-2); font-size: 11px; color: var(--faint); overflow: hidden; white-space: nowrap; }
+.status-item { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; height: 100%; color: var(--faint); text-decoration: none; border-right: 1px solid var(--line); }
+.status-item:last-child { border-right: 0; }
+a.status-item:hover { color: var(--text); background: var(--surface); }
+.status-item.warn { color: var(--warn); }
+.status-item.accent { color: var(--accent); }
+.status-item.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text-2); min-width: 72px; justify-content: flex-end; }
+.statusbar .spacer { flex: 1; }
+.status-item .led { width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--faint); }
+.status-item .led.ok { background: var(--ok); }
+.status-item .led.warn { background: var(--warn); }
+.status-item.panels { gap: 0; padding: 0 2px; }
+.status-item.panels button { width: 24px; min-height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--faint); }
+.status-item.panels button:hover { color: var(--text); background: var(--surface-2); }
+.status-item.panels button.on { color: var(--text-2); }
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-ai .ring circle:last-child { transition: none; }
+}

@@ -1,0 +1,47 @@
+/* =====================================================================
+   Scène du lecteur (lot A) : zone d'aperçu, bordure de l'IA en direct,
+   barre de transport, réalisation en direct en carte, moniteur source.
+   Cette feuille ne cible ni le cadre vidéo ni sa couche d'effets : aucun effet,
+   ombre, filtre ni transformation n'est ajouté autour de l'image.
+   Aucune couleur en dur : tout vient des jetons de :root.
+   ===================================================================== */
+
+/* ---------- Zone d'aperçu ---------- */
+.player-stage { position: relative; padding: var(--s-3); }
+
+/* Pendant un job live : un liseré conique tourne autour de la zone d'aperçu (4 s par tour) */
+@property --a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes ai-orbit { to { --a: 360deg; } }
+.player-stage.ai-live::before {
+  content: ""; position: absolute; inset: 0; z-index: 1; padding: 2px; pointer-events: none; border-radius: var(--r-card);
+  background: conic-gradient(from var(--a), transparent 0deg 200deg, var(--accent) 300deg, var(--accent-2) 360deg);
+  -webkit-mask: linear-gradient(var(--bg-2) 0 0) content-box, linear-gradient(var(--bg-2) 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(var(--bg-2) 0 0) content-box, linear-gradient(var(--bg-2) 0 0);
+  mask-composite: exclude;
+  animation: ai-orbit 4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .player-stage.ai-live::before { animation: none; background: var(--accent); }
+}
+
+/* ---------- Barre de transport (48 px, une seule ligne) ---------- */
+.transport { height: 48px; min-height: 0; flex-wrap: nowrap; padding: 0 var(--s-4); gap: var(--s-2); background: var(--panel); }
+.transport > * { flex: none; }
+.transport .tc { font-size: 20px; line-height: 1; }
+.transport .tc .muted { font-size: 12px; }
+.transport .fx-badge { display: block; flex: 0 1 auto; min-width: 0; max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 20px; }
+.transport .fx-badge svg { vertical-align: -2px; margin-right: 6px; }
+
+/* ---------- Réalisation en direct : une carte opaque, qui défile si le cadre est bas ---------- */
+.live-director { gap: var(--s-2); padding: var(--s-4); font-size: 11px; line-height: 18px; }
+.live-director header { flex: none; }
+.live-director header b { font-size: 14px; line-height: 20px; }
+.live-director .progress { flex: none; }
+.live-stages { position: relative; flex: 0 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.live-stages li { line-height: 18px; }
+.live-msg { font-size: 11px; }
+
+/* ---------- Moniteur source ---------- */
+.sm-actions .sm-done { margin-left: auto; max-width: 55%; text-align: right; font-size: 12px; color: var(--text-2); }
+.sm-actions .sm-done:empty { display: none; }

@@ -149,9 +149,9 @@ export function SourceMonitor({ mediaId, onClose }: { mediaId: string; onClose: 
           <div className="sm-head" style={{ left: pct(t) }} />
         </div>
         <div className="sm-controls">
-          <button className="icon-btn" onClick={() => step(-1)} disabled={!hasProxy} title="Image précédente (←)" aria-label="Image précédente"><Icon name="chevron-down" size={16} style={{ transform: "rotate(90deg)" }} /></button>
+          <button className="icon-btn" onClick={() => step(-1)} disabled={!hasProxy} title="Image précédente (←)" aria-label="Image précédente"><Icon name="chevron-left" size={16} /></button>
           <button className="icon-btn" onClick={toggle} disabled={!hasProxy} title="Lecture / pause (Espace)" aria-label={playing ? "Pause" : "Lecture"}><Icon name={playing ? "pause" : "play"} size={16} /></button>
-          <button className="icon-btn" onClick={() => step(1)} disabled={!hasProxy} title="Image suivante (→)" aria-label="Image suivante"><Icon name="chevron-down" size={16} style={{ transform: "rotate(-90deg)" }} /></button>
+          <button className="icon-btn" onClick={() => step(1)} disabled={!hasProxy} title="Image suivante (→)" aria-label="Image suivante"><Icon name="chevron-right" size={16} /></button>
           <span className="sm-time mono">{tc(t, fps)} <span className="muted">/ {tc(dur, fps)}</span></span>
           <span className="spacer" />
           <button className="small-btn" onClick={() => mark("in")} disabled={!hasProxy} title="Marquer l'entrée à la position lue (I)">Entrée <Kbd k="I" /></button>

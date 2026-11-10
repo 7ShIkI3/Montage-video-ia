@@ -5,6 +5,8 @@ import { cssFilter, fxClasses, mixGain, overlaysFor } from "../fxPreview";
 import { Icon } from "../icons";
 import { LIVE_KINDS } from "../stages";
 import { LiveDirector } from "./LiveDirector";
+import { EmptyHint } from "./ui/EmptyHint";
+import "../styles/stage.css";
 
 // Lecture de la timeline en direct, sans rendu : deux lecteurs vidéo alternent
 // pour que les coupes entre fichiers soient instantanées. Les effets, transitions,
@@ -475,7 +477,7 @@ export function Player() {
 
   return (
     <div className="player">
-      <div className="player-stage">
+      <div className={`player-stage ${live ? "ai-live" : ""}`}>
         <div className={`frame frame-${fmt.replace(":", "x")}`} style={{
           aspectRatio: aspect,
           ...(tl?.brand ? {
@@ -495,7 +497,13 @@ export function Player() {
           <div ref={fxLayer} className="layer fx-layer" />
           {!tl?.clips.length && !live && (
             <div className="frame-empty">
-              Importe tes vidéos puis clique sur <b>Monter automatiquement</b>
+              {project && project.media.length > 0 ? (
+                <EmptyHint icon="wand" text="Tes vidéos sont prêtes. Lance le montage automatique."
+                  action={{ label: "Monter avec l'IA", onClick: () => useStore.getState().openLeft("ia") }} />
+              ) : (
+                <EmptyHint icon="film" text="Importe tes vidéos pour commencer."
+                  action={{ label: "Importer des vidéos", onClick: () => useStore.getState().openLeft("rushes") }} />
+              )}
             </div>
           )}
           <LiveDirector />
@@ -547,7 +555,7 @@ export function Player() {
                   region: { x: +rx.toFixed(4), y: +ry.toFixed(4), w: +Math.min(1 - rx, w / gg.sw).toFixed(4), h: +Math.min(1 - ry, h / gg.sh).toFixed(4) },
                 });
                 setDrag(null);
-                document.getElementById("comment-box")?.focus();
+                useStore.getState().focusComment();
               }}>
               {drag && <div className="region-box drawing" style={{ left: Math.min(drag.x0, drag.x1), top: Math.min(drag.y0, drag.y1), width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0) }} />}
               {!drag && <div className="pick-hint">Trace un rectangle (ou clique) sur l'élément à commenter · Échap pour annuler</div>}

@@ -1,0 +1,80 @@
+/* =====================================================================
+   Briques partagées de la refonte « Studio » (lot A).
+   - composants de src/components/ui : .seg, .sec, .empty-hint ;
+   - classes communes : .cta-bar, .switch, .why-off, .range-row ;
+   - restyle des classes génériques nues utilisées à gauche et à droite
+     (.panel, .fx-chip, .fx-section, .fx-title, .field-row, .preset-grid, .progress, .style-card, .muted.small).
+   Chargé juste après styles.css (voir main.tsx) : les feuilles de lot passent après et ne touchent pas à ces classes nues.
+   Aucune couleur en dur : tout vient des jetons de :root.
+   ===================================================================== */
+
+/* ---------- Sous-onglets (ui/Segmented) ---------- */
+.seg { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--surface); overflow-x: auto; scrollbar-width: none; }
+.seg::-webkit-scrollbar { display: none; }
+.seg button { flex: 1 0 auto; min-height: var(--h-sm); padding: 0 8px; border: 0; border-radius: var(--r-ctl); background: transparent; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.seg button:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.seg button.on, .seg button.on:hover:not(:disabled) { background: var(--surface-3); color: var(--text); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
+.seg-badge { margin-left: 6px; padding: 0 6px; border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent-2); font: 500 11px var(--mono); }
+
+/* ---------- Section repliable (ui/Section) ---------- */
+.sec { margin-top: var(--s-4); padding: var(--s-3) 0 0; border-top: 1px solid var(--line); }
+.sec:first-child { margin-top: 0; }
+.sec > summary { display: flex; align-items: center; gap: var(--s-2); list-style: none; cursor: pointer; padding: 0 0 var(--s-1); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.sec > summary::-webkit-details-marker { display: none; }
+.sec > summary::before { content: ""; flex: none; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform var(--t-fast); }
+.sec[open] > summary::before { transform: rotate(45deg); }
+.sec > summary:hover { color: var(--text); }
+.sec > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-ctl); }
+.sec-body { padding: var(--s-2) 0 var(--s-3); display: flex; flex-direction: column; gap: var(--s-2); }
+
+/* ---------- État vide (ui/EmptyHint) ---------- */
+.empty-hint { display: flex; flex-direction: column; align-items: center; gap: var(--s-2); padding: var(--s-5) var(--s-4); text-align: center; color: var(--muted); }
+.empty-hint > svg { color: var(--faint); }
+.empty-hint p { margin: 0; max-width: 260px; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+.empty-hint button.small-btn.primary-soft { margin-top: var(--s-1); border-color: var(--accent); color: var(--accent-2); }
+.empty-hint button.small-btn.primary-soft:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-2); color: var(--accent-2); }
+
+/* ---------- Pied collant : l'action principale du panneau ---------- */
+.cta-bar { position: sticky; bottom: 0; z-index: 2; flex: none; display: flex; flex-direction: column; justify-content: center; gap: var(--s-2); min-height: 56px; padding: var(--s-2) var(--s-4); border-top: 1px solid var(--line); background: var(--panel); }
+.cta-bar > .primary { width: 100%; }
+
+/* ---------- Interrupteur : la case à cocher reste, seul son dessin change ---------- */
+input[type="checkbox"].switch, label input[type="checkbox"].switch, label.inline input[type="checkbox"].switch, label.check input[type="checkbox"].switch,
+.toggles label input[type="checkbox"].switch, .switch input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none; flex: none; position: relative; margin: 0; width: 32px; height: 18px; border-radius: var(--r-pill);
+  border: 1px solid var(--line-2); background: var(--surface-3); cursor: pointer; transition: background var(--t-fast), border-color var(--t-fast);
+}
+input[type="checkbox"].switch::before, .switch input[type="checkbox"]::before { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: var(--r-pill); background: var(--text-2); transition: transform var(--t-fast), background var(--t-fast); }
+input[type="checkbox"].switch:checked, .switch input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+input[type="checkbox"].switch:checked::before, .switch input[type="checkbox"]:checked::before { transform: translateX(14px); background: var(--accent-ink); }
+input[type="checkbox"].switch:focus-visible, .switch input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type="checkbox"].switch:disabled, .switch input[type="checkbox"]:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ---------- Raison d'un bouton désactivé : visible à côté, jamais seulement dans un title ---------- */
+.why-off { display: block; margin: var(--s-1) 0 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
+
+/* ---------- Curseur et sa valeur, en mono, dans une boîte de largeur fixe ---------- */
+.range-row { display: flex; align-items: center; gap: var(--s-2); }
+.range-row input[type="range"] { flex: 1; min-width: 0; }
+.range-val { flex: none; width: 5ch; text-align: right; font: 500 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--text-2); }
+
+/* ---------- Classes génériques nues, restylées une fois pour la gauche et la droite ---------- */
+.panel { padding: var(--s-3) var(--s-4); }
+.panel h3 { font: 600 14px var(--display); }
+.panel h4 { font-size: 13px; }
+.fx-section { margin-top: var(--s-4); padding-top: var(--s-3); gap: var(--s-2); border-top-color: var(--line); }
+.fx-chips { gap: 6px; }
+.chip, .fx-chip { min-height: var(--h-sm); padding: 0 10px; border-radius: var(--r-ctl); border-color: var(--line-2); font-size: 12px; transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast); }
+.chip:hover:not(:disabled), .fx-chip:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.fx-chip.on, .fx-chip.on:hover:not(:disabled), .style-card.on { background: var(--accent-soft); border-color: var(--accent-2); color: var(--accent-2); }
+.style-card { border-radius: var(--r-card); border-color: var(--line-2); transition: background var(--t-fast), border-color var(--t-fast); }
+.style-card span { font-size: 12px; }
+.style-card.on span { color: var(--text-2); }
+.field-row { gap: var(--s-2); align-items: center; }
+.preset-grid { gap: var(--s-2); margin: var(--s-2) 0; }
+.progress { height: var(--h-sm); border-radius: var(--r-pill); border-color: var(--line-2); }
+.progress span { font-size: 12px; line-height: 26px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sec > summary::before, input[type="checkbox"].switch, input[type="checkbox"].switch::before, .chip, .fx-chip, .style-card { transition: none; }
+}

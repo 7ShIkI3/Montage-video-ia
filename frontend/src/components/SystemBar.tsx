@@ -78,7 +78,7 @@ export function SystemBar() {
           <div className="sysbar-pills" role="group" aria-label="État du poste">
             {list.map((p) => (
               <button key={p.id} type="button" className={`pill sys-pill ${p.level} ${open === p.id ? "open" : ""}`} aria-expanded={open === p.id}
-                title={p.fix ?? "Tout fonctionne"} onClick={() => setOpen(open === p.id ? null : p.id)}>{p.label}</button>
+                title={p.fix ?? "Tout fonctionne"} aria-label={`${p.label} : ${p.level === "ok" ? "en ordre" : p.level === "warn" ? "à vérifier" : "problème"}`} onClick={() => setOpen(open === p.id ? null : p.id)}>{p.label}</button>
             ))}
           </div>
           <p className={`small sysbar-summary ${problems ? "warn" : "muted"}`}>
@@ -102,4 +102,17 @@ export function SystemBar() {
       </div>
     </div>
   );
+}
+
+/** Résumé du poste pour la puce de l'accueil : prêt, ou nombre de points à vérifier. Null tant que le contrôle n'a pas répondu. */
+export function useSystemSummary(): { ready: boolean; issues: number } | null {
+  const [summary, setSummary] = useState<{ ready: boolean; issues: number } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.system(false)
+      .then((r) => { if (alive) setSummary({ ready: r.summary.problems.length === 0, issues: r.summary.problems.length }); })
+      .catch(() => undefined);  // serveur muet : pas de puce, l'accueil reste utilisable
+    return () => { alive = false; };
+  }, []);
+  return summary;
 }

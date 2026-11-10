@@ -3,53 +3,17 @@ import { fmtTime } from "../api";
 import { clipDur, clipStarts, commentTime, localToSrc, MEDIA_DRAG_TYPE, rampOf, Sel, snapPoints, snapTo, sourceRange, timelineDuration, useStore } from "../store";
 import { AddSoundButton, VoiceOverButton } from "./AudioTools";
 import { Icon } from "../icons";
+import { dropStrips, loadStrip, peekStrip, Strip } from "../lib/filmstrip";
+import "../styles/timeline.css";
 
 /** Hauteur d'un plan sur la piste vidéo, en pixels (piste de 86 px moins les marges : voir `.track-video` et `.clip`). */
 const CLIP_H = 74;
-
-/** Pellicule d'un rush : une image qui contient toutes ses vignettes en grille (voir `media_filmstrip` côté serveur). */
-interface Strip { url: string; count: number; cols: number; tw: number; th: number }
-const stripLoads: Record<string, Promise<Strip | null>> = {};
-const stripReady: Record<string, Strip | null> = {};
-let stripQueue: Promise<unknown> = Promise.resolve();
-/** Une pellicule à la fois : le serveur les fabrique une par une, et des requêtes en attente occuperaient
- *  les connexions du navigateur dont la lecture et la sauvegarde ont besoin. */
-function loadStrip(pid: string, mediaId: string): Promise<Strip | null> {
-  const key = `${pid}/${mediaId}`;
-  if (!stripLoads[key]) {
-    const load = stripQueue.then(async (): Promise<Strip | null> => {
-      const r = await fetch(`/api/projects/${pid}/media/${mediaId}/filmstrip`);
-      if (r.status === 404) return null;  // rush sans image : rien à montrer, on ne redemande pas
-      if (!r.ok) throw new Error(`pellicule ${r.status}`);
-      const [tw, th] = (r.headers.get("X-Strip-Tile") ?? "128x72").split("x").map(Number);
-      const count = +(r.headers.get("X-Strip-Count") ?? 0);
-      const cols = +(r.headers.get("X-Strip-Cols") ?? 16);
-      if (!count || !cols || !tw || !th) return null;
-      return { url: URL.createObjectURL(await r.blob()), count, cols, tw, th };
-    });
-    stripQueue = load.catch(() => undefined);
-    stripLoads[key] = load
-      .then((st) => (stripLoads[key] === wrapped ? (stripReady[key] = st) : st))
-      .catch(() => { if (stripLoads[key] === wrapped) delete stripLoads[key]; return null; });  // panne ou rush absent : on réessaiera
-    const wrapped = stripLoads[key];
-  }
-  return stripLoads[key];
-}
-/** Oublie les pellicules chargées et libère leurs images (changement de projet, sortie de l'éditeur). */
-function dropStrips(): void {
-  for (const key of Object.keys(stripLoads)) delete stripLoads[key];
-  for (const key of Object.keys(stripReady)) {
-    const st = stripReady[key];
-    if (st) URL.revokeObjectURL(st.url);
-    delete stripReady[key];
-  }
-}
 
 /** Vignettes du rush sous un plan : chaque case montre l'image du rush à l'endroit qu'elle recouvre. */
 const Filmstrip = memo(function Filmstrip({ pid, mediaId, duration, srcIn, srcOut, width }: {
   pid: string; mediaId: string; duration: number; srcIn: number; srcOut: number; width: number;
 }) {
-  const [strip, setStrip] = useState<Strip | null>(stripReady[`${pid}/${mediaId}`] ?? null);
+  const [strip, setStrip] = useState<Strip | null>(peekStrip(pid, mediaId));
   useEffect(() => {
     let alive = true;
     loadStrip(pid, mediaId).then((st) => { if (alive) setStrip(st); });
@@ -130,6 +94,8 @@ export function TimelineView() {
   const captions = useStore((s) => s.captions);
   const catalog = useStore((s) => s.catalog);
   const loopRange = useStore((s) => s.loopRange);
+  const builtAt = useStore((s) => s.builtAt);
+  const pitchOpen = useStore((s) => s.pitchOpen);
   const { setPlayhead, select, moveClip, trimClip, setZoom, splitAtPlayhead, selectItem, addText } =
     useStore.getState();
   const scroller = useRef<HTMLDivElement>(null);
@@ -138,6 +104,19 @@ export function TimelineView() {
   const [drag, setDrag] = useState<number | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
   const [snapAt, setSnapAt] = useState<number | null>(null);
+  const [showAll, setShowAll] = useState(false);  // « Toutes les pistes » : rouvre les pistes vides
+  // Arrivée d'un montage : les plans jouent une courte cascade, mais seulement une fois le pitch du réalisateur refermé.
+  const [justBuilt, setJustBuilt] = useState(false);
+  const handledBuilt = useRef(builtAt);  // un montage déjà là à l'ouverture de l'éditeur ne rejoue rien
+  const builtTimer = useRef<number>();
+  useEffect(() => {
+    if (builtAt <= 0 || builtAt === handledBuilt.current || pitchOpen) return;
+    handledBuilt.current = builtAt;
+    setJustBuilt(true);
+    window.clearTimeout(builtTimer.current);
+    builtTimer.current = window.setTimeout(() => setJustBuilt(false), 1600);
+  }, [builtAt, pitchOpen]);
+  useEffect(() => () => window.clearTimeout(builtTimer.current), []);
 
   // Largeur visible (pour « zoom ajusté ») et zoom à la molette avec Ctrl, centré sous la souris.
   useEffect(() => {
@@ -328,54 +307,66 @@ export function TimelineView() {
   const mediaName = (id: string) => project.media.find((m) => m.id === id)?.filename ?? "?";
   const colorFor = (id: string) => {
     const i = project.media.findIndex((m) => m.id === id);
-    return ["#5A4FCF", "#1F8A7A", "#B5552A", "#A8386F", "#2F6FB5", "#6F8A2A"][Math.max(0, i) % 6];
+    return `var(--rush-${(Math.max(0, i) % 6) + 1})`;
   };
+  const tracks = {
+    broll: !(tl.overlays || []).length, texts: !(tl.texts || []).length, sfx: !(tl.sfx || []).length, images: !(tl.images || []).length,
+    impacts: !(tl.impacts || []).length, comments: !(tl.comments || []).length, video: !tl.clips.length,
+    captions: tl.captions === "aucun" || !captions.length, music: !tl.music.track,
+  };
+  const empty = (b: boolean) => (b ? "is-empty" : "");
+  const nSel = selectedIds.length;
 
   return (
-    <div className="timeline">
-      <div className="timeline-toolbar">
-        <button onClick={splitAtPlayhead} title="Couper au curseur (S)"><Icon name="scissors" size={14} />Couper</button>
-        <button onClick={() => addText()} title="Ajouter un texte au curseur"><Icon name="plus" size={14} />Texte</button>
-        <VoiceOverButton />
-        <AddSoundButton />
+    <div className={`timeline ${justBuilt ? "just-built" : ""}`}>
+      <div className="timeline-toolbar" role="toolbar" aria-label="Outils de la timeline">
+        <button className="icon-btn" onClick={() => useStore.getState().undo()} title="Annuler (Ctrl+Z)" aria-label="Annuler"><Icon name="undo" size={15} /></button>
+        <button className="icon-btn" onClick={() => useStore.getState().redo()} title="Rétablir (Ctrl+Y)" aria-label="Rétablir"><Icon name="redo" size={15} /></button>
+        <span className="sep" />
+        <button className="tb-cut" onClick={splitAtPlayhead} title="Couper au curseur (S)" aria-label="Couper au curseur"><Icon name="scissors" size={14} /><span className="tb-label">Couper</span></button>
         <button
           onClick={() => useStore.getState().deleteSelection()}
           disabled={!item}
-          title={selectedIds.length > 1 ? `Supprimer les ${selectedIds.length} plans sélectionnés (Suppr)` : "Supprimer (Suppr)"}
+          aria-label={nSel > 1 ? `Supprimer les ${nSel} plans sélectionnés` : "Supprimer"}
+          title={nSel > 1 ? `Supprimer les ${nSel} plans sélectionnés (Suppr)` : "Supprimer (Suppr)"}
         >
-          <Icon name="trash" size={14} />Supprimer{selectedIds.length > 1 ? ` (${selectedIds.length})` : ""}
+          <Icon name="trash" size={14} /><span className="tb-label">Supprimer{nSel > 1 ? ` (${nSel})` : ""}</span>
         </button>
-        <button onClick={() => useStore.getState().addMarker()} title="Poser un repère au curseur (M) : chapitre YouTube, repère XML"><Icon name="dot" size={14} />Repère</button>
         <span className="sep" />
+        <button onClick={() => addText()} title="Ajouter un texte au curseur" aria-label="Ajouter un texte au curseur"><Icon name="plus" size={14} /><span className="tb-label">Texte</span></button>
+        <VoiceOverButton />
+        <AddSoundButton />
+        <button onClick={() => useStore.getState().addMarker()} title="Poser un repère au curseur (M) : chapitre YouTube, repère XML" aria-label="Poser un repère au curseur"><Icon name="flag" size={14} /><span className="tb-label">Repère</span></button>
         {tl.range ? (
           <span className="range-tools">
             <span className="range-stat" title="Zone d'entrée/sortie : I et O (sans plan sélectionné), X = le plan au curseur">
               Zone <b>{fmtTime(tl.range.start)}</b> → <b>{fmtTime(tl.range.end)}</b>
             </span>
             <button className={`icon-btn ${loopRange ? "on" : ""}`} onClick={() => useStore.getState().setLoopRange(!loopRange)}
-              title="Lecture en boucle de la zone (Ctrl+L)" aria-label="Boucle sur la zone" aria-pressed={loopRange}><Icon name="redo" size={14} /></button>
+              title="Lecture en boucle de la zone (Ctrl+L)" aria-label="Boucle sur la zone" aria-pressed={loopRange}><Icon name="repeat" size={14} /></button>
             <button className="icon-btn" onClick={() => useStore.getState().deleteRange()} title="Supprimer le contenu de la zone et refermer (Maj+Suppr)" aria-label="Supprimer la zone"><Icon name="trash" size={14} /></button>
             <button className="icon-btn" onClick={() => useStore.getState().setRange(null)} title="Effacer la zone (Maj+X)" aria-label="Effacer la zone"><Icon name="x" size={14} /></button>
           </span>
         ) : (
-          <button onClick={() => useStore.getState().rangeFromClip()} title="Zone d'entrée/sortie sur le plan au curseur (X) ; I et O la posent au curseur" disabled={!tl.clips.length}><Icon name="square" size={14} />Zone</button>
+          <button onClick={() => useStore.getState().rangeFromClip()} title="Zone d'entrée/sortie sur le plan au curseur (X) ; I et O la posent au curseur" aria-label="Zone d'entrée et de sortie sur le plan au curseur" disabled={!tl.clips.length}><Icon name="range" size={14} /><span className="tb-label">Zone</span></button>
         )}
-        <button className="icon-btn" onClick={() => useStore.getState().undo()} title="Annuler (Ctrl+Z)" aria-label="Annuler"><Icon name="undo" size={15} /></button>
-        <button className="icon-btn" onClick={() => useStore.getState().redo()} title="Rétablir (Ctrl+Y)" aria-label="Rétablir"><Icon name="redo" size={15} /></button>
         <span className="spacer" />
-        {selectedIds.length > 1 && <span className="stat sel-count" data-testid="sel-count"><b>{selectedIds.length}</b> plans sélectionnés</span>}
-        <span className="stat"><b>{tl.clips.length}</b> plans · <b>{fmtTime(total)}</b></span>
+        {nSel > 1
+          ? <span className="stat sel-count" data-testid="sel-count"><b>{nSel}</b> sur <b>{tl.clips.length}</b> plans · <b>{fmtTime(total)}</b></span>
+          : <span className="stat"><b>{tl.clips.length}</b> plans · <b>{fmtTime(total)}</b></span>}
         <button className={`icon-btn ${thumbs ? "on" : ""}`} title="Vignettes dans les plans" aria-label="Vignettes dans les plans" aria-pressed={thumbs}
-          data-testid="thumbs-toggle" onClick={() => useStore.getState().setLayout({ thumbs: !thumbs })}><Icon name="film" size={15} /></button>
+          data-testid="thumbs-toggle" onClick={() => useStore.getState().setLayout({ thumbs: !thumbs })}><Icon name="image" size={15} /></button>
         <label className="zoom">
-          Zoom
-          <input type="range" min={4} max={300} value={pps} onChange={(e) => setZoom(+e.target.value)} />
+          <span className="tb-label">Zoom</span>
+          <input type="range" min={4} max={300} value={pps} aria-label="Zoom de la timeline" onChange={(e) => setZoom(+e.target.value)} />
         </label>
-        <button className="icon-btn" title="Zoom ajusté : tout le montage (Maj+Z)" aria-label="Zoom ajusté" onClick={() => useStore.getState().zoomFit()}><Icon name="grid" size={15} /></button>
+        <button className="icon-btn" title="Zoom ajusté : tout le montage (Maj+Z)" aria-label="Zoom ajusté" onClick={() => useStore.getState().zoomFit()}><Icon name="maximize" size={15} /></button>
+        <button className={`icon-btn ${showAll ? "on" : ""}`} title="Afficher toutes les pistes, même vides" aria-label="Toutes les pistes" aria-pressed={showAll}
+          onClick={() => setShowAll(!showAll)}><Icon name="layers" size={15} /></button>
         <button className="icon-btn" title="Raccourcis clavier (?)" aria-label="Raccourcis clavier" onClick={() => useStore.getState().setHelp(true)}><span className="kbd-q">?</span></button>
       </div>
       <div className="timeline-scroll" ref={scroller}>
-        <div className="timeline-inner" style={{ width }}>
+        <div className={`timeline-inner ${showAll ? "show-all" : ""}`} style={{ width }}>
           <div className="ruler" onMouseDown={seekFromEvent}>
             {ticks.map((t) => (
               <div key={t} className="tick" style={{ left: t * pps }}>
@@ -391,17 +382,17 @@ export function TimelineView() {
               </div>
             ))}
           </div>
-          <div className="track track-broll" data-label="B-roll" onMouseDown={seekFromEvent}>
+          <div className={`track track-broll ${empty(tracks.broll)}`} data-label="B-roll" onMouseDown={seekFromEvent}>
             {(tl.overlays || []).map((o) => (
               <div key={o.id} className={`item-block broll ${isSel("overlay", o.id) ? "sel" : ""}`}
-                style={{ left: o.start * pps, width: Math.max(4, (o.src_out - o.src_in) * pps), borderColor: colorFor(o.media_id) }}
+                style={{ left: o.start * pps, width: Math.max(14, (o.src_out - o.src_in) * pps), "--rush": colorFor(o.media_id) } as React.CSSProperties}
                 onMouseDown={(e) => startMoveItem(e, "overlay", o.id, o.start)}
                 title={`${mediaName(o.media_id)} · ${o.mode === "plein" ? "plein écran" : "incrustation"}\n${o.reason}`}>
                 <Icon name={o.mode === "plein" ? "square" : "image"} size={10} strokeWidth={2.4} />{mediaName(o.media_id)}
               </div>
             ))}
           </div>
-          <div className="track track-video" onMouseDown={(e) => e.target === e.currentTarget && seekFromEvent(e)}
+          <div className={`track track-video ${empty(tracks.video)}`} data-label="Vidéo" onMouseDown={(e) => e.target === e.currentTarget && seekFromEvent(e)}
             onDragOver={(e) => {
               e.preventDefault();
               if (!e.dataTransfer.types.includes(MEDIA_DRAG_TYPE)) return;
@@ -429,9 +420,9 @@ export function TimelineView() {
               return (
                 <div
                   key={c.id}
-                  className={`clip ${inSel ? "sel" : ""} ${drag === i || (groupDrag && inSel) ? "dragging" : ""} ${dropAt === i ? "drop-before" : ""}`}
+                  className={`clip ${inSel ? "sel" : ""} ${drag === i || (groupDrag && inSel) ? "dragging" : ""} ${dropAt === i ? "drop-before" : ""} ${i < 10 ? "cascade" : ""}`}
                   data-clip={c.id}
-                  style={{ left: starts[i] * pps, width: Math.max(2, w), background: colorFor(c.media_id) }}
+                  style={{ left: starts[i] * pps, width: Math.max(2, w), background: colorFor(c.media_id), "--i": i } as React.CSSProperties}
                   draggable
                   onDragStart={(e) => {
                     setDrag(i);
@@ -460,14 +451,14 @@ export function TimelineView() {
                     setPlayhead(starts[i] + (e.clientX - r.left) / pps);
                   }}
                   onClick={(e) => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey && inSel && selectedIds.length > 1) select(c.id); }}
-                  title={`${mediaName(c.media_id)} · ${c.src_in.toFixed(2)}–${c.src_out.toFixed(2)} s\n${c.reason}\nMaj + glisser : décaler le contenu du plan\nCtrl + clic : ajouter à la sélection · Maj + clic : sélectionner jusqu'ici`}
+                  title={`${mediaName(c.media_id)} · ${c.src_in.toFixed(2)}–${c.src_out.toFixed(2)} s\nNote du réalisateur : ${Math.round(c.score * 100)}/100\n${c.reason}\nMaj + glisser : décaler le contenu du plan\nCtrl + clic : ajouter à la sélection · Maj + clic : sélectionner jusqu'ici`}
                 >
                   {thumbs && w > 24 && md?.has_video && (
                     <Filmstrip pid={project.id} mediaId={c.media_id} duration={md.duration} srcIn={c.src_in} srcOut={c.src_out} width={w} />
                   )}
                   <div className="handle left" onMouseDown={(e) => startTrim(e, c.id, "in")} onClick={(e) => e.stopPropagation()} />
                   {c.transition !== "aucune" && i > 0 && (
-                    <div className="trans-mark" title={`Transition : ${labelOf(catalog?.transitions, c.transition)}`}>⟡</div>
+                    <div className="trans-mark" title={`Transition : ${labelOf(catalog?.transitions, c.transition)}`}><Icon name="transition" size={12} strokeWidth={2.2} /></div>
                   )}
                   {w > 30 && (
                     <div className="clip-label">
@@ -486,24 +477,25 @@ export function TimelineView() {
                   ))}
                   {(c.fade_in ?? 0) > 0 && <div className="fade fade-in" title={`Fondu d'entrée ${c.fade_in} s`} style={{ width: Math.min(w, (c.fade_in ?? 0) * pps) }} />}
                   {(c.fade_out ?? 0) > 0 && <div className="fade fade-out" title={`Fondu de sortie ${c.fade_out} s`} style={{ width: Math.min(w, (c.fade_out ?? 0) * pps) }} />}
-                  <div className="score" style={{ width: `${Math.round(c.score * 100)}%` }} />
+                  <div className={`score score-${c.score >= 0.7 ? "hi" : c.score >= 0.5 ? "mid" : "lo"}`} style={{ width: `${Math.round(c.score * 100)}%` }}
+                    title={`Note du réalisateur : ${Math.round(c.score * 100)}/100`} />
                   <div className="handle right" onMouseDown={(e) => startTrim(e, c.id, "out")} onClick={(e) => e.stopPropagation()} />
                 </div>
               );
             })}
             {dropAt === tl.clips.length && <div className="drop-end" style={{ left: total * pps }} />}
           </div>
-          <div className="track track-texts" data-label="Textes" onMouseDown={seekFromEvent}>
+          <div className={`track track-texts ${empty(tracks.texts)}`} data-label="Textes" onMouseDown={seekFromEvent}>
             {(tl.texts || []).map((x) => (
               <div key={x.id} className={`item-block text ${isSel("text", x.id) ? "sel" : ""}`}
-                style={{ left: x.start * pps, width: Math.max(4, x.duration * pps) }}
+                style={{ left: x.start * pps, width: Math.max(14, x.duration * pps) }}
                 onMouseDown={(e) => startMoveItem(e, "text", x.id, x.start)}
                 title={`${labelOf(catalog?.text_styles, x.style)} : ${x.text}`}>
-                T {x.text}
+                <Icon name="type" size={10} strokeWidth={2.4} />{x.text}
               </div>
             ))}
           </div>
-          <div className="track track-sfx" data-label="Bruitages" onMouseDown={seekFromEvent}>
+          <div className={`track track-sfx ${empty(tracks.sfx)}`} data-label="Bruitages" onMouseDown={seekFromEvent}>
             {(tl.sfx || []).map((s) => (
               <div key={s.id} className={`item-block sfx ${isSel("sfx", s.id) ? "sel" : ""}`}
                 style={{ left: s.start * pps }}
@@ -513,7 +505,7 @@ export function TimelineView() {
               </div>
             ))}
           </div>
-          <div className="track track-images" data-label="Images" onMouseDown={seekFromEvent}>
+          <div className={`track track-images ${empty(tracks.images)}`} data-label="Images" onMouseDown={seekFromEvent}>
             {(tl.images || []).map((g) => (
               <div key={g.id} className={`item-block image ${isSel("image", g.id) ? "sel" : ""}`}
                 style={{ left: g.start * pps, width: Math.max(16, (g.duration ?? Math.max(0, total - g.start)) * pps) }}
@@ -522,7 +514,7 @@ export function TimelineView() {
               </div>
             ))}
           </div>
-          <div className="track track-impacts" data-label="Impacts 3D" onMouseDown={seekFromEvent}>
+          <div className={`track track-impacts ${empty(tracks.impacts)}`} data-label="Impacts 3D" onMouseDown={seekFromEvent}>
             {(tl.impacts || []).map((s, k, all) => (
               <div key={s.id} className={`impact-pin k-${s.kind} ${isSel("impact", s.id) ? "sel" : ""}`}
                 // les impacts posés au même instant s'affichent en éventail pour rester cliquables
@@ -531,7 +523,7 @@ export function TimelineView() {
                 title={`${labelOf(catalog?.impacts, s.kind)} · ${Math.round(s.intensity * 100)} %${s.reason ? " · " + s.reason : ""}`} />
             ))}
           </div>
-          <div className="track track-comments" data-label="Commentaires" onMouseDown={seekFromEvent}>
+          <div className={`track track-comments ${empty(tracks.comments)}`} data-label="Commentaires" onMouseDown={seekFromEvent}>
             {(tl.comments || []).map((cm) => {
               const t = commentTime(tl, cm);
               if (t == null) return null;
@@ -545,10 +537,10 @@ export function TimelineView() {
             })}
           </div>
           {Array.from({ length: Math.min(4, Math.max(1, ...(tl.audio || []).map((a) => a.lane + 1))) }, (_, lane) => (
-            <div key={lane} className="track track-audio" data-label={`Audio ${lane + 1}`} onMouseDown={seekFromEvent}>
+            <div key={lane} className={`track track-audio ${empty(!(tl.audio || []).some((a) => a.lane === lane))}`} data-label={`Audio ${lane + 1}`} onMouseDown={seekFromEvent}>
               {(tl.audio || []).filter((a) => a.lane === lane).map((a) => (
                 <div key={a.id} className={`item-block audio k-${a.kind} ${isSel("audio", a.id) ? "sel" : ""}`}
-                  style={{ left: a.start * pps, width: Math.max(8, (a.src_out - a.src_in) * pps) }}
+                  style={{ left: a.start * pps, width: Math.max(14, (a.src_out - a.src_in) * pps) }}
                   onMouseDown={(e) => startMoveItem(e, "audio", a.id, a.start)}
                   title={`${a.label || a.asset} · ${(a.src_out - a.src_in).toFixed(1)} s · ${Math.round(a.volume * 100)} %`}>
                   <Icon name={a.kind === "voix" ? "mic" : a.kind === "musique" ? "music" : "volume"} size={10} strokeWidth={2.4} />{a.label || a.asset}
@@ -556,7 +548,7 @@ export function TimelineView() {
               ))}
             </div>
           ))}
-          <div className="track track-captions" onMouseDown={seekFromEvent}>
+          <div className={`track track-captions ${empty(tracks.captions)}`} data-label="Sous-titres" onMouseDown={seekFromEvent}>
             {tl.captions !== "aucun" &&
               captions.map((l, i) => (
                 <div key={i} className="cap-block" style={{ left: l.start * pps, width: Math.max(2, (l.end - l.start) * pps) }}>
@@ -564,7 +556,7 @@ export function TimelineView() {
                 </div>
               ))}
           </div>
-          <div className="track track-music" onMouseDown={seekFromEvent}>
+          <div className={`track track-music ${empty(tracks.music)}`} data-label="Musique" onMouseDown={seekFromEvent}>
             {tl.music.track && (
               <div className="music-block" style={{ width: total * pps }}>
                 <Icon name="music" size={11} strokeWidth={2.2} /> {tl.music.track.split(/[\\/]/).pop()} · {Math.round(tl.music.volume * 100)} %

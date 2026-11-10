@@ -54,15 +54,20 @@ export function VoiceOverButton() {
     rec?.mr.stop();
     setRec(null);
   };
+  // `data-voiceover` sur les deux états : le module Audio de gauche déclenche ce bouton (instance unique, dans la barre de la timeline).
   return rec ? (
-    <button className="rec on" onClick={stop} title="Arrêter l'enregistrement"><Icon name="square" size={12} strokeWidth={2.6} />{secs.toFixed(0)} s</button>
+    <button className="rec on" data-voiceover="on" onClick={stop} title="Arrêter l'enregistrement" aria-label="Arrêter l'enregistrement de la voix off">
+      <Icon name="square" size={12} strokeWidth={2.6} /><span className="rec-time">{secs.toFixed(0)} s</span>
+    </button>
   ) : (
-    <button className="rec" onClick={start} title="Enregistrer une voix off au micro, depuis le curseur"><Icon name="mic" size={14} />Voix off</button>
+    <button className="rec" data-voiceover="off" onClick={start} title="Enregistrer une voix off au micro, depuis le curseur" aria-label="Enregistrer une voix off">
+      <Icon name="mic" size={14} /><span className="tb-label">Voix off</span>
+    </button>
   );
 }
 
 /** Importe un son (bruitage, musique, voix enregistrée ailleurs) et le pose au curseur. */
-export function AddSoundButton() {
+export function AddSoundButton({ label }: { label?: string } = {}) {
   const project = useStore((s) => s.project);
   const input = useRef<HTMLInputElement>(null);
   if (!project) return null;
@@ -78,7 +83,11 @@ export function AddSoundButton() {
           addAudio(asset, duration, "son", undefined, f.name.replace(/\.[^.]+$/, ""));
         } catch (err) { notify((err as Error).message); }
       }} />
-      <button onClick={() => input.current?.click()} title="Importer un son ou une musique sur une piste audio"><Icon name="music" size={14} />Son</button>
+      {label ? (
+        <button onClick={() => input.current?.click()} title="Importer un son ou une musique sur une piste audio"><Icon name="music" size={14} />{label}</button>
+      ) : (
+        <button onClick={() => input.current?.click()} title="Importer un son ou une musique sur une piste audio" aria-label="Ajouter un son"><Icon name="music" size={14} /><span className="tb-label">Son</span></button>
+      )}
     </>
   );
 }

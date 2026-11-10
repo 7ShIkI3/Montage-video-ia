@@ -4,6 +4,7 @@ import { api, ExportPreset, Format, StyleTemplate, Versions } from "../api";
 import { isBusy, jobOf, useStore } from "../store";
 import { Icon } from "../icons";
 import { ask } from "./Dialog";
+import { STYLES } from "./left/AIModule";
 
 async function saveIfDirty() {
   await useStore.getState().saveNow();
@@ -65,14 +66,19 @@ export function VersionsPanel() {
               <span className="v-name">{v.name}</span>
               <span className="muted small">{Math.round(v.duration)} s{v.note ? ` · ${v.note}` : ""}</span>
             </button>
-            {v.score != null && <span className={`score-badge ${v.score >= 70 ? "hi" : v.score >= 50 ? "mid" : ""}`}>{v.score}</span>}
+            {v.score != null && (
+              <span className={`score-badge ${v.score >= 70 ? "hi" : v.score >= 50 ? "mid" : ""}`} title={`Score IA : ${v.score} sur 100`}>
+                {v.score}<span className="score-max">/100</span>
+              </span>
+            )}
             <button className="icon-btn" title="Renommer" onClick={() => rename(v.id, v.name)} aria-label="Renommer"><Icon name="pencil" size={14} /></button>
             {vs.versions.length > 1 && <button className="icon-btn" title="Supprimer" onClick={() => remove(v.id, v.name)} aria-label="Supprimer"><Icon name="x" size={14} /></button>}
           </li>
         ))}
       </ul>
-      <div className="shorts-box">
-        <div className="fx-title">Shorts automatiques</div>
+      {vs?.versions.some((v) => v.score != null) && <p className="muted small score-legend">Score IA /100 : la note que le réalisateur donne à chaque version.</p>}
+      <details className="shorts-box">
+        <summary>Shorts automatiques</summary>
         <p className="muted small">Cherche les passages les plus partageables, les monte en vertical et leur donne un score.</p>
         <div className="field-row">
           <label>Nombre<select value={count} onChange={(e) => setCount(+e.target.value)}>{[1, 2, 3, 4, 5, 8].map((n) => <option key={n}>{n}</option>)}</select></label>
@@ -80,15 +86,23 @@ export function VersionsPanel() {
           <label>Format<select value={fmt} onChange={(e) => setFmt(e.target.value as Format)}><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="16:9">16:9</option></select></label>
         </div>
         <button className="primary small" disabled={busy} onClick={shorts}><Icon name="scissors" size={14} />Générer les shorts</button>
-      </div>
+      </details>
     </section>
   );
+}
+
+/** Métadonnées d'un modèle en clair : « Style YouTube · 16:9 · look Cinéma · logo ». */
+function templateMeta(t: StyleTemplate, looks?: { id: string; label: string }[]): string {
+  const style = STYLES.find((x) => x.id === t.style)?.name ?? t.style;
+  const look = t.look && t.look !== "aucun" ? looks?.find((l) => l.id === t.look)?.label ?? t.look : null;
+  return [`Style ${style}`, t.format, look ? `look ${look}` : "sans look", t.images.length ? "logo" : null, t.brand ? "marque" : null].filter(Boolean).join(" · ");
 }
 
 export function TemplatesPanel() {
   const project = useStore((s) => s.project);
   const { notify, setTimeline, guard } = useStore.getState();
   const [list, setList] = useState<StyleTemplate[]>([]);
+  const looks = useStore((s) => s.catalog?.looks);
   useEffect(() => {
     const load = () => api.templates().then(setList).catch(() => undefined);
     load();
@@ -125,7 +139,7 @@ export function TemplatesPanel() {
           <li key={t.id}>
             <button className="v-main" onClick={() => apply(t)} title="Appliquer à ce projet">
               <span className="v-name">{t.name}</span>
-              <span className="muted small">{t.style} · {t.format} · {t.look}{t.images.length ? " · logo" : ""}{t.brand ? " · marque" : ""}</span>
+              <span className="muted small">{templateMeta(t, looks)}</span>
             </button>
             <button className="icon-btn" title="Supprimer" onClick={() => del(t)} aria-label="Supprimer"><Icon name="x" size={14} /></button>
           </li>
@@ -239,7 +253,11 @@ export function BrandPanel() {
       {b ? (
         <div className="brand-card">
           <div className="brand-swatches">
-            {b.colors.map((c) => <span key={c} style={{ background: c }} title={c} className={c === b.accent ? "acc" : c === b.primary ? "pri" : ""} />)}
+            {b.colors.map((c) => (
+              <span key={c} style={{ background: c }} title={c} role="img"
+                aria-label={`Couleur ${c}${c === b.accent ? " (accent)" : c === b.primary ? " (principale)" : ""}`}
+                className={c === b.accent ? "acc" : c === b.primary ? "pri" : ""} />
+            ))}
           </div>
           <p className="small"><b>{b.name || "Marque"}</b> · principale {b.primary} · accent {b.accent}</p>
           {b.font && <p className="small">Police {b.font}{b.font_installed ? "" : " (non installée : police par défaut au rendu)"}</p>}

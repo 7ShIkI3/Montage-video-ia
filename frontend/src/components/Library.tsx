@@ -160,3 +160,19 @@ export function UrlImport({ placeholder, busy, onSubmit }: { placeholder: string
     </form>
   );
 }
+
+/** Bouton qui ouvre la bibliothèque musicale ; choisir un morceau en fait la musique de fond du montage. */
+export function MusicLibraryButton({ label = "Bibliothèque…", className = "small-btn" }: { label?: string; className?: string }) {
+  const tl = useStore((s) => s.timeline);
+  const [open, setOpen] = useState(false);
+  if (!tl) return null;
+  return (
+    <>
+      {open && <MusicLibraryDialog current={tl.music.track} onClose={() => setOpen(false)}
+        onPick={(path) => useStore.getState().setTimelineProps({ music: { ...tl.music, track: path } })} />}
+      <button type="button" className={className} onClick={() => setOpen(true)} title="Bibliothèque, musiques libres de droits, son d'un lien">
+        <Icon name="music" size={13} />{label}
+      </button>
+    </>
+  );
+}
