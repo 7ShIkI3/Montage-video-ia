@@ -54,12 +54,13 @@ def red_flashes(frames_rgb: np.ndarray, fps: float = config.ANALYSIS_FPS, min_ga
 
 
 def overlays(brightness: list[float], fps: float = config.ANALYSIS_FPS, ratio: float = 0.62, around: float = 20.0,
-             pad: float = 0.4) -> list[list[float]]:
+             pad: float = 0.4, max_len: float = 10.0) -> list[list[float]]:
     """Intervalles [début, fin] où un menu assombrit l'image (inventaire, pause, réglages du client).
 
     Un jeu assombrit le décor derrière un menu : la luminosité tombe d'un coup sous 62 % de son niveau habituel
     des 20 s autour. Une scène durablement sombre (nuit, grotte, long écran de lobby) devient son propre niveau
-    habituel et n'est pas signalée.
+    habituel et n'est pas signalée. Au-delà de `max_len` secondes, ce n'est plus un menu ouvert en passant mais un
+    passage sombre du jeu (tunnel, effet d'obscurité) : on ne l'écarte pas.
     """
     b = np.asarray(brightness, dtype=np.float32)
     if b.size < 3 or fps <= 0:
@@ -76,7 +77,8 @@ def overlays(brightness: list[float], fps: float = config.ANALYSIS_FPS, ratio: f
             j = i
             while j + 1 < b.size and dark[j + 1]:
                 j += 1
-            out.append([round(max(0.0, i / fps - pad), 3), round((j + 1) / fps + pad, 3)])
+            if (j + 1 - i) / fps <= max_len:
+                out.append([round(max(0.0, i / fps - pad), 3), round((j + 1) / fps + pad, 3)])
             i = j + 1
         else:
             i += 1

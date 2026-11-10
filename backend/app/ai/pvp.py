@@ -111,9 +111,10 @@ def candidates(media: list, hits_by_media: dict[str, list], blocked: dict[str, l
     """Rafales candidates de tous les rushes, hors menus. Si aucun coup ne s'enchaîne au rythme d'un combo
     (jeu plus lent, coups espacés), on se rabat sur les séries de coups rapprochés, bornées à quelques secondes."""
     clean = {m.id: hits_an.outside(hits_by_media.get(m.id) or [], (blocked or {}).get(m.id) or []) for m in media}
-    out = [(mid, c) for mid, hits in clean.items() for c in hits_an.bursts(hits)]
-    if not out:
-        out = [(mid, c) for mid, hits in clean.items() for c in hits_an.bursts(hits, max_gap=1.6, min_hits=3)]
+    # Le repli se décide rush par rush : un rush au rythme lent garde ses séries même si un autre a de vrais combos
+    # (et ses rafales gardent les mêmes bornes d'un montage à l'autre, donc les verdicts du jury restent valables).
+    out = [(mid, c) for mid, hits in clean.items()
+           for c in (hits_an.bursts(hits) or hits_an.bursts(hits, max_gap=1.6, min_hits=3))]
     for mid, c in out:
         # Dernière rafale d'un combat : presque plus de coups pendant plusieurs secondes après (un clic de menu
         # isolé ne compte pas). C'est là que se joue l'issue, kill ou mort : le jury la regarde en premier.
@@ -249,6 +250,13 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
         return tl
 
     ranked, why, checked = rank_candidates(all_combos, verdicts, target)
+    if not ranked:
+        # Le jury a regardé toutes les rafales et n'en retient aucune : mieux vaut le dire que monter des rafales subies.
+        tl.summary = (f"Le jury IA a regardé {len(all_combos)} rafales de coups et n'en a trouvé aucune à ton avantage "
+                      "dans ces rushes (combos subis ou hors combat).")
+        tl.rejected = [Clip(media_id=m, src_in=c["start"], src_out=c["end"], score=0.0,
+                            reason=why.get((m, jury.key(c)), "Écarté par le jury IA.")) for m, c in all_combos]
+        return tl
 
     def _kill(mid: str, c: dict) -> bool:
         return (verdicts.get((mid, jury.key(c))) or {}).get("fin") == "kill"
@@ -279,7 +287,7 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
         part = _plan_combo(c, mid, durations.get(mid, c["end"] + 2), beat, slow=(mid, c) == best or _kill(mid, c))
         v = verdicts.get((mid, jury.key(c)))
         if v:
-            part[0].reason += f" Jury IA : {jury.label(v)}."
+            part[0].reason += f" Jury IA : {jury.label(v).rstrip('.')}."
         elif verdicts:
             part[0].reason += " Pas regardé par le jury IA."
         if k > 0:

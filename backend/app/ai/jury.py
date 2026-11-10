@@ -79,6 +79,11 @@ def cached(project_id: str, media_id: str) -> dict:
     return dict(((storage.load_signals(project_id, media_id) or {}).get("jury") or {}).get("verdicts") or {})
 
 
+def skipped(project_id: str, media_id: str) -> set[str]:
+    """Rafales déjà montrées au jury sans qu'il rende de verdict : on ne les renvoie pas à chaque montage."""
+    return set(((storage.load_signals(project_id, media_id) or {}).get("jury") or {}).get("skipped") or [])
+
+
 def judge(project_id: str, candidates: list[tuple[Media, dict]], ctx=None) -> dict[tuple[str, str], dict]:
     """Fait juger les rafales pas encore vues et renvoie tous les verdicts connus : {(média, clé): verdict}.
 
@@ -89,7 +94,8 @@ def judge(project_id: str, candidates: list[tuple[Media, dict]], ctx=None) -> di
     for mid in {m.id for m, _ in candidates}:
         for k, v in cached(project_id, mid).items():
             known[(mid, k)] = v
-    todo = [(m, c) for m, c in candidates if (m.id, key(c)) not in known][:MAX_CANDIDATES]
+    passed = {(mid, k) for mid in {m.id for m, _ in candidates} for k in skipped(project_id, mid)}
+    todo = [(m, c) for m, c in candidates if (m.id, key(c)) not in known and (m.id, key(c)) not in passed][:MAX_CANDIDATES]
     if not todo or not config.claude_available():
         return known
     import anthropic
@@ -138,11 +144,16 @@ def judge(project_id: str, candidates: list[tuple[Media, dict]], ctx=None) -> di
              "n": c["n"]}
         fresh.setdefault(m.id, {})[key(c)] = v
         known[(m.id, key(c))] = v
-    for mid, rows in fresh.items():
+    silent: dict[str, list[str]] = {}  # envoyées, restées sans réponse : notées pour ne pas les repayer
+    for m, c in sent:
+        if (m.id, key(c)) not in known:
+            silent.setdefault(m.id, []).append(key(c))
+    for mid in set(fresh) | set(silent):
         sig = storage.load_signals(project_id, mid) or {}  # relu : l'analyse a pu écrire entre-temps
         jury = sig.get("jury") or {}
         jury = {"model": getattr(r, "model", config.CLAUDE_MODEL), "at": time.time(),
-                "verdicts": {**(jury.get("verdicts") or {}), **rows}}
+                "verdicts": {**(jury.get("verdicts") or {}), **fresh.get(mid, {})},
+                "skipped": sorted(set(jury.get("skipped") or []) | set(silent.get(mid, [])))}
         sig["jury"] = jury
         storage.save_signals(project_id, mid, sig)
     log.info("Jury : %d verdicts rendus sur %d rafales envoyées (%d images)", sum(len(v) for v in fresh.values()), len(sent), images)

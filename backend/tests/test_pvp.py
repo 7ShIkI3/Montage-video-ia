@@ -307,3 +307,64 @@ def test_best_combo_closes_the_edit_and_only_it_is_slowed():
     tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=60), "x", verdicts=verdicts)
     assert sum(c.speed < 1 for c in tl.clips) == 2
 
+
+def test_everything_rejected_by_the_jury_does_not_crash():
+    from app.ai import jury
+    from app.models import EditSettings
+    m = _M()
+    h = _train(10, 6, strength=0.9)
+    (mid, c), = pvp.candidates([m], {"m1": h})
+    verdicts = {(mid, jury.key(c)): {"verdict": "adversaire_domine", "fin": "mort", "note": 1, "raison": "tué", "n": 6}}
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp"), verdicts=verdicts)
+    assert tl.clips == [] and "aucune à ton avantage" in tl.summary
+    assert len(tl.rejected) == 1 and "tu meurs" in tl.rejected[0].reason
+
+
+def test_slow_rush_keeps_its_fights_next_to_a_fast_one():
+    """Le repli (coups espacés) se décide rush par rush : un rush rapide n'efface pas les combats d'un rush lent."""
+    slow = [[round(10 + f * 30 + k * 1.0, 3), 0.8] for f in range(5) for k in range(5)]
+    alone = pvp.candidates([_M("A")], {"A": slow})
+    both = pvp.candidates([_M("A"), _M("B")], {"A": slow, "B": _train(50, 4)})
+    assert len(alone) == 5 and len(both) == 6
+    from app.ai import jury
+    assert {jury.key(c) for mid, c in both if mid == "A"} == {jury.key(c) for _, c in alone}, "mêmes clés : le cache du jury tient"
+
+
+def test_overlays_ignore_a_long_dark_passage():
+    from app.analysis import video
+    lum = [100.0] * 500 + [45.0] * 60 + [100.0] * 500  # 12 s sombres à 5 images/s : un tunnel, pas un menu
+    assert video.overlays(lum, 5) == []
+    lum = [100.0] * 500 + [45.0] * 15 + [100.0] * 500  # 3 s : un inventaire
+    assert len(video.overlays(lum, 5)) == 1
+
+
+def test_jury_does_not_resend_candidates_left_unanswered(monkeypatch):
+    import json as _json
+    import types
+
+    import anthropic
+
+    from app import config, storage
+    from app.ai import jury, vision
+    pid = TestClient(app).post("/api/projects", json={"name": "Jury muet"}).json()["id"]
+    m = _M("m_muet")
+    cands = pvp.candidates([m], {m.id: _three_fights()})
+    calls = []
+
+    def create(**kw):
+        calls.append(kw)
+        rows = [{"index": 0, "verdict": "joueur_domine", "fin": "rien", "note": 7, "raison": "ok"}]  # 2 candidats sans réponse
+        text = types.SimpleNamespace(type="text", text=_json.dumps({"candidats": rows}))
+        return types.SimpleNamespace(content=[text], stop_reason="end_turn", model="claude-test")
+
+    fake = types.SimpleNamespace(beta=types.SimpleNamespace(messages=types.SimpleNamespace(create=create)))
+    monkeypatch.setattr(config, "claude_available", lambda: True)
+    monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: fake)
+    monkeypatch.setattr(vision, "jpeg", lambda path, t, zone="entier", width=768: b"faux")
+    assert len(jury.judge(pid, [(m, c) for _, c in cands])) == 1
+    assert len(jury.skipped(pid, m.id)) == 2
+    assert len(jury.judge(pid, [(m, c) for _, c in cands])) == 1 and len(calls) == 1, "pas de second appel pour les mêmes rafales"
+    known = {(m.id, jury.key(cands[0][1]))} | {(m.id, k) for k in jury.skipped(pid, m.id)}
+    assert pvp.shortlist(cands, 14, known) == []
+    assert storage.load_signals(pid, m.id)["jury"]["verdicts"]
+

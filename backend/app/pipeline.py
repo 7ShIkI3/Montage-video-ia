@@ -177,10 +177,13 @@ def _pvp_edit(project: Project, settings: EditSettings, music: str | None, ctx: 
         ranked, _, checked = pvp_mod.rank_candidates(cands, verdicts, target)
         return sum(c["end"] - c["start"] + 0.9 for _, c in ranked[:checked]) >= 0.6 * target
 
+    # Un re-montage (des verdicts existent déjà) ne fait qu'un tour : le coût d'un « Remonter » reste borné.
+    rounds = 1 if verdicts else JURY_ROUNDS
+    passed = {(mid, k) for mid in sigs for k in jury_mod.skipped(project.id, mid)}
     if cands and config.claude_available():
         try:
-            for _ in range(JURY_ROUNDS):
-                rows = pvp_mod.shortlist(cands, jury_mod.MAX_CANDIDATES, set(verdicts))
+            for _ in range(rounds):
+                rows = pvp_mod.shortlist(cands, jury_mod.MAX_CANDIDATES, set(verdicts) | passed)
                 if not rows or enough():
                     break
                 before = len(verdicts)
