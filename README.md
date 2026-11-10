@@ -133,8 +133,8 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
   l'app a mesuré : coups au son, combos, écrans rouges, changements de plan, paroles horodatées, montage plan par
   plan, repères, commentaires, notes de recherche), **regarde les images** quand la réponse en dépend (des images
   du rush aux instants qu'il choisit, avec recadrage d'un coin pour lire un petit texte), lit la transcription,
-  cherche sur le web, et **agit** : refaire le découpage à des instants précis, retoucher un plan, poser un texte ou
-  des repères, ou confier une consigne libre au monteur automatique. Sa réponse s'écrit au fil de l'eau, chaque
+  cherche sur le web, et **agit** : refaire le découpage à des instants précis, retoucher un plan (durée, vitesse,
+  couleurs), régler le mixage, poser un texte ou des repères, ou confier une consigne libre au monteur automatique. Sa réponse s'écrit au fil de l'eau, chaque
   message garde la liste de ce qu'il a fait, et tout changement s'annule par `Ctrl+Z`. « Ce qu'il sait » affiche
   le dossier tel qu'il le lit. Au plus 30 images par message. Sans clé Claude, le message est appliqué comme une
   consigne simple par le réalisateur local.

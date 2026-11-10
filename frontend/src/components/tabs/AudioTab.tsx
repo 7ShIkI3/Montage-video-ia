@@ -18,8 +18,11 @@ const NEUTRAL_MIX: Mixer = Object.fromEntries(MIX_GROUPS.map((g) => [g.id, { vol
 function MixerSection() {
   const mix = useStore((s) => s.timeline?.mix) ?? NEUTRAL_MIX;
   const { setTimelineProps } = useStore.getState();
-  const set = (g: MixGroup, patch: Partial<Mixer[MixGroup]>) =>
-    setTimelineProps({ mix: { ...NEUTRAL_MIX, ...mix, [g]: { ...NEUTRAL_MIX[g], ...mix[g], ...patch } } });
+  const set = (g: MixGroup, patch: Partial<Mixer[MixGroup]>) => {
+    // Lu dans le store au moment du geste, pas au rendu : deux réglages rapprochés ne s'écrasent pas.
+    const cur = useStore.getState().timeline?.mix ?? NEUTRAL_MIX;
+    setTimelineProps({ mix: { ...NEUTRAL_MIX, ...cur, [g]: { ...NEUTRAL_MIX[g], ...cur[g], ...patch } } });
+  };
   return (
     <div className="fx-section mixer">
       <div className="fx-title">Mixage</div>

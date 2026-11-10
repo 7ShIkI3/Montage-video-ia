@@ -235,3 +235,23 @@ def test_web_search_tool_follows_the_model(monkeypatch):
     assert chat.web_search_tool()["type"] == "web_search_20260209"
     monkeypatch.setattr(config, "CLAUDE_MODEL", "claude-haiku-5-5")
     assert chat.web_search_tool(5) == {"type": "web_search_20250305", "name": "web_search", "max_uses": 5}
+
+
+def test_agent_color_and_mix_tools(rush, with_claude):
+    """Le réalisateur corrige les couleurs d'un plan et règle le mixage ; le dossier le reflète."""
+    pid = _project_with_rush(rush, "Couleur et mixage")
+    with_claude([
+        _msg(_use("definir_plans", "p", plans=[{"media": "rush.mp4", "debut": 0, "fin": 4}]), stop="tool_use"),
+        _msg(_use("retoucher_plan", "c", numero=1, couleur={"exposition": 0.3, "saturation": 5}),
+             _use("regler_mixage", "m", reglages=[{"groupe": "musique", "volume": 0.5}, {"groupe": "plans", "coupe": True}]),
+             _use("regler_mixage", "x", reglages=[{"groupe": "batterie", "volume": 1}]), stop="tool_use"),
+        _msg(_block(type="text", text="Plan éclairci, musique à 50 %, son du jeu coupé.")),
+    ])
+    j = _wait(client.post(f"/api/projects/{pid}/chat", json={"text": "Trop sombre, et coupe le son du jeu."}).json())
+    assert j["status"] == "termine" and j["result"]["applied"] is True
+    tl = client.get(f"/api/projects/{pid}").json()["timeline"]
+    assert tl["clips"][0]["color"] == {"exposure": 0.3, "contrast": 0.0, "saturation": 1.0, "temperature": 0.0}
+    assert tl["mix"]["music"] == {"volume": 0.5, "mute": False} and tl["mix"]["rushes"]["mute"] is True
+    d = dossier.project_dossier(storage.load_project(pid))
+    assert "couleurs corrigées" in d and "Mixage : plans coupé, musique 50 %" in d
+    assert any("mixage" in a for a in j["result"]["message"]["actions"])
