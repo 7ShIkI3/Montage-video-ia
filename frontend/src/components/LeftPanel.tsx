@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { api, Direction, EditSettings, fmtTime, Style } from "../api";
-import { isBusy, useStore } from "../store";
+import { isBusy, MEDIA_DRAG_TYPE, useStore } from "../store";
 import { Icon } from "../icons";
 import { UrlImport } from "./Library";
 import { ask } from "./Dialog";
@@ -37,7 +37,7 @@ export function MediaPanel() {
 
   return (
     <section className={`panel media-panel ${over ? "over" : ""}`}
-      onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+      onDragOver={(e) => { if (!e.dataTransfer.types.includes("Files")) return; e.preventDefault(); setOver(true); }}  // un rush du chutier qu'on glisse n'est pas un import
       onDragLeave={() => setOver(false)}
       onDrop={(e) => { e.preventDefault(); setOver(false); send([...e.dataTransfer.files]); }}>
       <header>
@@ -60,7 +60,10 @@ export function MediaPanel() {
       )}
       <ul className="media-list">
         {project.media.map((m) => (
-          <li key={m.id}>
+          <li key={m.id} draggable tabIndex={0} title="Clic : ouvrir dans le moniteur source · glisser sur la piste vidéo : poser le rush (ou sa portion marquée)"
+            onClick={() => useStore.getState().openSource(m.id)}
+            onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) useStore.getState().openSource(m.id); }}
+            onDragStart={(e) => { e.dataTransfer.setData(MEDIA_DRAG_TYPE, m.id); e.dataTransfer.effectAllowed = "copy"; }}>
             <div className="thumb">
               {m.proxy ? <img src={api.thumbUrl(project.id, m.id)} alt="" /> : <Icon name={m.has_video ? "film" : "mic"} size={16} />}
             </div>
@@ -70,7 +73,8 @@ export function MediaPanel() {
                 {fmtTime(m.duration)} · {m.width ? `${m.width}×${m.height}` : "audio"} {m.analyzed ? "· analysé" : ""}
               </div>
             </div>
-            <button className="icon-btn" title="Retirer" onClick={async () => {
+            <button className="icon-btn" title="Retirer" onClick={async (e) => {
+              e.stopPropagation();  // ne pas ouvrir le moniteur source
               if (!await ask.confirm(`Retirer ${m.filename} du projet ?`, { title: "Retirer le média", ok: "Retirer", danger: true })) return;
               const st = useStore.getState();
               await st.guard("Retrait impossible", async () => {

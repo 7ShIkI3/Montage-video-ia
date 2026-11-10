@@ -106,6 +106,11 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
 - Timeline : glisser-déposer pour réordonner, poignées pour raccourcir, `S` pour couper, `Suppr`,
   `Ctrl+Z` / `Ctrl+Y`, zoom, forme d'onde. Aimantation aux frontières des plans, au curseur et aux repères
   (`Alt` pour l'ignorer).
+- Montage à la main depuis zéro : un clic sur un rush du chutier l'ouvre dans le moniteur source (lecture, image
+  par image, marques `I` / `O`) ; « Insérer au curseur » (`,` ou `Entrée`, coupe le plan sous le curseur), « Ajouter
+  à la fin » (`.`) ou « En plan de coupe » le posent ; on peut aussi glisser un rush sur la piste vidéo (sa portion
+  marquée est reprise). `Ctrl+C` / `Ctrl+X` / `Ctrl+V` copient, coupent et collent un plan ou un élément au curseur,
+  et `Maj` + glisser sur un plan décale son contenu sans changer sa durée (slip).
 - Au clavier, comme dans un logiciel pro : `J` / `K` / `L` (reculer, pause, lecture à ×1, ×2, ×4), `↑` / `↓`
   plan précédent / suivant, `I` / `O` rognent le plan au curseur, `Ctrl+D` duplique, `Ctrl+←` / `→` déplace,
   `+` / `-` et `Ctrl+molette` zooment, `Maj+Z` ajuste le zoom, `?` affiche tous les raccourcis.
