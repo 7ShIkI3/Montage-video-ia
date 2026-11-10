@@ -111,6 +111,12 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
   à la fin » (`.`) ou « En plan de coupe » le posent ; on peut aussi glisser un rush sur la piste vidéo (sa portion
   marquée est reprise). `Ctrl+C` / `Ctrl+X` / `Ctrl+V` copient, coupent et collent un plan ou un élément au curseur,
   et `Maj` + glisser sur un plan décale son contenu sans changer sa durée (slip).
+- Sélection multiple : `Ctrl` + clic ajoute ou retire un plan, `Maj` + clic sélectionne jusqu'au plan cliqué,
+  `Ctrl+A` les prend tous. Supprimer, copier, couper, dupliquer, glisser ou décaler d'un cran agit alors sur tout
+  le groupe, et un réglage de l'inspecteur (zoom, volume, vitesse, fondus, transition, effets, couleurs) s'applique
+  à tous les plans sélectionnés.
+- Vignettes dans les plans de la timeline : chaque plan montre les images du rush à l'endroit qu'il recouvre
+  (une « pellicule » par rush, fabriquée une fois puis gardée ; le bouton en forme de film les masque).
 - Au clavier, comme dans un logiciel pro : `J` / `K` / `L` (reculer, pause, lecture à ×1, ×2, ×4), `↑` / `↓`
   plan précédent / suivant, `I` / `O` rognent le plan au curseur, `Ctrl+D` duplique, `Ctrl+←` / `→` déplace,
   `+` / `-` et `Ctrl+molette` zooment, `Maj+Z` ajuste le zoom, `?` affiche tous les raccourcis.

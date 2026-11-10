@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from typing import Literal
 import uuid
@@ -302,6 +303,41 @@ def media_thumb(pid: str, mid: str):
     if not path.exists():
         raise HTTPException(404, "Miniature pas encore prête")
     return FileResponse(path, media_type="image/jpeg")
+
+
+_STRIP_LOCK = threading.Lock()  # une pellicule à la fois : chacune lance déjà 8 FFmpeg
+
+
+@app.get("/api/projects/{pid}/media/{mid}/filmstrip")
+def media_filmstrip(pid: str, mid: str):
+    """Pellicule du rush pour la timeline (grille de vignettes), fabriquée à la première demande puis gardée.
+
+    Les en-têtes X-Strip-* décrivent la grille : l'interface n'a pas à connaître les constantes du serveur.
+    """
+    p = _project(pid)
+    try:
+        m = p.media_by_id(mid)
+    except KeyError:
+        raise HTTPException(404, "Média introuvable")
+    if not m.has_video:
+        raise HTTPException(404, "Ce média n'a pas d'image")
+    path = storage.cache_dir(pid) / f"{mid}.strip.jpg"
+    n = ffmpeg.filmstrip_count(m.duration)
+    if not path.exists():
+        with _STRIP_LOCK:
+            if not path.exists():  # une autre requête vient peut-être de la fabriquer
+                src = m.proxy if m.proxy and Path(m.proxy).exists() else m.path
+                # 503 et non 404 : l'interface réessaiera (disque rebranché), alors qu'un 404 est définitif.
+                if not Path(src).exists():
+                    raise HTTPException(503, "Fichier du rush introuvable pour l'instant")
+                try:
+                    ffmpeg.filmstrip(src, path, m.duration, n)
+                except ffmpeg.FFmpegError as e:
+                    raise HTTPException(503, f"Vignettes impossibles : {e}")
+    return FileResponse(path, media_type="image/jpeg", headers={
+        "X-Strip-Count": str(n), "X-Strip-Cols": str(ffmpeg.STRIP_COLS),
+        "X-Strip-Tile": f"{ffmpeg.STRIP_W}x{ffmpeg.STRIP_H}", "Cache-Control": "private, max-age=86400",
+    })
 
 
 @app.get("/api/projects/{pid}/media/{mid}/signals")

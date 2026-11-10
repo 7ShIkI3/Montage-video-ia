@@ -2,10 +2,10 @@
 import { useEffect, useRef, useState } from "react";
 import { api, Clip } from "../api";
 import { CapHint, Gate, needClaude, needVoice } from "../caps";
-import { clipAt, clipStarts, isBusy, localToSrc, useStore } from "../store";
+import { CUTOUTS, clipAt, clipStarts, isBusy, localToSrc, useStore } from "../store";
 
 type Lut = { id: string; label: string; builtin: boolean };
-export const CUTOUTS = ["detourage_flou", "detourage_studio", "detourage_noir", "detourage_blanc", "detourage_image"];
+export { CUTOUTS };  // défini dans le store, qui s'en sert aussi pour la sélection multiple
 
 /** Rush et instant source sous le curseur (ou au début du plan donné), pour l'aperçu image fixe. */
 function sourceAtPlayhead(c?: Clip): { media: string; t: number } | null {

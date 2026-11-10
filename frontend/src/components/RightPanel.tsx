@@ -154,11 +154,18 @@ export function CommentsPanel() {
 export function ClipEditor({ c }: { c: Clip }) {
   const catalog = useStore((s) => s.catalog);
   const segments = useStore((s) => s.segments);
+  const multi = useStore((s) => s.selectedIds.length);
   const { updateClip } = useStore.getState();
   const segText = (id: string | null) => segments.find((s) => s.id === id)?.text ?? "";
   return (
     <>
-      <header><h3>Plan sélectionné</h3></header>
+      <header><h3>{multi > 1 ? `${multi} plans sélectionnés` : "Plan sélectionné"}</h3></header>
+      {multi > 1 && (
+        <p className="multi-note" data-testid="multi-note">
+          Zoom, volume, vitesse, fondus, transition, effets et couleurs s'appliquent aux <b>{multi} plans</b>.
+          L'entrée, la sortie et les images clés ne changent que ce plan.
+        </p>
+      )}
       <p className="why"><b>Pourquoi ce plan est gardé :</b> {c.reason || "—"}</p>
       {segText(c.segment_id) && <p className="quote">« {segText(c.segment_id)} »</p>}
       <div className="score-row">Score <div className="bar"><div style={{ width: `${c.score * 100}%` }} /></div> {Math.round(c.score * 100)}</div>
