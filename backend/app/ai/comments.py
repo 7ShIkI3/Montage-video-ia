@@ -282,19 +282,20 @@ def is_region_action(c: Comment) -> bool:
 
 
 def carry_overrides(old: Timeline, new: Timeline) -> None:
-    """Après une réécriture du montage par Claude, on garde les zones (flous, cadres, cadrages)
-    posées sur les mêmes passages des rushes."""
+    """Après une réécriture du montage par Claude, on garde les réglages faits à la main sur les mêmes passages
+    des rushes : zones (flous, cadres, cadrages) et correction des couleurs."""
     for n in new.clips:
-        if n.masks or n.focus_x is not None:
-            continue
         for o in old.clips:
-            if o.media_id != n.media_id or not (o.masks or o.focus_x is not None):
+            if o.media_id != n.media_id or not (o.masks or o.focus_x is not None or o.color is not None):
                 continue
             overlap = min(o.src_out, n.src_out) - max(o.src_in, n.src_in)
             if overlap > 0.5 * min(o.source_duration, n.source_duration):
-                n.masks = [m.model_copy() for m in o.masks]
-                if o.focus_x is not None:
-                    n.focus_x, n.focus_y, n.zoom = o.focus_x, o.focus_y, o.zoom
+                if not (n.masks or n.focus_x is not None):
+                    n.masks = [m.model_copy() for m in o.masks]
+                    if o.focus_x is not None:
+                        n.focus_x, n.focus_y, n.zoom = o.focus_x, o.focus_y, o.zoom
+                if n.color is None and o.color is not None:
+                    n.color = o.color.model_copy()
                 break
 
 

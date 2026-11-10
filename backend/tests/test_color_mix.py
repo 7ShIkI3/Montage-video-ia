@@ -249,3 +249,17 @@ def test_mix_survives_auto_edit_and_ai_command(rush):
     j = wait(client.post(f"/api/projects/{pid}/command", json={"instruction": "format vertical"}).json())
     assert j["status"] == "termine"
     assert mix() == tl["mix"]
+
+
+def test_color_survives_an_ai_rewrite():
+    """Quand Claude refait le montage, la correction des couleurs suit le même passage du rush."""
+    from app.ai import comments
+    from app.models import Clip, ColorAdjust, Timeline
+    old = Timeline(clips=[Clip(media_id="m", src_in=2.0, src_out=6.0, color=ColorAdjust(exposure=0.4)),
+                          Clip(media_id="m", src_in=10.0, src_out=12.0)])
+    new = Timeline(clips=[Clip(media_id="m", src_in=2.5, src_out=5.5), Clip(media_id="m", src_in=20.0, src_out=22.0),
+                          Clip(media_id="autre", src_in=2.0, src_out=6.0)])
+    comments.carry_overrides(old, new)
+    assert new.clips[0].color and new.clips[0].color.exposure == 0.4
+    assert new.clips[0].color is not old.clips[0].color
+    assert new.clips[1].color is None and new.clips[2].color is None

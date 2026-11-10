@@ -125,7 +125,8 @@ def test_restore_refuses_path_traversal_and_unknown_names():
     for name in ("..", "../project.json", "..%2Fproject.json", "%2e%2e", "project.json",
                  "project-20200101-000000-000.json/../../x", "project-20200101-000000-000.json\\..\\x"):
         r = client.post(f"/api/projects/{p.id}/backups/{name}/restore")
-        assert r.status_code in (400, 404), (name, r.status_code)
+        # 405 : chemin normalisé par le client, plus aucune route d'API ne correspond (fichiers statiques, lecture seule)
+        assert r.status_code in (400, 404, 405), (name, r.status_code)
     with pytest.raises(ValueError):
         storage.backup_path(p.id, "../" + other.id + "/project.json")
     with pytest.raises(ValueError):

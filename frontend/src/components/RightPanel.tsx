@@ -214,7 +214,7 @@ function ColorSection({ c }: { c: Clip }) {
   return (
     <div className="fx-section color-section">
       <div className="fx-title">
-        Couleur
+        Correction des couleurs
         <button className="small-btn" disabled={!hasColor(c.color)} onClick={() => updateClip(c.id, { color: null })}>Réinitialiser</button>
       </div>
       {COLOR_SLIDERS.map(({ key, label, hint }) => (
