@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtTime } from "../api";
-import { clipDur, clipStarts, commentTime, localToSrc, rampOf, Sel, snapPoints, snapTo, timelineDuration, useStore } from "../store";
+import { clipDur, clipStarts, commentTime, localToSrc, MEDIA_DRAG_TYPE, rampOf, Sel, snapPoints, snapTo, sourceRange, timelineDuration, useStore } from "../store";
 import { AddSoundButton, VoiceOverButton } from "./AudioTools";
 import { Icon } from "../icons";
 
@@ -153,6 +153,36 @@ export function TimelineView() {
     window.addEventListener("mouseup", up);
   };
 
+  // Slip : Maj + glisser sur un plan décale son contenu (src_in et src_out ensemble), la durée ne change pas.
+  // Le contenu suit la souris : vers la droite, on voit un passage plus tôt dans le rush. Une seule étape d'annulation.
+  const startSlip = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();  // ni glisser-déposer natif du plan, ni sélection de texte
+    const c = tl.clips.find((x) => x.id === id)!;
+    const m = project.media.find((x) => x.id === c.media_id);
+    const maxT = m && m.duration > 0 ? m.duration : Infinity;
+    const perSec = (c.src_out - c.src_in) / Math.max(1e-3, clipDur(c));  // secondes de rush par seconde de montage (vitesse)
+    const x0 = e.clientX;
+    let first = true;
+    document.body.classList.add("slipping");
+    const move = (ev: MouseEvent) => {
+      const shift = Math.max(-c.src_in, Math.min(maxT - c.src_out, -((ev.clientX - x0) / pps) * perSec));
+      const src_in = +(c.src_in + shift).toFixed(3);
+      const st = useStore.getState();
+      if (src_in === st.timeline?.clips.find((x) => x.id === id)?.src_in) return;  // rien n'a bougé : pas d'étape d'annulation
+      const past = st.past;
+      st.updateClip(id, { src_in, src_out: +(src_in + (c.src_out - c.src_in)).toFixed(3) });
+      if (!first) useStore.setState({ past });  // les mouvements suivants remplacent l'étape créée au premier
+      first = false;
+    };
+    const up = () => {
+      document.body.classList.remove("slipping");
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
   // Glisser un texte, un bruitage ou un plan de coupe sur sa piste (une seule étape d'annulation).
   const startMoveItem = (e: React.MouseEvent, kind: "text" | "sfx" | "overlay" | "impact" | "image" | "audio" | "marker", id: string, start: number) => {
     e.stopPropagation();
@@ -289,7 +319,25 @@ export function TimelineView() {
             ))}
           </div>
           <div className="track track-video" onMouseDown={(e) => e.target === e.currentTarget && seekFromEvent(e)}
-            onDragOver={(e) => e.preventDefault()}>
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (!e.dataTransfer.types.includes(MEDIA_DRAG_TYPE)) return;
+              e.dataTransfer.dropEffect = "copy";
+              if (e.target === e.currentTarget) setDropAt(tl.clips.length);  // au-delà du dernier plan : à la fin
+            }}
+            onDragLeave={(e) => { if (drag === null && !e.currentTarget.contains(e.relatedTarget as Node | null)) setDropAt(null); }}
+            onDrop={(e) => {
+              // Rush du chutier déposé : sa portion marquée (I/O dans le moniteur source), ou le rush entier.
+              const mediaId = e.dataTransfer.getData(MEDIA_DRAG_TYPE);
+              if (!mediaId) return;
+              e.preventDefault();
+              const at = dropAt ?? tl.clips.length;
+              setDropAt(null);
+              const st = useStore.getState();
+              const r = sourceRange(st.project, st.sourceMarks, mediaId);
+              if (!r) return st.notify("Portion du rush trop courte : vérifie ses marques d'entrée et de sortie.");
+              st.insertClip(mediaId, r[0], r[1], at);
+            }}>
             {tl.clips.map((c, i) => {
               const w = clipDur(c) * pps;
               return (
@@ -314,10 +362,11 @@ export function TimelineView() {
                   }}
                   onMouseDown={(e) => {
                     select(c.id);
+                    if (e.shiftKey) { startSlip(e, c.id); return; }
                     const r = e.currentTarget.getBoundingClientRect();
                     setPlayhead(starts[i] + (e.clientX - r.left) / pps);
                   }}
-                  title={`${mediaName(c.media_id)} · ${c.src_in.toFixed(2)}–${c.src_out.toFixed(2)} s\n${c.reason}`}
+                  title={`${mediaName(c.media_id)} · ${c.src_in.toFixed(2)}–${c.src_out.toFixed(2)} s\n${c.reason}\nMaj + glisser : décaler le contenu du plan`}
                 >
                   <div className="handle left" onMouseDown={(e) => startTrim(e, c.id, "in")} />
                   {c.transition !== "aucune" && i > 0 && (
