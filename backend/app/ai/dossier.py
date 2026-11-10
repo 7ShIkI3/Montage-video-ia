@@ -110,7 +110,8 @@ def montage_section(project: Project, max_clips: int = 40) -> list[str]:
         out.append(f"Résumé du réalisateur : {tl.summary[:500]}")
     t = 0.0
     for k, c in enumerate(tl.clips[:max_clips], 1):
-        fx = ", ".join(x for x in [f"×{c.speed}" if c.speed != 1 else "", *c.effects] if x)
+        fx = ", ".join(x for x in [f"×{c.speed}" if c.speed != 1 else "", *c.effects,
+                                   "couleurs corrigées" if c.color and not c.color.neutral else ""] if x)
         out.append(f"  {k}. {mmss(t)} ← {names.get(c.media_id, c.media_id)} {mmss(c.src_in)}→{mmss(c.src_out)}"
                    + (f" ({fx})" if fx else ""))
         t += c.duration
@@ -118,6 +119,9 @@ def montage_section(project: Project, max_clips: int = 40) -> list[str]:
         out.append(f"  … {len(tl.clips) - max_clips} autres plans")
     if tl.texts:
         out.append("Textes : " + " | ".join(f"{mmss(x.start)} « {x.text[:60]} »" for x in tl.texts[:12]))
+    mix = {"plans": tl.mix.rushes, "musique": tl.mix.music, "bruitages": tl.mix.sfx, "pistes": tl.mix.tracks}
+    if any(ch.mute or abs(ch.volume - 1) > 1e-3 for ch in mix.values()):
+        out.append("Mixage : " + ", ".join(f"{k} coupé" if ch.mute else f"{k} {ch.volume * 100:.0f} %" for k, ch in mix.items()))
     if tl.review:
         out.append(f"Note du relecteur : {tl.review.score:.1f}/10")
     if tl.quality:

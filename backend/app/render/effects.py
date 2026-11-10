@@ -83,6 +83,30 @@ def video_effect_filter(name: str, W: int, H: int, d: float, fps: int = 30) -> s
     return f
 
 
+def color_filter(color) -> str | None:
+    """Correction colorimétrique d'un plan (ColorAdjust) en filtres FFmpeg ; None si elle est neutre.
+
+    L'aperçu (frontend/src/fxPreview.ts) utilise les mêmes coefficients : exposition = luminosité ajoutée
+    0,2 par unité, contraste = 1 + 0,6 par unité, saturation = 1 + 1 par unité."""
+    if color is None or color.neutral:
+        return None
+    out = []
+    eq = []
+    if color.exposure:
+        eq.append(f"brightness={0.2 * color.exposure:.4f}")
+    if color.contrast:
+        eq.append(f"contrast={1 + 0.6 * color.contrast:.4f}")
+    if color.saturation:
+        eq.append(f"saturation={1 + color.saturation:.4f}")
+    if eq:
+        out.append("eq=" + ":".join(eq))
+    if color.temperature:
+        t = color.temperature  # chaud : plus de rouge, moins de bleu (et l'inverse pour le froid)
+        out.append(f"colorbalance=rs={0.15 * t:.4f}:bs={-0.15 * t:.4f}:"
+                   f"rm={0.15 * t:.4f}:bm={-0.15 * t:.4f}:rh={0.08 * t:.4f}:bh={-0.08 * t:.4f}")
+    return ",".join(out)
+
+
 # ---------------------------------------------------------------------------
 # Transitions d'entrée (sans chevauchement : la durée de la timeline ne change pas)
 # ---------------------------------------------------------------------------
@@ -140,6 +164,10 @@ AUDIO_EFFECTS: dict[str, dict] = {
     "voix_claire": {"label": "Voix claire (EQ + compression)",
                     "filter": "highpass=f=80,equalizer=f=3000:t=q:w=1:g=3,"
                               "acompressor=threshold=0.1:ratio=3:attack=10:release=150"},
+    # Chaîne de studio : filtre les graves, enlève le bruit de fond, compresse doucement, ajoute de la présence.
+    "voix_studio": {"label": "Voix studio (nettoyage + présence)",
+                    "filter": "highpass=f=80,afftdn=nf=-25,acompressor=threshold=0.12:ratio=2.5:attack=15:release=200,"
+                              "equalizer=f=4000:t=q:w=1:g=2.5"},
     "anti_bruit": {"label": "Réduction de bruit", "filter": "afftdn=nf=-25"},
     "echo": {"label": "Écho", "filter": "aecho=0.8:0.7:90:0.35"},
     "salle": {"label": "Réverbération", "filter": "aecho=0.8:0.6:30|47|75:0.3|0.25|0.2"},

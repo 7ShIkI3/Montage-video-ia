@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, Clip, fmtTime, ImpactItem, OverlayItem, Timeline } from "../api";
 import { clipAt, clipDur, clipStarts, commentTime, kfAt, localToSrc, rampOf, speedAt, srcToLocal, timelineDuration, useStore } from "../store";
-import { cssFilter, fxClasses, overlaysFor } from "../fxPreview";
+import { cssFilter, fxClasses, mixGain, overlaysFor } from "../fxPreview";
 import { Icon } from "../icons";
 import { LIVE_KINDS } from "../stages";
 import { LiveDirector } from "./LiveDirector";
@@ -136,11 +136,12 @@ export function Player() {
     const target = c.src_in + localToSrc(c, Math.max(0, offset));
     if (Math.abs(el.currentTime - target) > 0.04) el.currentTime = target;
     el.style.transform = baseTransform(c, offset / Math.max(0.1, clipDur(c)));
-    el.style.filter = cssFilter(c.effects, look);
+    el.style.filter = cssFilter(c.effects, look, c.color);
     reframe(el, c, target);
     el.playbackRate = speedAt(c, Math.max(0, offset)) * useStore.getState().rate;
-    el.muted = c.audio_effects.includes("muet");
-    el.volume = Math.min(1, Math.max(0, c.volume));
+    const rushes = mixGain(tl?.mix, "rushes");  // mixeur : son des plans
+    el.muted = c.audio_effects.includes("muet") || rushes === 0;
+    el.volume = Math.min(1, Math.max(0, c.volume * rushes));
   }
 
   function reframe(el: HTMLVideoElement, c: Clip, srcTime: number) {
@@ -303,7 +304,7 @@ export function Player() {
       const fadeIn = a.fade_in > 0 ? Math.min(1, into / a.fade_in) : 1;
       const left = a.src_out - a.src_in - into;
       const fadeOut = a.fade_out > 0 ? Math.min(1, left / a.fade_out) : 1;
-      el.volume = Math.max(0, Math.min(1, a.volume * fadeIn * fadeOut));
+      el.volume = Math.max(0, Math.min(1, a.volume * mixGain(tl.mix, "tracks") * fadeIn * fadeOut));
       const want = a.src_in + into;
       if (el.paused) {
         el.currentTime = want;
@@ -368,7 +369,7 @@ export function Player() {
     const mu = music.current;
     if (mu && tl.music.track) {
       if (mu.duration) mu.currentTime = (t0 + (tl.music.start || 0)) % mu.duration;
-      mu.volume = Math.min(1, tl.music.volume * 1.5);
+      mu.volume = Math.min(1, tl.music.volume * mixGain(tl.mix, "music") * 1.5);
       mu.play().catch(() => undefined);
     }
     const starts = clipStarts(tl);
@@ -388,10 +389,10 @@ export function Player() {
       const fi = c.fade_in || 0, fo = c.fade_out || 0;
       if (fi > 0 || fo > 0) {
         const cd = clipDur(c);
-        el.volume = Math.max(0, Math.min(1, c.volume * (fi > 0 ? Math.min(1, loc / fi) : 1) * (fo > 0 ? Math.min(1, (cd - loc) / fo) : 1)));
+        el.volume = Math.max(0, Math.min(1, c.volume * mixGain(tl.mix, "rushes") * (fi > 0 ? Math.min(1, loc / fi) : 1) * (fo > 0 ? Math.min(1, (cd - loc) / fo) : 1)));
       }
       syncAudio(t, true);
-      for (const s of sfx) if (s.start > reported.current && s.start <= t) playSfx(s.kind, s.volume);
+      for (const s of sfx) if (s.start > reported.current && s.start <= t) playSfx(s.kind, s.volume * mixGain(tl.mix, "sfx"));
       for (const im of impacts) if (im.start > reported.current && im.start <= t) fireImpact(im);
       reported.current = t;
       // Boucle sur la zone d'entrée/sortie (Ctrl+L) : arrivé à la sortie, on repart de l'entrée
@@ -419,7 +420,8 @@ export function Player() {
         const same =
           contiguous && Math.abs(n.zoom - c.zoom) < 1e-3 && n.speed === c.speed && n.transition === "aucune" &&
           !rampOf(n) && !rampOf(c) && !n.keyframes?.length && !c.keyframes?.length &&
-          n.effects.join() === c.effects.join() && n.audio_effects.join() === c.audio_effects.join();
+          n.effects.join() === c.effects.join() && n.audio_effects.join() === c.audio_effects.join() &&
+          JSON.stringify(n.color ?? null) === JSON.stringify(c.color ?? null);
         if (same) {
           cur.current = ni;
         } else {

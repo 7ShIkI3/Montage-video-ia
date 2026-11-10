@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
-import { api, Clip, EffectsCatalog, fmtTime, Opt, Timeline } from "../api";
+import { api, Clip, ColorAdjust, EffectsCatalog, fmtTime, Opt, Timeline } from "../api";
 import { CapHint } from "../caps";
+import { hasColor } from "../fxPreview";
 import { clipAt, clipStarts, commentTime, ItemKind, srcToLocal, useStore } from "../store";
 import { ImageButtons } from "./Studio";
 import { MotionEditor } from "./Motion";
@@ -193,8 +194,36 @@ export function ClipEditor({ c }: { c: Clip }) {
         </label>
       </div>
       <MotionEditor c={c} />
+      <ColorSection c={c} />
       {catalog && <ClipEffects c={c} catalog={catalog} />}
     </>
+  );
+}
+
+const COLOR_SLIDERS: { key: keyof ColorAdjust; label: string; hint: string }[] = [
+  { key: "exposure", label: "Exposition", hint: "Plus sombre ou plus lumineux" },
+  { key: "contrast", label: "Contraste", hint: "Écart entre les clairs et les ombres" },
+  { key: "saturation", label: "Saturation", hint: "Intensité des couleurs (tout à gauche : noir et blanc)" },
+  { key: "temperature", label: "Température", hint: "Du froid (bleuté) au chaud (orangé)" },
+];
+
+/** Correction colorimétrique du plan : 4 curseurs de -100 % à +100 %, 0 = image d'origine. */
+function ColorSection({ c }: { c: Clip }) {
+  const { updateClip } = useStore.getState();
+  const cur: ColorAdjust = c.color ?? { exposure: 0, contrast: 0, saturation: 0, temperature: 0 };
+  return (
+    <div className="fx-section color-section">
+      <div className="fx-title">
+        Correction des couleurs
+        <button className="small-btn" disabled={!hasColor(c.color)} onClick={() => updateClip(c.id, { color: null })}>Réinitialiser</button>
+      </div>
+      {COLOR_SLIDERS.map(({ key, label, hint }) => (
+        <label key={key} title={hint}>{label} {cur[key] > 0 ? "+" : ""}{Math.round(cur[key] * 100)} %
+          <input type="range" min={-1} max={1} step={0.01} value={cur[key]}
+            onChange={(e) => updateClip(c.id, { color: { ...cur, [key]: +e.target.value } })} />
+        </label>
+      ))}
+    </div>
   );
 }
 

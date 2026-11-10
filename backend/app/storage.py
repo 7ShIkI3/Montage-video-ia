@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import shutil
 import threading
 import time
@@ -9,6 +11,12 @@ from pathlib import Path
 
 from . import config
 from .models import Project, Segment, Transcript
+
+log = logging.getLogger(__name__)
+
+BACKUP_INTERVAL = 300.0  # secondes minimum entre deux sauvegardes automatiques
+BACKUP_KEEP = 10  # nombre de sauvegardes gardées
+_BACKUP_NAME = re.compile(r"^project-\d{8}-\d{6}-\d{3}\.json$")
 
 _lock = threading.RLock()
 _plocks: dict[str, threading.Lock] = {}
@@ -120,13 +128,102 @@ def _write_json(path: Path, data: str) -> None:
     tmp.replace(path)
 
 
+# --- Sauvegardes automatiques -------------------------------------------------
+
+def backups_dir(project_id: str) -> Path:
+    return project_dir(project_id) / "backups"
+
+
+def _backup_files(project_id: str) -> list[Path]:
+    """Sauvegardes du projet, de la plus récente à la plus ancienne (le nom contient la date)."""
+    d = backups_dir(project_id)
+    if not d.is_dir():
+        return []
+    return sorted((f for f in d.iterdir() if _BACKUP_NAME.match(f.name)), key=lambda f: f.name, reverse=True)
+
+
+def _write_backup(project_id: str, data: str, force: bool = False) -> None:
+    """Copie datée de project.json. Sans `force`, au plus une toutes les BACKUP_INTERVAL secondes ;
+    les BACKUP_KEEP plus récentes sont gardées."""
+    files = _backup_files(project_id)
+    now = time.time()
+    if not force and files and now - files[0].stat().st_mtime < BACKUP_INTERVAL:
+        return
+    d = backups_dir(project_id)
+    d.mkdir(parents=True, exist_ok=True)
+    ms = int(now * 1000)
+    while True:  # deux copies dans la même milliseconde : la seconde prend la milliseconde suivante
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(ms / 1000)) + f"-{ms % 1000:03d}"
+        if not (d / f"project-{stamp}.json").exists():
+            break
+        ms += 1
+    _write_json(d / f"project-{stamp}.json", data)
+    for old in _backup_files(project_id)[BACKUP_KEEP:]:
+        old.unlink(missing_ok=True)
+
+
+def backup_path(project_id: str, name: str) -> Path:
+    """Chemin d'une sauvegarde par son nom ; refuse tout nom qui ne ressemble pas à une sauvegarde
+    (dont les `..` et les séparateurs de chemin)."""
+    if not _BACKUP_NAME.match(name or ""):
+        raise ValueError("nom de sauvegarde invalide")
+    path = backups_dir(project_id) / name
+    if not path.is_file():
+        raise FileNotFoundError(name)
+    return path
+
+
+def list_backups(project_id: str) -> list[dict]:
+    """Sauvegardes lisibles du projet, de la plus récente à la plus ancienne."""
+    out = []
+    for f in _backup_files(project_id):
+        try:
+            p = Project.model_validate_json(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        out.append({"name": f.name, "at": f.stat().st_mtime, "clips": len(p.timeline.clips),
+                    "duration": p.timeline.duration})
+    return out
+
+
+def _load_latest_backup(project_id: str) -> Project | None:
+    for f in _backup_files(project_id):
+        try:
+            return Project.model_validate_json(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def restore_backup(project_id: str, name: str) -> Project:
+    """Remet une sauvegarde en place, après avoir gardé l'état courant comme sauvegarde."""
+    with _lock:
+        path = backup_path(project_id, name)
+        data = path.read_text(encoding="utf-8")
+        restored = Project.model_validate_json(data)  # refuse une sauvegarde illisible avant de toucher à quoi que ce soit
+        current = project_dir(project_id) / "project.json"
+        if current.exists():
+            try:
+                Project.model_validate_json(current.read_text(encoding="utf-8"))
+                _write_backup(project_id, current.read_text(encoding="utf-8"), force=True)
+            except (OSError, ValueError):
+                log.warning("Projet %s : état courant illisible, non gardé avant la restauration", project_id)
+        _write_json(current, data)
+    return restored
+
+
 def save_project(project: Project) -> Project:
     with _lock:
         project.ensure_versions()
         project.updated_at = time.time()
         d = project_dir(project.id)
         d.mkdir(parents=True, exist_ok=True)
-        _write_json(d / "project.json", project.model_dump_json(indent=2))
+        data = project.model_dump_json(indent=2)
+        _write_json(d / "project.json", data)
+        try:
+            _write_backup(project.id, data)
+        except OSError as e:  # une sauvegarde ratée ne doit jamais empêcher d'enregistrer
+            log.warning("Sauvegarde automatique du projet %s impossible : %s", project.id, e)
     return project
 
 
@@ -135,7 +232,18 @@ def load_project(project_id: str) -> Project:
         path = project_dir(project_id) / "project.json"
         if not path.exists():
             raise FileNotFoundError(project_id)
-        p = Project.model_validate_json(path.read_text(encoding="utf-8"))
+        try:
+            p = Project.model_validate_json(path.read_text(encoding="utf-8"))
+        except ValueError as e:  # JSON corrompu (coupure pendant l'écriture, disque…) : dernière sauvegarde
+            p = _load_latest_backup(project_id)
+            if p is None:
+                raise
+            log.warning("Projet %s : project.json illisible (%s), dernière sauvegarde automatique utilisée",
+                        project_id, str(e).splitlines()[0])
+            try:
+                shutil.copyfile(path, path.with_name("project.corrupt.json"))  # fichier abîmé gardé pour l'examiner
+            except OSError:
+                pass
     if p.active_version is None:  # projet créé avant les versions : on fige l'identifiant de la version
         save_project(p)
     return p
@@ -147,7 +255,9 @@ def list_projects() -> list[Project]:
         try:
             out.append(Project.model_validate_json(p.read_text(encoding="utf-8")))
         except Exception:
-            continue
+            b = _load_latest_backup(p.parent.name)  # project.json abîmé : le projet reste listé
+            if b:
+                out.append(b)
     return sorted(out, key=lambda p: p.updated_at, reverse=True)
 
 

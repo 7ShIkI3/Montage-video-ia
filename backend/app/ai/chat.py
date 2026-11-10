@@ -19,7 +19,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .. import config, storage
-from ..models import ChatMessage, Clip, Marker, Project, TextItem
+from ..models import ChatMessage, Clip, ColorAdjust, Marker, Project, TextItem
 from . import vision
 from .dossier import _phrases, mmss, montage_section, project_dossier
 
@@ -41,8 +41,9 @@ SYSTEM = (
     "Regarde peu d'images à la fois, bien choisies, et arrête-toi dès que tu sais.\n\n"
     "Agir quand on te le demande : une question, un avis ou un tri de passages n'est pas une demande de "
     "modification. Quand le monteur veut un changement, fais-le avec les outils : definir_plans pour construire ou "
-    "refaire le découpage à des instants précis, retoucher_plan pour un plan, ajouter_texte, poser_reperes, et "
-    "modifier_montage pour tout le reste (effets, transitions, musique, format, sous-titres, durée), décrit en une "
+    "refaire le découpage à des instants précis, retoucher_plan pour un plan (durée, vitesse, couleurs), "
+    "regler_mixage pour l'équilibre sonore, ajouter_texte, poser_reperes, et modifier_montage pour tout le reste "
+    "(effets, transitions, choix de la musique, format, sous-titres, durée), décrit en une "
     "consigne précise. Toutes les modifications sont annulables par le monteur.\n\n"
     "Répondre : en français, en tutoyant, court et concret (quelques phrases ou puces), avec des horodatages au "
     "format m:ss. Dis ce que tu as regardé et ce que tu as changé. Quand tu n'as pas pu vérifier quelque chose, "
@@ -80,12 +81,30 @@ class DefinirPlans(_In):
     resume: str = ""
 
 
+class CouleurIn(_In):
+    exposition: float = 0.0
+    contraste: float = 0.0
+    saturation: float = 0.0
+    temperature: float = 0.0
+
+
 class RetoucherPlan(_In):
     numero: int
     debut: float | None = None
     fin: float | None = None
     vitesse: float | None = None
+    couleur: CouleurIn | None = None
     supprimer: bool = False
+
+
+class ReglageMix(_In):
+    groupe: Literal["plans", "musique", "bruitages", "pistes"]
+    volume: float | None = None
+    coupe: bool | None = None
+
+
+class ReglerMixage(_In):
+    reglages: list[ReglageMix]
 
 
 class AjouterTexte(_In):
@@ -143,9 +162,22 @@ TOOLS: list[dict] = [
           ["plans"]),
     _tool("retoucher_plan",
           "Modifie un plan du montage actuel, désigné par son numéro dans le dossier : nouveau début ou nouvelle fin "
-          "(secondes dans le rush), vitesse, ou suppression. À appeler pour une retouche ciblée.",
+          "(secondes dans le rush), vitesse, correction des couleurs, ou suppression. À appeler pour une retouche "
+          "ciblée, par exemple un plan trop sombre ou trop terne que tu viens de regarder. Couleur : chaque valeur va "
+          "de -1 à 1, 0 = image d'origine (exposition : plus clair ou plus sombre ; température : -1 froid, 1 chaud).",
           {"numero": {"type": "integer"}, "debut": {"type": "number"}, "fin": {"type": "number"},
-           "vitesse": {"type": "number"}, "supprimer": {"type": "boolean"}}, ["numero"]),
+           "vitesse": {"type": "number"}, "supprimer": {"type": "boolean"},
+           "couleur": {"type": "object", "properties": {
+               "exposition": {"type": "number"}, "contraste": {"type": "number"},
+               "saturation": {"type": "number"}, "temperature": {"type": "number"}}}}, ["numero"]),
+    _tool("regler_mixage",
+          "Règle le mixage audio du montage par groupe de sons : « plans » (son des vidéos), « musique », "
+          "« bruitages », « pistes » (voix off, sons importés). Volume de 0 à 2 (1 = inchangé), `coupe` pour rendre "
+          "un groupe muet. À appeler quand le monteur parle d'équilibre sonore : musique trop forte, voix couverte, "
+          "couper le son du jeu.",
+          {"reglages": {"type": "array", "items": {"type": "object", "properties": {
+              "groupe": {"type": "string", "enum": ["plans", "musique", "bruitages", "pistes"]},
+              "volume": {"type": "number"}, "coupe": {"type": "boolean"}}, "required": ["groupe"]}}}, ["reglages"]),
     _tool("ajouter_texte",
           "Pose un texte à l'écran sur le montage (début en secondes sur la timeline du montage, pas dans le rush).",
           {"texte": {"type": "string"}, "debut": {"type": "number"}, "duree": {"type": "number"},
@@ -165,8 +197,9 @@ TOOLS: list[dict] = [
 _INPUTS: dict[str, type[_In]] = {
     "voir_images": VoirImages, "lire_paroles": LireParoles, "definir_plans": DefinirPlans,
     "retoucher_plan": RetoucherPlan, "ajouter_texte": AjouterTexte, "poser_reperes": PoserReperes,
-    "modifier_montage": ModifierMontage,
+    "modifier_montage": ModifierMontage, "regler_mixage": ReglerMixage,
 }
+_MIX_GROUPS = {"plans": "rushes", "musique": "music", "bruitages": "sfx", "pistes": "tracks"}
 
 
 def web_search_tool(max_uses: int = 3) -> dict:
@@ -303,6 +336,12 @@ class Agent:
             c.src_in, c.src_out = round(lo, 3), round(hi, 3)
             if a.vitesse is not None:
                 c.speed, c.speed_end = max(0.25, min(4.0, a.vitesse)), None
+            if a.couleur is not None:
+                def lim(v: float) -> float:
+                    return max(-1.0, min(1.0, v))
+                col = ColorAdjust(exposure=lim(a.couleur.exposition), contrast=lim(a.couleur.contraste),
+                                  saturation=lim(a.couleur.saturation), temperature=lim(a.couleur.temperature))
+                c.color = None if col.neutral else col
         storage.update_project(self.pid, apply)
         self.applied = True
         self.actions.append(f"A {'supprimé' if a.supprimer else 'retouché'} le plan {a.numero}")
@@ -336,6 +375,27 @@ class Agent:
         self.applied = True
         self.actions.append(f"A posé {len(new)} repère(s)")
         return "Repères posés : " + ", ".join(f"{mmss(k.t)} {k.label}" for k in new)
+
+    def regler_mixage(self, a: ReglerMixage) -> str:
+        if not a.reglages:
+            raise ToolError("Donne au moins un réglage.")
+
+        def apply(pr: Project) -> None:
+            for r in a.reglages:
+                ch = getattr(pr.timeline.mix, _MIX_GROUPS[r.groupe])
+                if r.volume is not None:
+                    ch.volume = max(0.0, min(2.0, r.volume))
+                if r.coupe is not None:
+                    ch.mute = r.coupe
+        storage.update_project(self.pid, apply)
+        self.applied = True
+        mix = storage.load_project(self.pid).timeline.mix
+        parts = []
+        for name, key in _MIX_GROUPS.items():
+            ch = getattr(mix, key)
+            parts.append(f"{name} coupé" if ch.mute else f"{name} {ch.volume * 100:.0f} %")
+        self.actions.append("A réglé le mixage : " + ", ".join(r.groupe for r in a.reglages))
+        return "Mixage : " + ", ".join(parts)
 
     def modifier_montage(self, a: ModifierMontage) -> str:
         from .. import pipeline

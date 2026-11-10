@@ -120,6 +120,11 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
   kit de publication (règles YouTube respectées) et tous passent en repères dans l'export XML.
 - Audio par plan : volume, fondus d'entrée et de sortie, coupure du son, dessinés sur la timeline et
   identiques au rendu.
+- Couleur par plan (exposition, contraste, saturation, température, bouton « Réinitialiser »), mixeur audio
+  (volume et muet pour le son des plans, la musique, les bruitages et les pistes audio, gardé quand l'IA refait le
+  montage) et effet « Voix studio » (nettoyage, compression douce, présence). Aperçu en CSS proche de l'export.
+- Sauvegardes automatiques du projet (une copie datée au plus toutes les 5 minutes, les 10 dernières gardées) :
+  onglet Montage, « Restaurer » ; si `project.json` est abîmé, la dernière sauvegarde est rechargée toute seule.
 - Depuis Internet : un rush ou une vidéo de référence depuis un lien (YouTube, Vimeo, fichier direct… via
   yt-dlp), une bibliothèque musicale avec recherche de musiques libres de droits (ccMixter, licence gardée
   à côté du fichier) ou le son d'un lien, et dans les réglages le téléchargement à l'avance des modèles Whisper
@@ -128,8 +133,8 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
   l'app a mesuré : coups au son, combos, écrans rouges, changements de plan, paroles horodatées, montage plan par
   plan, repères, commentaires, notes de recherche), **regarde les images** quand la réponse en dépend (des images
   du rush aux instants qu'il choisit, avec recadrage d'un coin pour lire un petit texte), lit la transcription,
-  cherche sur le web, et **agit** : refaire le découpage à des instants précis, retoucher un plan, poser un texte ou
-  des repères, ou confier une consigne libre au monteur automatique. Sa réponse s'écrit au fil de l'eau, chaque
+  cherche sur le web, et **agit** : refaire le découpage à des instants précis, retoucher un plan (durée, vitesse,
+  couleurs), régler le mixage, poser un texte ou des repères, ou confier une consigne libre au monteur automatique. Sa réponse s'écrit au fil de l'eau, chaque
   message garde la liste de ce qu'il a fait, et tout changement s'annule par `Ctrl+Z`. « Ce qu'il sait » affiche
   le dossier tel qu'il le lit. Au plus 30 images par message. Sans clé Claude, le message est appliqué comme une
   consigne simple par le réalisateur local.
