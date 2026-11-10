@@ -199,6 +199,7 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
     concat_pads = []
     total = 0.0
     clips = timeline.clips
+    mix = timeline.mix  # mixeur : gain et coupure par groupe de sons
 
     for i, c in enumerate(clips):
         m = project.media_by_id(c.media_id)
@@ -247,6 +248,11 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
             n_in += 1
             vchain.append(f"[{vin}:v]null")
         vchain.append("setsar=1")
+        # Correction colorimétrique du plan, avant les effets créatifs. Ce chemin sert aussi au rendu 3D
+        # (three_d=True) : la correction est donc appliquée avant le moteur 3D.
+        cf = fx.color_filter(c.color)
+        if cf:
+            vchain.append(cf)
         for e in c.effects:
             f = fx.video_effect_filter(e, W, H, d, FPS)
             if f:
@@ -282,7 +288,7 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
             # Fondus audio : ceux de la transition ou les micro-fondus anti-clic, allongés par les réglages du plan.
             fin = max(c.transition_duration if c.transition in ("fondu_noir", "fondu_blanc") else 0.02, min(c.fade_in, d / 2))
             fout = max(td_out if out_color else 0.03, min(c.fade_out, d / 2))
-            achain.append(f"volume={c.volume:.2f},apad,atrim=duration={d:.3f}")
+            achain.append(f"volume={c.volume * mix.rushes.gain:.2f},apad,atrim=duration={d:.3f}")
             achain.append(f"afade=t=in:d={fin:.2f},afade=t=out:st={max(0.0, d - fout):.3f}:d={fout:.2f}[a{i}]")
             filters.append(",".join(achain))
         else:
@@ -405,7 +411,7 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
         si = n_in
         n_in += 1
         ms = int(s.start * 1000)
-        filters.append(f"[{si}:a]aresample=48000,aformat=channel_layouts=stereo,volume={s.volume:.2f},"
+        filters.append(f"[{si}:a]aresample=48000,aformat=channel_layouts=stereo,volume={s.volume * mix.sfx.gain:.2f},"
                        f"adelay={ms}|{ms}[sx{k}]")
         sfx_labels.append(f"[sx{k}]")
     if sfx_labels:
@@ -426,7 +432,7 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
             fo = min(a.fade_out, dur / 2)
             filters.append(
                 f"[{n_in}:a:0]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,"
-                f"volume={a.volume:.3f},afade=t=in:d={min(a.fade_in, dur / 2):.3f},"
+                f"volume={a.volume * mix.tracks.gain:.3f},afade=t=in:d={min(a.fade_in, dur / 2):.3f},"
                 f"afade=t=out:st={max(0.0, dur - fo):.3f}:d={fo:.3f},adelay={ms}|{ms}[au{k}]")
             labs.append(f"[au{k}]")
             n_in += 1
@@ -438,13 +444,14 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
         inputs += (["-ss", f"{skip:.3f}"] if skip > 0 else []) + ["-stream_loop", "-1", "-i", music_path]
         mi = n_in
         n_in += 1
-        vol = timeline.music.volume
+        vol = timeline.music.volume * mix.music.gain
         fade = min(2.0, total / 4)
         filters.append(
             f"[{mi}:a:0]aresample=48000,aformat=channel_layouts=stereo,atrim=duration={total:.3f},"
             f"volume={vol:.3f},afade=t=in:d=0.5,afade=t=out:st={max(0.0, total - fade):.3f}:d={fade:.3f}[mus]"
         )
-        if timeline.music.ducking:
+        # Rushes coupés : plus de voix à laquelle la musique doit céder la place, donc pas de ducking.
+        if timeline.music.ducking and mix.rushes.gain > 0:
             filters.append(f"[{alabel}]asplit=2[voice][sc]")
             filters.append("[mus][sc]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=400[duck]")
             filters.append("[voice][duck]amix=inputs=2:duration=first:normalize=0[mix]")

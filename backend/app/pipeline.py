@@ -226,6 +226,7 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
         tl = decorate(tl, segments, settings, project.name)
     tl.comments = old_comments
     tl.brand = project.timeline.brand  # l'identité de marque survit au re-montage
+    tl.mix = project.timeline.mix  # le mixage aussi
     if tl.director == "claude":
         comments_mod.carry_overrides(project.timeline, tl)
         zone = [c for c in notes if comments_mod.is_region_action(c)]
@@ -331,6 +332,7 @@ def ai_command(project_id: str, instruction: str, ctx: JobContext) -> dict:
         if s2.music and not tl.music.track:
             tl.music.track = pick_music(project, s2.style)
     tl.comments = project.timeline.comments
+    tl.mix = project.timeline.mix
     if tl is not project.timeline:
         comments_mod.carry_overrides(project.timeline, tl)
     def apply(p: Project) -> None:

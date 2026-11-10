@@ -115,6 +115,11 @@ heuristique fait le travail et comprend les consignes courantes (durée, format,
   kit de publication (règles YouTube respectées) et tous passent en repères dans l'export XML.
 - Audio par plan : volume, fondus d'entrée et de sortie, coupure du son, dessinés sur la timeline et
   identiques au rendu.
+- Couleur par plan (exposition, contraste, saturation, température, bouton « Réinitialiser »), mixeur audio
+  (volume et muet pour le son des plans, la musique, les bruitages et les pistes audio, gardé quand l'IA refait le
+  montage) et effet « Voix studio » (nettoyage, compression douce, présence). Aperçu en CSS proche de l'export.
+- Sauvegardes automatiques du projet (une copie datée au plus toutes les 5 minutes, les 10 dernières gardées) :
+  onglet Montage, « Restaurer » ; si `project.json` est abîmé, la dernière sauvegarde est rechargée toute seule.
 - Depuis Internet : un rush ou une vidéo de référence depuis un lien (YouTube, Vimeo, fichier direct… via
   yt-dlp), une bibliothèque musicale avec recherche de musiques libres de droits (ccMixter, licence gardée
   à côté du fichier) ou le son d'un lien, et dans les réglages le téléchargement à l'avance des modèles Whisper

@@ -99,6 +99,19 @@ class Keyframe(BaseModel):
     ease: Literal["lineaire", "doux"] = "doux"
 
 
+class ColorAdjust(BaseModel):
+    """Correction colorimétrique d'un plan : 0 partout = image d'origine."""
+
+    exposure: float = Field(0.0, ge=-1.0, le=1.0)  # sous-exposé (-1) à surexposé (1)
+    contrast: float = Field(0.0, ge=-1.0, le=1.0)
+    saturation: float = Field(0.0, ge=-1.0, le=1.0)  # -1 = noir et blanc
+    temperature: float = Field(0.0, ge=-1.0, le=1.0)  # du froid (-1) au chaud (1)
+
+    @property
+    def neutral(self) -> bool:
+        return not (self.exposure or self.contrast or self.saturation or self.temperature)
+
+
 class Clip(BaseModel):
     id: str = Field(default_factory=lambda: new_id("c_"))
     media_id: str
@@ -121,6 +134,7 @@ class Clip(BaseModel):
     focus_y: float | None = None
     masks: list[Mask] = Field(default_factory=list)
     keyframes: list[Keyframe] = Field(default_factory=list)  # zoom et cadrage animés
+    color: ColorAdjust | None = None  # correction colorimétrique du plan (None = aucune)
 
     @property
     def source_duration(self) -> float:
@@ -372,6 +386,26 @@ class RoleStep(BaseModel):
     notes: list[str] = Field(default_factory=list)  # ce qui ne colle pas
 
 
+class MixChannel(BaseModel):
+    """Réglage d'un groupe de sons du mixeur : volume (1 = inchangé) et coupure."""
+
+    volume: float = Field(1.0, ge=0.0, le=2.0)
+    mute: bool = False
+
+    @property
+    def gain(self) -> float:
+        return 0.0 if self.mute else self.volume
+
+
+class Mixer(BaseModel):
+    """Mixeur audio de la timeline : un volume et une coupure par groupe de sons."""
+
+    rushes: MixChannel = Field(default_factory=MixChannel)  # son des plans
+    music: MixChannel = Field(default_factory=MixChannel)
+    sfx: MixChannel = Field(default_factory=MixChannel)  # bruitages
+    tracks: MixChannel = Field(default_factory=MixChannel)  # pistes audio : voix off, sons importés
+
+
 class Timeline(BaseModel):
     clips: list[Clip] = Field(default_factory=list)
     format: Format = "16:9"
@@ -403,6 +437,7 @@ class Timeline(BaseModel):
     markers: list[Marker] = Field(default_factory=list)  # repères de l'utilisateur (chapitres)
     range: Range | None = None  # zone d'entrée/sortie (I/O) : boucle, export de la zone seule
     reframe: bool = True  # recadrage automatique sur le visage quand le format est plus étroit que la source
+    mix: Mixer = Field(default_factory=Mixer)  # mixeur audio (volumes et coupures par groupe)
 
     @property
     def duration(self) -> float:
