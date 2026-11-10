@@ -4,6 +4,7 @@ import { Icon, IconName } from "../icons";
 import { DEFAULT_LAYOUT, isBusy, LeftTab, RIGHT_TAB_ORDER, RightTab, useStore } from "../store";
 import { Shortcuts } from "./Shortcuts";
 import { Pitch } from "./Pitch";
+import { SourceMonitor } from "./SourceMonitor";
 import { DirectorChat } from "./DirectorChat";
 import { dialogOpen } from "./Dialog";
 import { CommandPalette } from "./CommandPalette";
@@ -55,7 +56,7 @@ function useShortcuts() {
       const mod = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
       const clip = s.item?.kind === "clip" ? s.item.id : null;
-      if (s.helpOpen || s.paletteOpen || s.pitchOpen) {
+      if (s.helpOpen || s.paletteOpen || s.pitchOpen || s.sourceMedia) {  // le moniteur source écoute lui-même le clavier
         if (e.key === "Escape") { s.setHelp(false); s.setPalette(false); }
         return;
       }
@@ -78,6 +79,13 @@ function useShortcuts() {
       else if (e.key === "-" && !mod) { s.setZoom(s.pxPerSec / 1.25); }
       else if (k === "z" && e.shiftKey && !mod) { s.zoomFit(); }
       else if (mod && k === "d") { e.preventDefault(); if (clip) s.duplicateClip(clip); }
+      else if (mod && !e.shiftKey && !e.altKey && (k === "c" || k === "x")) {
+        if (window.getSelection()?.toString()) return;  // du texte est sélectionné dans la page : copie normale du navigateur
+        if (!s.item) return;
+        e.preventDefault();
+        if (k === "c") s.copySelection(); else s.cutSelection();
+      }
+      else if (mod && !e.shiftKey && !e.altKey && k === "v") { e.preventDefault(); s.paste(); }
       else if (mod && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); if (clip) s.nudgeClip(clip, e.key === "ArrowLeft" ? -1 : 1); }
       else if (k === "i" && !mod) { if (clip) s.trimToPlayhead(clip, "in"); else s.markRange("in"); }
       else if (k === "o" && !mod) { if (clip) s.trimToPlayhead(clip, "out"); else s.markRange("out"); }
@@ -198,6 +206,7 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
   const helpOpen = useStore((s) => s.helpOpen);
   const paletteOpen = useStore((s) => s.paletteOpen);
   const pitchOpen = useStore((s) => s.pitchOpen);
+  const sourceMedia = useStore((s) => s.sourceMedia);
   const layout = useStore((s) => s.layout);
   const exportBusy = useStore((s) => isBusy(s, "export"));
   const openComments = useStore((s) => (s.timeline?.comments || []).filter((c) => c.status === "ouvert").length);
@@ -326,6 +335,7 @@ export function Editor({ id, onBack }: { id: string; onBack: () => void }) {
       {helpOpen && <Shortcuts onClose={() => useStore.getState().setHelp(false)} />}
       {paletteOpen && <CommandPalette onClose={() => useStore.getState().setPalette(false)} />}
       {pitchOpen && <Pitch onClose={() => useStore.getState().setPitch(false)} />}
+      {sourceMedia && <SourceMonitor mediaId={sourceMedia} onClose={() => useStore.getState().openSource(null)} />}
     </div>
   );
 }

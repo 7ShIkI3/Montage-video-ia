@@ -860,3 +860,27 @@ dialog.dlg footer button { min-width: 96px; }
 .card-menu button:hover { background: var(--surface-2); }
 .card-menu button.danger-text { color: var(--danger); }
 .card-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+
+/* ---------- Moniteur source et montage manuel ---------- */
+.timeline-scroll { user-select: none; }  /* un double-clic sur un plan ne sélectionne pas son texte (sinon Ctrl+C copierait ce texte) */
+body.slipping, body.slipping * { cursor: ew-resize !important; user-select: none; }
+.media-list li[draggable="true"] { cursor: pointer; }
+.media-list li:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.modal.source-monitor { width: 880px; outline: none; }
+.source-monitor > header h2 { max-width: 700px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--display); }
+.sm-screen { background: #000; display: grid; place-items: center; min-height: 220px; max-height: 50vh; }
+.sm-screen video { display: block; max-width: 100%; max-height: 50vh; cursor: pointer; }
+.sm-empty { margin: 0; padding: 56px 24px; text-align: center; color: var(--text-2); line-height: 1.7; }
+.sm-scrub { position: relative; height: 24px; margin: 16px 20px 6px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.sm-range { position: absolute; top: 0; bottom: 0; background: var(--accent-soft); }
+.sm-mark { position: absolute; top: -3px; bottom: -3px; width: 3px; margin-left: -1px; border-radius: 2px; background: var(--ok); }
+.sm-mark.out { background: var(--accent); }
+.sm-head { position: absolute; top: -5px; bottom: -5px; width: 2px; margin-left: -1px; background: var(--text); pointer-events: none; }
+.sm-controls { display: flex; align-items: center; gap: 6px; padding: 6px 20px; }
+.sm-controls .spacer { flex: 1; }
+.sm-time { margin-left: 8px; font: 600 14px var(--mono); }
+.sm-time .muted { font-weight: 400; }
+.sm-info { padding: 0 20px 12px; }
+.sm-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+.sm-actions .kbd { margin-left: 2px; }
+.sm-done { margin-left: auto; }

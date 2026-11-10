@@ -159,6 +159,74 @@ export function clipAt(tl: Timeline, t: number): { index: number; start: number 
   return null;
 }
 
+/** Pose `clip` dans `tl.clips` et renvoie son index. `where` : au curseur, à la fin, ou avant le plan d'index donné.
+ *  Au curseur, un plan coupé en deux (comme la touche S) reçoit le nouveau plan entre ses moitiés ;
+ *  si le curseur est trop près d'une frontière pour couper, le plan va à la frontière la plus proche. */
+export function placeClip(tl: Timeline, clip: Clip, where: "playhead" | "end" | number, playhead: number): number {
+  let at = tl.clips.length;
+  if (typeof where === "number") at = Math.max(0, Math.min(where, tl.clips.length));
+  else if (where === "playhead") {
+    const hit = clipAt(tl, playhead);
+    if (hit) {
+      const c = tl.clips[hit.index];
+      const loc = playhead - hit.start;
+      const cut = c.src_in + localToSrc(c, loc);
+      if (cut - c.src_in >= MIN_CLIP && c.src_out - cut >= MIN_CLIP) {
+        const [a, b] = cutClip(c, loc);  // pas de fondu au point de coupe : le nouveau plan s'y glisse
+        tl.clips.splice(hit.index, 1, a, { ...b, id: uid() });
+        at = hit.index + 1;
+      } else at = loc < clipDur(c) / 2 ? hit.index : hit.index + 1;
+    }
+  }
+  tl.clips.splice(at, 0, clip);
+  return at;
+}
+
+/** Plan neuf, avec les valeurs par défaut du serveur (voir `Clip` dans backend/app/models.py). */
+function newClip(mediaId: string, srcIn: number, srcOut: number): Clip {
+  return {
+    id: uid(), media_id: mediaId, src_in: srcIn, src_out: srcOut, segment_id: null, score: 0, reason: "Posé à la main.",
+    zoom: 1, volume: 1, fade_in: 0, fade_out: 0, speed: 1, transition: "aucune", transition_duration: 0.35,
+    effects: [], audio_effects: [], focus_x: null, focus_y: null, masks: [], keyframes: [],
+  };
+}
+
+/** Insère un plan, le sélectionne et met le curseur à sa fin. */
+function insertPlan(clip: Clip, where: "playhead" | "end" | number): string | null {
+  const st = useStore.getState();
+  if (!st.timeline) return null;
+  const playhead = st.playhead;
+  st.edit((tl) => { placeClip(tl, clip, where, playhead); });
+  const tl = useStore.getState().timeline!;
+  const i = tl.clips.findIndex((c) => c.id === clip.id);
+  useStore.setState({ selected: clip.id, item: { kind: "clip", id: clip.id }, playhead: clipStarts(tl)[i] + clipDur(clip) });
+  return clip.id;
+}
+
+/** Type de données du glisser-déposer d'un rush du chutier (distinct de celui qui réordonne les plans). */
+export const MEDIA_DRAG_TYPE = "application/x-monteur-media";
+
+/** Marques d'entrée/sortie posées dans le moniteur source (secondes du rush), null = pas de marque. */
+export interface SourceMarks { in: number | null; out: number | null }
+
+/** Portion du rush à poser : entre les marques I/O, sinon tout le rush. Null si le rush est inconnu ou la portion trop courte. */
+export function sourceRange(project: Project | null, marks: Record<string, SourceMarks>, mediaId: string): [number, number] | null {
+  const m = project?.media.find((x) => x.id === mediaId);
+  if (!m) return null;
+  const mk = marks[mediaId];
+  const a = Math.max(0, mk?.in ?? 0);
+  const b = Math.min(m.duration, mk?.out ?? m.duration);
+  return b - a >= MIN_CLIP ? [+a.toFixed(3), +b.toFixed(3)] : null;
+}
+
+/** Éléments copiables avec Ctrl+C : type → liste de la timeline, et préfixe d'identifiant du nouvel élément. */
+const COPYABLE = { text: "texts", sfx: "sfx", overlay: "overlays", image: "images", impact: "impacts", audio: "audio" } as const;
+const ID_PREFIX = { text: "t_", sfx: "s_", overlay: "o_", image: "g_", impact: "i_", audio: "a_" } as const;
+export type CopyKind = keyof typeof COPYABLE;
+const isCopyKind = (k: string): k is CopyKind => k in COPYABLE;
+/** Presse-papiers interne : un plan, ou un élément (texte, bruitage, plan de coupe, image, impact, son). */
+export type ClipboardEntry = { kind: "clip"; clip: Clip } | { kind: "item"; type: CopyKind; data: Record<string, unknown> };
+
 /** Tâche suivie côté interface : le libellé et la façon de la relancer ne viennent pas du serveur. */
 export interface TrackedJob extends Job {
   label?: string;
@@ -253,6 +321,20 @@ interface State {
   pitchOpen: boolean;
   pitchPending: string | null;
   exportOpen: boolean;
+  /** Moniteur source : rush ouvert (null = fermé) et marques d'entrée/sortie par rush. Les raccourcis de l'éditeur se taisent s'il est ouvert. */
+  sourceMedia: string | null;
+  sourceMarks: Record<string, SourceMarks>;
+  openSource: (mediaId: string | null) => void;
+  /** Pose l'entrée ou la sortie du rush à l'instant `t` (ou efface les deux) ; l'autre marque s'écarte si elle gêne. */
+  markSource: (mediaId: string, side: "in" | "out" | "clear", t?: number) => void;
+  /** Pose un rush (ou la portion `srcIn`–`srcOut`) sur la piste vidéo : au curseur, à la fin ou avant le plan d'index donné. Renvoie l'id du plan. */
+  insertClip: (mediaId: string, srcIn: number, srcOut: number, where: "playhead" | "end" | number) => string | null;
+  clipboard: ClipboardEntry | null;
+  /** Copie le plan ou l'élément sélectionné ; faux s'il n'y a rien de copiable. */
+  copySelection: () => boolean;
+  cutSelection: () => void;
+  /** Colle au curseur : un plan s'insère comme un rush, un élément prend `start` = curseur. */
+  paste: () => void;
   layout: Layout;
   setLayout: (patch: Partial<Layout>) => void;
   resetLayout: () => void;
@@ -374,6 +456,9 @@ export const useStore = create<State>((set, get) => ({
   pitchOpen: false,
   pitchPending: null,
   exportOpen: false,
+  sourceMedia: null,
+  sourceMarks: {},
+  clipboard: null,
   loopRange: false,
   layout: loadLayout(),
   setLayout: (patch) => {
@@ -396,7 +481,7 @@ export const useStore = create<State>((set, get) => ({
     const p = await api.getProject(id);
     // Revenir des réglages recharge le même projet : on garde alors l'historique d'annulation.
     set({ project: p, timeline: p.timeline, dirty: false, playhead: 0, selected: null,
-      ...(sameProject ? {} : { past: [], future: [], jobs: {}, job: null }) });
+      ...(sameProject ? {} : { past: [], future: [], jobs: {}, job: null, sourceMedia: null, sourceMarks: {} }) });
     const [active, history] = await Promise.all([
       api.activeJobs(id).catch(() => [] as Job[]),
       api.jobsHistory(id).catch(() => [] as Job[]),
@@ -535,6 +620,74 @@ export const useStore = create<State>((set, get) => ({
     // L'export est un onglet du panneau droit : « ouvrir » l'affiche (et déplie le panneau s'il est replié).
     set({ exportOpen: open });
     if (open) { set({ rightTab: "export" }); if (!get().layout.rightOpen) get().setLayout({ rightOpen: true }); }
+  },
+  openSource: (mediaId) => set({ sourceMedia: mediaId, playing: mediaId ? false : get().playing }),
+  markSource: (mediaId, side, t = 0) => {
+    const m = get().project?.media.find((x) => x.id === mediaId);
+    let next: SourceMarks = { in: null, out: null };
+    if (side !== "clear") {
+      next = { ...(get().sourceMarks[mediaId] ?? next) };
+      const v = +Math.max(0, Math.min(m?.duration ?? t, t)).toFixed(3);
+      if (side === "in") { next.in = v; if (next.out != null && next.out < v + MIN_CLIP) next.out = null; }
+      else { next.out = v; if (next.in != null && next.in > v - MIN_CLIP) next.in = null; }
+    }
+    set({ sourceMarks: { ...get().sourceMarks, [mediaId]: next } });
+  },
+  insertClip: (mediaId, srcIn, srcOut, where) => {
+    const m = get().project?.media.find((x) => x.id === mediaId);
+    if (!m) return null;
+    const a = Math.max(0, srcIn);
+    const b = Math.min(m.duration > 0 ? m.duration : srcOut, srcOut);
+    if (b - a < MIN_CLIP) return null;
+    return insertPlan(newClip(mediaId, +a.toFixed(3), +b.toFixed(3)), where);
+  },
+  copySelection: () => {
+    const { timeline, item } = get();
+    if (!timeline || !item) return false;
+    if (item.kind === "clip") {
+      const c = timeline.clips.find((x) => x.id === item.id);
+      if (!c) return false;
+      set({ clipboard: { kind: "clip", clip: clone(c) } });
+      return true;
+    }
+    if (!isCopyKind(item.kind)) return false;
+    const it = ((timeline[COPYABLE[item.kind]] ?? []) as unknown as Array<{ id: string }>).find((x) => x.id === item.id);
+    if (!it) return false;
+    set({ clipboard: { kind: "item", type: item.kind, data: clone(it) as unknown as Record<string, unknown> } });
+    return true;
+  },
+  cutSelection: () => {
+    if (!get().copySelection()) return;
+    const item = get().item!;
+    if (item.kind === "clip") {
+      get().edit((tl) => { tl.clips = tl.clips.filter((c) => c.id !== item.id); });  // pas dans les plans écartés : c'est un déplacement
+      set({ selected: null, item: null });
+      get().setPlayhead(get().playhead);  // le montage a raccourci
+    } else get().deleteItem(item.kind, item.id);
+  },
+  paste: () => {
+    const { clipboard, timeline, project, playhead } = get();
+    if (!timeline) return;
+    if (!clipboard) return get().notify("Rien à coller : copie d'abord un plan ou un élément (Ctrl+C).");
+    const mediaId = clipboard.kind === "clip" ? clipboard.clip.media_id : (clipboard.data.media_id as string | undefined);
+    if (mediaId && !project?.media.some((m) => m.id === mediaId)) return get().notify("Le rush de cet élément n'est plus dans le projet.");
+    if (clipboard.kind === "clip") { insertPlan({ ...clone(clipboard.clip), id: uid() }, "playhead"); return; }
+    const { type, data } = clipboard;
+    const id = rid(ID_PREFIX[type]);
+    const start = +playhead.toFixed(3);
+    get().edit((tl) => {
+      const lists = tl as unknown as Record<string, Array<Record<string, unknown>> | undefined>;
+      const list = (lists[COPYABLE[type]] ??= []);
+      const it: Record<string, unknown> = { ...clone(data), id, start };
+      if (type === "audio") {
+        // Même piste si elle est libre à cet endroit, sinon la première piste libre.
+        const dur = (it.src_out as number) - (it.src_in as number);
+        const busy = (lane: number) => list.some((a) => a.lane === lane && start < (a.start as number) + ((a.src_out as number) - (a.src_in as number)) && (a.start as number) < start + dur);
+        it.lane = [it.lane as number, 0, 1, 2, 3].find((l) => !busy(l)) ?? it.lane;
+      }
+      list.push(it);
+    });
+    get().selectItem({ kind: type, id });
   },
   jumpClip: (dir) => {
     const { timeline, playhead } = get();
