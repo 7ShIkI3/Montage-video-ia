@@ -432,3 +432,13 @@ def test_jury_does_not_resend_candidates_left_unanswered(monkeypatch):
     assert pvp.shortlist(cands, 14, known) == []
     assert storage.load_signals(pid, m.id)["jury"]["verdicts"]
 
+
+def test_a_duel_ending_in_noise_is_still_a_fight_ending():
+    """Après un kill, le jeu fait du bruit (victoire, clics) : la dernière rafale du duel reste une fin de combat."""
+    duel = _train(10, 10) + _train(15.8, 9)  # un duel de 19 coups en deux rafales, la dernière finit à 19,8 s
+    noise = [[20.9, 0.5], [22.2, 0.5], [23.6, 0.5]]  # sons isolés juste après : l'ancienne règle du silence échouait
+    cands = pvp.candidates([_M()], {"m1": duel + noise + _train(100, 5)})
+    last = max((c for _, c in cands if c["start"] < 30), key=lambda c: c["end"])
+    assert last["closing"] and last["fight"] >= 19
+    assert pvp.shortlist(cands, 2)[0][1] is last, "le plus gros duel est montré au jury en premier"
+
