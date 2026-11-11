@@ -3,6 +3,7 @@ import subprocess
 import time
 
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
 from app import config
@@ -103,7 +104,7 @@ def test_pvp_edit_and_3d_export(tmp_path):
         w.setframerate(SR)
         w.writeframes(pcm.tobytes())
     src = tmp_path / "gameplay.mp4"
-    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+    subprocess.run([ffmpeg.FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
                     "testsrc2=s=640x360:r=30:d=12", "-i", str(wav), "-c:v", "libx264", "-preset", "ultrafast",
                     "-c:a", "aac", "-shortest", str(src)], check=True)
     c = TestClient(app)
@@ -442,3 +443,362 @@ def test_a_duel_ending_in_noise_is_still_a_fight_ending():
     assert last["closing"] and last["fight"] >= 19
     assert pvp.shortlist(cands, 2)[0][1] is last, "le plus gros duel est montré au jury en premier"
 
+
+# ---------------------------------------------------------------- qui porte le combo : le signal local
+
+def _res(label, cout=None, part=None, confirme=False, raison="vie 9,5 → 4,0 cœurs (creux 4,0)"):
+    return {"label": label, "confirme": confirme, "cout": cout, "part_recue": part, "vie": None, "camera": None,
+            "fenetre": None, "raison": raison}
+
+
+def _duel_for(cands, results):
+    from app.ai import jury
+    return {(mid, jury.key(c)): r for (mid, c), r in zip(cands, results)}
+
+
+def _all_like(cands, verdict="joueur_domine", note=9, fin="kill"):
+    from app.ai import jury
+    return {(mid, jury.key(c)): {"verdict": verdict, "fin": fin, "note": note, "raison": "", "n": c["n"]} for mid, c in cands}
+
+
+def test_a_combo_taken_by_the_opponent_never_enters_even_if_the_jury_likes_it():
+    from app.models import EditSettings
+    m = _M()
+    h = _three_fights()  # A : 14 coups forts (20 s), B : 9 coups (60 s), C : 7 coups (100 s)
+    cands = pvp.candidates([m], {"m1": h})
+    duel = _duel_for(cands, [_res("subit", cout=5.0), _res("donne", cout=0.5, confirme=True), _res("inconnu")])
+    loved = _all_like(cands, fin="rien")  # le jury adore tout, y compris la rafale subie, mais n'y voit aucun kill
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp"), verdicts=loved, duel=duel)
+    kept = [(x.src_in, x.src_out) for x in tl.clips]
+    assert not any(s < 27 and e > 20 for s, e in kept), "subit : jamais retenu"
+    assert any(s < 64.5 and e > 60 for s, e in kept)
+    assert any("tu subissais" in x.reason and x.src_in == 20.0 for x in tl.rejected)
+    ranked, why, _ = pvp.rank_candidates(pvp.annotate(cands, duel), loved, 30.0)
+    assert all(c["start"] != 20.0 for _, c in ranked) and any("tu subissais" in w for w in why.values())
+    assert "1 rafale écartée parce que tu la subissais" in tl.summary
+    assert "Signal local (vie et caméra) : 1 où tu enchaînes" in tl.summary
+    assert "Signal local : tu enchaînes" in " ".join(x.reason for x in tl.clips)
+
+
+def test_costly_exchange_is_dropped_and_cheap_one_stays():
+    from app.models import EditSettings
+    m = _M()
+    h = _three_fights()
+    cands = pvp.candidates([m], {"m1": h})
+    duel = _duel_for(cands, [_res("echange", cout=4.0), _res("echange", cout=0.5), _res("echange", part=0.8)])
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp"), verdicts=_all_like(cands, "echange", 6, "rien"), duel=duel)
+    kept = [(x.src_in, x.src_out) for x in tl.clips]
+    assert any(s < 64.5 and e > 60 for s, e in kept), "l'échange qui coûte un demi-cœur reste"
+    assert not any(s < 27 and e > 20 for s, e in kept), "4 cœurs perdus : écarté"
+    assert not any(s < 107 and e > 100 for s, e in kept), "80 % de coups reçus : écarté"
+    assert sum("tu encaissais aussi" in x.reason for x in tl.rejected) == 2
+    # Un cœur perdu, une potion de soin ou la moitié des coups reçus ne passent pas non plus.
+    pas_bon = _duel_for(cands, [_res("echange", cout=1.0), {**_res("echange", cout=0.5), "vie": {"soin": True}},
+                                _res("echange", part=0.5)])
+    ranked, why, _ = pvp.rank_candidates(pvp.annotate(cands, pas_bon), _all_like(cands, "echange", 6, "rien"), 30.0)
+    assert ranked == [] and len(why) == 3 and all("tu encaissais aussi" in w for w in why.values())
+
+
+def test_gives_confirmed_by_the_signal_come_first():
+    from app.models import EditSettings
+    m, h, cands, verdicts = _four_combos()  # notes du jury : 6, 9, 7, 8 (le meilleur au jury est à 60 s)
+    duel = _duel_for(cands, [_res("donne", cout=0.0, confirme=True), _res("inconnu"), _res("inconnu"), _res("inconnu")])
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=60), "x", verdicts=verdicts, duel=duel)
+    assert 20 <= tl.clips[-1].src_in < 25, "le combo que tu donnes (note 6) passe avant la note 9 non tranchée : il ferme l'edit"
+    ranked, _, _ = pvp.rank_candidates(pvp.annotate(cands, duel), verdicts, 60.0)
+    assert ranked[0][1]["start"] == 20.0
+
+
+def test_unknown_signal_changes_nothing():
+    """Interface masquée, autre jeu, barre introuvable : « inconnu » partout donne le montage d'avant."""
+    from app.analysis import duel as duel_an
+    from app.models import EditSettings
+    m, h, cands, verdicts = _four_combos()
+    s = EditSettings(style="pvp", target_duration=60)
+    base = pvp.build([m], {"m1": h}, s, "x", verdicts=verdicts)
+    inconnu = _duel_for(cands, [duel_an.inconnu("barre de vie introuvable")] * 4)
+    same = pvp.build([m], {"m1": h}, s, "x", verdicts=verdicts, duel=inconnu)
+    assert [(c.src_in, c.src_out, c.speed) for c in same.clips] == [(c.src_in, c.src_out, c.speed) for c in base.clips]
+    assert "0 où tu enchaînes" in same.summary and "4 non tranchées" in same.summary and "écartée" not in same.summary
+    assert "Signal local" not in base.summary, "jamais analysé : pas une ligne de plus dans le résumé"
+
+
+def test_few_good_combos_make_a_shorter_honest_edit():
+    from app.models import EditSettings
+    m, h, cands, verdicts = _four_combos()
+    duel = _duel_for(cands, [_res("subit", cout=5.0), _res("donne", cout=0.5, confirme=True),
+                             _res("subit", cout=4.0), _res("subit", cout=6.0)])
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=60), "x", verdicts=verdicts, duel=duel)
+    assert all(55 < c.src_in < 65 for c in tl.clips if c.speed == 1), "seul le combo donné est monté, pas de remplissage"
+    assert tl.duration < 0.5 * 60
+    assert "3 rafales écartées parce que tu les subissais" in tl.summary
+    assert "Montage plus court que la cible" in tl.summary and "ne servent pas de remplissage" in tl.summary
+    assert sum("tu subissais" in x.reason for x in tl.rejected) == 3
+
+
+def test_when_everything_is_taken_the_edit_is_empty_and_says_why():
+    from app.models import EditSettings
+    m = _M()
+    h = _three_fights()
+    cands = pvp.candidates([m], {"m1": h})
+    duel = _duel_for(cands, [_res("subit", cout=6.0)] * 3)
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp"), verdicts=_all_like(cands, fin="rien"), duel=duel)
+    assert tl.clips == [] and "3 sont écartées parce que tu les subissais" in tl.summary
+    assert len(tl.rejected) == 3 and all("tu subissais" in x.reason for x in tl.rejected)
+
+
+def test_shortlist_never_sends_a_taken_combo_to_the_jury():
+    m = _M()
+    h = _three_fights()
+    cands = pvp.candidates([m], {"m1": h})
+    # Trois combats d'une seule rafale : chacune est la fin de son combat.
+    duel = _duel_for(cands, [_res("subit", cout=5.0), _res("echange", cout=3.0), _res("donne", confirme=True)])
+    pvp.annotate(cands, duel)
+    sl = pvp.shortlist(cands, 14)
+    assert [c["start"] for _, c in sl] == [100.0, 20.0], "l'échange coûteux ne part pas au jury (payant) ; la fin de combat " \
+                                                         "subie oui, pour voir si le joueur tue (derrière le combo donné)"
+    pvp.annotate(cands, _duel_for(cands, [_res("inconnu"), _res("donne"), _res("donne", confirme=True)]))
+    assert [c["start"] for _, c in pvp.shortlist(cands, 14)][:2] == [100.0, 60.0], "les combos donnés d'abord"
+    # Une rafale subie au milieu d'un combat (suivie d'autres coups) ne part jamais au jury.
+    milieu = pvp.candidates([_M()], {"m1": _train(20, 6) + _train(25, 6) + _train(29, 6) + _train(60, 6)})
+    assert [c["closing"] for _, c in milieu] == [False, False, True, True]
+    pvp.annotate(milieu, _duel_for(milieu, [_res("subit", cout=5.0)] * 4))
+    assert {c["start"] for _, c in pvp.shortlist(milieu, 14)} == {29.0, 60.0}, "les subies du milieu d'un combat ne partent pas"
+
+
+def test_the_won_duel_enters_only_if_the_jury_sees_the_kill():
+    """La seule victoire du rush : la vie a chuté pendant le combat, la mesure la donne pour subie, mais c'est la
+    dernière rafale du combat. Gardée quand le jury y voit le kill du joueur ; refusée sans verdict ou sans kill
+    (c'est alors la défaite : mort, ou rien)."""
+    from app.models import EditSettings
+    m = _M()
+    h = _three_fights()
+    cands = pvp.candidates([m], {"m1": h})
+    duel = _duel_for(cands, [_res("inconnu"), _res("subit", cout=5.0), _res("inconnu")])  # B = 60 s, le duel gagné
+    s = EditSettings(style="pvp", target_duration=20)
+
+    def rafale_b(tl):
+        return [x for x in tl.clips if 55 < x.src_in < 65]
+    sans_verdict = pvp.build([m], {"m1": h}, s, duel=duel)
+    assert not rafale_b(sans_verdict), "pas de verdict : on ne sait pas si c'est le kill"
+    assert any("tu subissais probablement cette fin de combat" in x.reason for x in sans_verdict.rejected)
+    mort = _all_like(cands, "adversaire_domine", 1, "mort")
+    assert not rafale_b(pvp.build([m], {"m1": h}, s, verdicts=mort, duel=duel))
+    rien = _all_like(cands, "echange", 6, "rien")
+    tl = pvp.build([m], {"m1": h}, s, verdicts=rien, duel=duel)
+    assert not rafale_b(tl) and any("n'y voit pas ton kill" in x.reason for x in tl.rejected)
+    kill = _all_like(cands, "joueur_domine", 9, "kill")
+    tl = pvp.build([m], {"m1": h}, s, verdicts=kill, duel=duel)
+    assert rafale_b(tl), "le jury voit le joueur tuer l'adversaire : le duel gagné entre"
+    assert "Signal local : tu subis" in " ".join(x.reason for x in rafale_b(tl)), "et la mesure reste affichée telle quelle"
+    assert "écartée" not in tl.summary, "elle n'est pas comptée comme écartée"
+
+
+def test_pipeline_pays_the_jury_only_for_bursts_the_signal_kept(monkeypatch):
+    from app import config, pipeline, storage
+    from app.models import EditSettings, Media
+    pid = TestClient(app).post("/api/projects", json={"name": "Pipeline duel"}).json()["id"]
+    project = storage.load_project(pid)
+    media = Media(id="m_pipe", filename="rush.mp4", path="rush.mp4", duration=300.0)
+    project.media = [media]
+    storage.save_signals(pid, media.id, {"hits": _three_fights()})
+    cands = pvp.candidates([media], {media.id: _three_fights()})
+    duel = _duel_for(cands, [_res("subit", cout=6.0), _res("donne", confirme=True), _res("echange", cout=3.5)])
+    sent = []
+
+    def juge(project_id, rows, ctx=None):
+        sent.extend(c["start"] for _, c in rows)
+        return {}
+
+    class Ctx:
+        def step(self, *a, **k):
+            pass
+
+        def check(self):
+            pass
+
+    def plante(*a, **k):
+        raise RuntimeError("ffmpeg absent")
+
+    monkeypatch.setattr(pipeline.duel_an, "analyse", lambda *a, **k: duel)
+    monkeypatch.setattr(pipeline.jury_mod, "judge", juge)
+    monkeypatch.setattr(config, "claude_available", lambda: True)
+    tl = pipeline._pvp_edit(project, EditSettings(style="pvp"), None, Ctx())
+    assert sent == [60.0, 20.0], "le jury voit la rafale donnée, puis la fin de combat subie (à confirmer) ; pas l'échange coûteux"
+    assert tl.clips and not any(x.src_in < 27 and x.src_out > 20 for x in tl.clips), "sans kill confirmé, la subie reste dehors"
+    # Si la mesure plante, le montage du bouton se fait quand même (comme avant) et le dit.
+    monkeypatch.setattr(pipeline.duel_an, "analyse", plante)
+    project.warnings = []
+    tl = pipeline._pvp_edit(project, EditSettings(style="pvp"), None, Ctx())
+    assert tl.clips and any("Mesure locale" in w for w in project.warnings)
+    # Mais un edit sur des rafales choisies (chat) n'a plus aucun filtre, ni jury : il est refusé et dit pourquoi.
+    with pytest.raises(ValueError, match="mesure de la vie et de la caméra a échoué"):
+        pipeline._pvp_edit(project, EditSettings(style="pvp"), None, Ctx(), chosen=[("m_pipe", 58.0, 66.0)])
+
+
+def test_jury_sees_the_life_bar_and_knows_the_rule(monkeypatch, tmp_path):
+    import json as _json
+    import types
+
+    import anthropic
+
+    from app import config
+    from app.ai import jury, vision
+    pid = TestClient(app).post("/api/projects", json={"name": "Jury vie"}).json()["id"]
+    m = _M("m_vie")
+    m.width, m.height = 1920, 1080
+    mesure = _res("inconnu", raison="vie 9,5 → 8,0 cœurs (creux 8,0)")
+    mesure["vie"] = {"verdict": "donne"}
+    plain = pvp.candidates([m], {m.id: _three_fights()})
+    cands = pvp.candidates([m], {m.id: _three_fights()}, duel=_duel_for(plain, [mesure] * 3))
+    asked, zones = [], []
+
+    def create(**kw):
+        asked.append(kw)
+        rows = [{"index": 0, "verdict": "echange", "fin": "rien", "note": 5, "raison": "ok"}]
+        text = types.SimpleNamespace(type="text", text=_json.dumps({"candidats": rows}))
+        return types.SimpleNamespace(content=[text], stop_reason="end_turn", model="claude-test")
+
+    (tmp_path / "proxy_540p.mp4").write_bytes(b"x")
+    m.proxy = str(tmp_path / "proxy_540p.mp4")
+
+    def jpeg(path, t, zone="entier", width=768):
+        zones.append((zone, width, path))
+        return b"faux"
+
+    fake = types.SimpleNamespace(beta=types.SimpleNamespace(messages=types.SimpleNamespace(create=create)))
+    monkeypatch.setattr(config, "claude_available", lambda: True)
+    monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: fake)
+    monkeypatch.setattr(vision, "jpeg", jpeg)
+    jury.judge(pid, [(m, c) for _, c in cands])
+    content = asked[0]["messages"][0]["content"]
+    assert sum(b["type"] == "image" for b in content) == 18, "4 images et 2 recadrages de la vie par rafale"
+    crops = [(z, w, p) for z, w, p in zones if isinstance(z, tuple)]
+    assert len(crops) == 6 and all(w == jury.LIFE_WIDTH for _, w, _ in crops)
+    assert all(p == m.path for _, _, p in crops), "le recadrage de la vie est agrandi : lu dans le rush, pas dans le proxy"
+    assert all(p == m.proxy for z, _, p in zones if not isinstance(z, tuple)), "les images entières viennent du proxy"
+    x, y, w, h = crops[0][0]
+    assert 0.38 < x < 0.42 and 0.88 < y < 0.92 and 0.1 < w < 0.3 and h < 0.1, "zone de la barre de cœurs, en fractions de l'image"
+    assert any("barre de vie du joueur, recadrage zoomé (avant la rafale)" in b.get("text", "") for b in content)
+    assert "Mesure locale (indicative) : vie 9,5 → 8,0" in content[0]["text"]
+    system = asked[0]["system"]
+    assert "QUE les combos que le joueur enchaîne" in system and "perd nettement plus" in system
+    assert "adversaire_domine" in system and "Hits" in system and "le kill prime sur la vie perdue" in system
+    # Un verdict déjà en cache, rendu avant ce changement, reste lisible.
+    assert jury.cached(pid, m.id)[jury.key(cands[0][1])]["verdict"] == "echange"
+
+
+def test_jury_is_told_when_a_fight_ending_may_be_the_win(monkeypatch):
+    import json as _json
+    import types
+
+    import anthropic
+
+    from app import config
+    from app.ai import jury, vision
+    pid = TestClient(app).post("/api/projects", json={"name": "Jury fin de combat"}).json()["id"]
+    m = _M("m_fin")
+    m.width, m.height = 1920, 1080
+    plain = pvp.candidates([m], {m.id: _three_fights()})
+    mesure = _res("subit", cout=5.0)
+    cands = pvp.candidates([m], {m.id: _three_fights()}, duel=_duel_for(plain, [mesure, _res("inconnu"), _res("inconnu")]))
+    assert all(c["closing"] for _, c in cands) and not any(c["duel"]["fermeture"] is False for _, c in cands)
+    asked = []
+
+    def create(**kw):
+        asked.append(kw)
+        text = types.SimpleNamespace(type="text", text=_json.dumps({"candidats": []}))
+        return types.SimpleNamespace(content=[text], stop_reason="end_turn", model="claude-test")
+    fake = types.SimpleNamespace(beta=types.SimpleNamespace(messages=types.SimpleNamespace(create=create)))
+    monkeypatch.setattr(config, "claude_available", lambda: True)
+    monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: fake)
+    monkeypatch.setattr(vision, "jpeg", lambda *a, **k: b"faux")
+    jury.judge(pid, [(m, c) for _, c in cands])
+    texts = [b["text"] for b in asked[0]["messages"][0]["content"] if b["type"] == "text" and b["text"].startswith("Candidat")]
+    assert "TUE l'adversaire" in texts[0] and not any("TUE" in t for t in texts[1:]), "seule la fin de combat subie est signalée"
+    assert "le kill prime sur la vie perdue" in asked[0]["system"]
+
+
+def _gameplay_mp4(tmp_path):
+    import wave
+    wav = tmp_path / "hits.wav"
+    pcm = (np.clip(_clicks(COMBO_A + COMBO_B), -1, 1) * 32767).astype(np.int16)
+    with wave.open(str(wav), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SR)
+        w.writeframes(pcm.tobytes())
+    src = tmp_path / "gameplay.mp4"
+    subprocess.run([ffmpeg.FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                    "testsrc2=s=640x360:r=30:d=12", "-i", str(wav), "-c:v", "libx264", "-preset", "ultrafast",
+                    "-c:a", "aac", "-shortest", str(src)], check=True)
+    return src
+
+
+def _quiet_share(path):
+    """Part des fenêtres de 0,25 s qui sont presque muettes : sans musique, le son du jeu entre deux coups l'est."""
+    pcm = ffmpeg.decode_audio(path)
+    n = int(0.25 * SR)
+    rms = np.array([np.sqrt(np.mean(pcm[i:i + n] ** 2)) for i in range(0, pcm.size - n, n)])
+    return float(np.mean(rms < 0.2 * rms.max()))
+
+
+def test_edit_pvp_puts_music_on_the_timeline_and_the_export_mixes_it(tmp_path):
+    """Même avec « Musique de fond » décochée, l'edit PvP pose un rythme sur la timeline ; l'export le mixe (muet
+    seulement si le mixeur coupe la musique)."""
+    from pathlib import Path
+    c = TestClient(app)
+    pid = c.post("/api/projects", json={"name": "Musique PvP"}).json()["id"]
+    with _gameplay_mp4(tmp_path).open("rb") as f:
+        assert c.post(f"/api/projects/{pid}/media", files=[("files", ("gameplay.mp4", f, "video/mp4"))]).status_code == 200
+    j = _wait(c, c.post(f"/api/projects/{pid}/auto-edit", json={"style": "pvp", "music": False}).json())
+    assert j["status"] == "termine", j
+    tl = c.get(f"/api/projects/{pid}").json()["timeline"]
+    assert tl["music"]["track"] and Path(tl["music"]["track"]).exists() and tl["music"]["volume"] >= 0.3
+    # Export sans décor 3D (plus rapide) : seuls la musique et le son du jeu comptent ici.
+    tl["texts"], tl["impacts"], tl["sfx"], tl["overlays"] = [], [], [], []
+    for x in tl["clips"]:
+        x["effects"], x["transition"] = [], "aucune"
+    assert c.put(f"/api/projects/{pid}/timeline", json=tl).status_code == 200
+    shares = {}
+    for label, mute in (("avec", False), ("coupee", True)):
+        tl["mix"]["music"]["mute"] = mute
+        assert c.put(f"/api/projects/{pid}/timeline", json=tl).status_code == 200
+        j = _wait(c, c.post(f"/api/projects/{pid}/export", json={"quality": "720p", "fps": 30}).json())
+        assert j["status"] == "termine", j
+        out = tmp_path / f"{label}.mp4"
+        out.write_bytes(c.get(f"/api/projects/{pid}/exports/{j['result']}").content)
+        shares[label] = _quiet_share(out)
+    assert shares["avec"] < 0.1 and shares["coupee"] > shares["avec"] + 0.2, shares
+
+
+def test_requested_bursts_are_matched_and_only_those_enter():
+    from app.ai import jury
+    from app.models import EditSettings
+    m = _M()
+    h = _three_fights()  # A : 20 s (14 coups), B : 60 s (9 coups), C : 100 s (7 coups)
+    cands = pvp.candidates([m], {"m1": h})
+    keys, lost = pvp.match_requested(cands, [("m1", 58.0, 66.0), ("m1", 30.0, 40.0), ("autre", 0.0, 500.0)])
+    assert keys == {("m1", jury.key(c)) for _, c in cands if 59 < c["start"] < 62}
+    assert lost == [("m1", 30.0, 40.0), ("autre", 0.0, 500.0)]
+    # Un passage qui recouvre un duel entier retient toutes ses rafales.
+    allk, _ = pvp.match_requested(cands, [("m1", 0.0, 500.0)])
+    assert allk == {("m1", jury.key(c)) for _, c in cands}
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=20), only=keys)
+    assert tl.clips and all(55 < x.src_in < 75 and x.src_out < 80 for x in tl.clips), "seule la rafale choisie est montée"
+    assert any(r.reason == "Non choisi pour cet edit." for r in tl.rejected)
+    assert tl.music.track, "musique posée (générée) même quand les rafales sont imposées"
+    none = pvp.build([m], {"m1": h}, EditSettings(style="pvp"), only=set())
+    assert not none.clips and "ne correspond à un combo" in none.summary
+
+
+def test_pvp_fallback_edit_keeps_a_music(rush):
+    """Rush sans combo : le montage de repli du bouton « Edit PvP » n'est pas muet, même sans bibliothèque ni case cochée."""
+    c = TestClient(app)
+    pid = c.post("/api/projects", json={"name": "Repli PvP"}).json()["id"]
+    with rush.open("rb") as f:
+        assert c.post(f"/api/projects/{pid}/media", files=[("files", ("rush.mp4", f, "video/mp4"))]).status_code == 200
+    j = _wait(c, c.post(f"/api/projects/{pid}/auto-edit", json={"style": "pvp", "music": False}).json())
+    assert j["status"] == "termine", j
+    tl = c.get(f"/api/projects/{pid}").json()["timeline"]
+    assert tl["clips"] and tl["music"]["track"]

@@ -548,9 +548,9 @@ class ClaudeDirector:
 # Consignes sans clé API : quelques commandes courantes comprises localement
 # ---------------------------------------------------------------------------
 
-def heuristic_command(instruction: str, timeline: Timeline, segments: list[Segment],
-                      settings: EditSettings, media_order: list[str],
-                      music_track: str | None) -> tuple[Timeline, str, EditSettings]:
+def parse_settings(instruction: str, settings: EditSettings) -> tuple[EditSettings, list[str]]:
+    """Réglages (durée, format, sous-titres, musique, zooms) compris dans une consigne en clair : les nouveaux
+    réglages et la liste de ce qui change. Sert aussi à refaire un edit PvP avec ces réglages."""
     text = instruction.lower()
     s2 = settings.model_copy()
     changed = []
@@ -581,6 +581,14 @@ def heuristic_command(instruction: str, timeline: Timeline, segments: list[Segme
     if "zoom" in text:
         s2.punch_zooms = not any(k in text for k in ("sans", "enlève", "enleve", "supprime", "pas de"))
         changed.append("zooms " + ("activés" if s2.punch_zooms else "désactivés"))
+    return s2, changed
+
+
+def heuristic_command(instruction: str, timeline: Timeline, segments: list[Segment],
+                      settings: EditSettings, media_order: list[str],
+                      music_track: str | None) -> tuple[Timeline, str, EditSettings]:
+    text = instruction.lower()
+    s2, changed = parse_settings(instruction, settings)
 
     # Effets demandés en clair : ils s'appliquent sur la timeline existante.
     fx_words = {
