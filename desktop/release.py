@@ -4,6 +4,7 @@
     python desktop/release.py --dry-run                       # contrôles locaux seulement, rien n'est envoyé
     python desktop/release.py                                 # crée la release, téléverse les fichiers, la publie
     python desktop/release.py --draft                         # idem, mais la laisse en brouillon (à publier à la main)
+    python desktop/release.py --ci [--draft]                  # sur GitHub Actions (.github/workflows/release.yml)
 
 Ce que fait le script, dans l'ordre :
   1. lit la version dans backend/app/version.py et vérifie que l'installateur de cette version existe ;
@@ -15,6 +16,11 @@ Ce que fait le script, dans l'ordre :
 
 Le jeton GitHub est lu par `git credential fill` (le même que pour `git push`) : il n'est ni affiché ni écrit.
 Le script refuse si une release publiée existe déjà pour ce tag. Il ne touche qu'à l'API GitHub du dépôt.
+
+Avec --ci (workflow GitHub Actions, qui construit l'installateur sur un runner pour ne pas téléverser 1,3 Go depuis un
+poste) : le jeton, le dépôt et le commit viennent du workflow (GITHUB_TOKEN, GITHUB_REPOSITORY, GITHUB_SHA). Le commit
+visé est celui que le runner a construit ; s'il n'est pas dans main, seule une release en brouillon est permise, et son
+titre dit de ne pas la publier.
 """
 from __future__ import annotations
 
@@ -122,6 +128,24 @@ def get_token(root: Path = ROOT) -> str:
     raise ReleaseError("Aucun jeton GitHub dans le gestionnaire d'identifiants de Git : fais un `git push` une fois pour l'enregistrer.")
 
 
+def ci_context(env=os.environ) -> tuple[str, str, str]:
+    """Sur un runner GitHub Actions : (jeton, dépôt, commit construit), donnés par le workflow. Jamais affichés."""
+    token, repo, commit = (str(env.get(k) or "").strip() for k in ("GITHUB_TOKEN", "GITHUB_REPOSITORY", "GITHUB_SHA"))
+    if not token:
+        raise ReleaseError("--ci : GITHUB_TOKEN est vide (l'étape du workflow doit le passer dans `env`).")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ReleaseError("--ci : GITHUB_SHA est absent, ce n'est pas un runner GitHub Actions.")
+    return token, repo, commit
+
+
+def ci_summary(lines: list[str], env=os.environ) -> None:
+    """Résumé affiché sur la page du run (fichier donné par GITHUB_STEP_SUMMARY) ; sans effet ailleurs."""
+    path = env.get("GITHUB_STEP_SUMMARY")
+    if path:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
+
 # --- API GitHub --------------------------------------------------------------------------------
 
 class GitHub:
@@ -174,6 +198,12 @@ class GitHub:
             if isinstance(r, dict) and r.get("tag_name") == tag and r.get("draft"):
                 return r
         return None
+
+    def in_main(self, commit: str) -> bool:
+        """Vrai si `commit` fait partie de l'historique de main. GitHub compare lui-même : pas besoin de l'historique
+        en local (un runner n'a que le commit construit). « ahead » : main est en avance sur ce commit, donc le contient."""
+        cmp = self.call("GET", f"/repos/{self.repo}/compare/{commit}...main", missing_ok=True)
+        return bool(cmp) and cmp.get("status") in ("ahead", "identical")
 
     def upload(self, release: dict, path: Path, name: str, show=lambda done, total: None) -> dict:
         """Téléverse `path` comme fichier de la release, en flux : jamais plus d'un morceau en mémoire."""
@@ -243,14 +273,22 @@ def run(args: argparse.Namespace, root: Path = ROOT) -> int:
     except ReleaseError as e:
         problems.append(str(e))
     warnings: list[str] = []
+    token = None
     try:
-        commit, remote_version = origin_main(root)
-        print(f"Commit visé : origin/main = {commit[:10]}")
-        if remote_version != version:
-            warnings.append(f"origin/main a la version {remote_version or 'inconnue'}, pas {version} : fusionne d'abord la branche de la version dans main "
-                            f"(et `git fetch origin`), sinon le tag {tag} pointera sur un code d'une autre version.")
+        if args.ci:
+            # Le runner a construit l'installateur à partir de ce commit : la version lue plus haut est la sienne.
+            token, ci_repo, commit = ci_context()
+            args.repo = args.repo or ci_repo
+            print(f"Commit visé : celui que le workflow a construit = {commit[:10]}")
+        else:
+            commit, remote_version = origin_main(root)
+            print(f"Commit visé : origin/main = {commit[:10]}")
+            if remote_version != version:
+                warnings.append(f"origin/main a la version {remote_version or 'inconnue'}, pas {version} : fusionne d'abord la branche de la version dans main "
+                                f"(et `git fetch origin`), sinon le tag {tag} pointera sur un code d'une autre version.")
     except ReleaseError as e:
         problems.append(str(e))
+    args.repo = args.repo or REPO
     problems += warnings  # un tag sur le mauvais code est une erreur, à blanc comme en vrai
     if args.dry_run:
         if problems:
@@ -273,7 +311,15 @@ def run(args: argparse.Namespace, root: Path = ROOT) -> int:
 
     sums = installer.parent / SUMS_NAME
     sums.write_text(f"{sha}  {name}\n", encoding="utf-8", newline="\n")
-    gh = GitHub(args.api, get_token(root), args.repo)
+    gh = GitHub(args.api, token or get_token(root), args.repo)
+    title = f"Monteur IA {version}"
+    if args.ci and not gh.in_main(commit):
+        # Publier poserait le tag sur un commit que main n'a pas : la version publique ne correspondrait à aucun code de main.
+        if not args.draft:
+            raise ReleaseError(f"Le commit construit ({commit[:10]}) n'est pas dans main : hors de main, seule une release "
+                               "en brouillon est permise. Fusionne d'abord, puis relance depuis main. Rien n'a été publié.")
+        title += " (essai hors de main, ne pas publier)"
+        print(f"Le commit {commit[:10]} n'est pas dans main : brouillon d'essai, à ne pas publier.")
     existing = gh.find_release(tag)
     if existing and not existing.get("draft"):
         print(f"Une release publiée existe déjà pour {tag} ({existing.get('html_url')}) : rien n'est modifié.")
@@ -283,38 +329,51 @@ def run(args: argparse.Namespace, root: Path = ROOT) -> int:
     ref = gh.call("GET", f"/repos/{args.repo}/git/ref/tags/{tag}", missing_ok=True)
     if ref:
         obj = ref.get("object") or {}
+        if obj.get("type") == "tag":  # tag annoté (`git tag -a`) : la référence désigne l'objet tag, qui désigne le commit
+            obj = (gh.call("GET", f"/repos/{args.repo}/git/tags/{obj.get('sha')}", missing_ok=True) or {}).get("object") or {}
         if obj.get("type") != "commit" or obj.get("sha") != commit:
-            raise ReleaseError(f"Le tag {tag} existe déjà sur GitHub, sur un autre commit que origin/main ({commit[:10]}) : "
+            raise ReleaseError(f"Le tag {tag} existe déjà sur GitHub, sur un autre commit que celui visé ({commit[:10]}) : "
                                "supprime ce tag à la main si c'est une erreur, puis relance. Rien n'a été publié.")
+    wanted = {"tag_name": tag, "target_commitish": commit, "name": title, "body": notes, "draft": True, "prerelease": False}
     if existing:  # brouillon d'un essai précédent : on le reprend et on remplace ses fichiers
         release = existing
         for a in existing.get("assets") or []:
             if a.get("name") in (name, SUMS_NAME):
                 gh.call("DELETE", f"/repos/{args.repo}/releases/assets/{a['id']}")
-        print(f"Brouillon existant repris (release {release['id']}).")
+        # Le brouillon peut dater d'un autre commit : on le réaligne sur le code de cet installateur (commit, titre, notes).
+        gh.call("PATCH", f"/repos/{args.repo}/releases/{release['id']}", wanted)
+        print(f"Brouillon existant repris (release {release['id']}), réaligné sur {commit[:10]}.")
     else:
-        release = gh.call("POST", f"/repos/{args.repo}/releases", {
-            "tag_name": tag, "target_commitish": commit, "name": f"Monteur IA {version}", "body": notes,
-            "draft": True, "prerelease": False})
+        release = gh.call("POST", f"/repos/{args.repo}/releases", wanted)
         print(f"Release {tag} créée en brouillon (id {release['id']}).")
     try:
         gh.upload(release, sums, SUMS_NAME)
         gh.upload(release, installer, name, progress(f"Envoi de {name}"))
         check = gh.call("GET", f"/repos/{args.repo}/releases/{release['id']}")
-        sizes = {a.get("name"): (a.get("size"), a.get("state")) for a in check.get("assets") or []}
-        for local, label in ((installer, name), (sums, SUMS_NAME)):
-            got = sizes.get(label)
-            if not got or got[0] != local.stat().st_size or got[1] not in (None, "uploaded"):
-                raise ReleaseError(f"GitHub n'a pas bien reçu {label} (taille {got[0] if got else 'absente'}).")
-        print("Fichiers reçus par GitHub, tailles vérifiées.")
+        received = {a.get("name"): a for a in check.get("assets") or []}
+        confirmed = 0
+        for local, label, local_sha in ((installer, name, sha), (sums, SUMS_NAME, hashlib.sha256(sums.read_bytes()).hexdigest())):
+            got = received.get(label)
+            if not got or got.get("size") != local.stat().st_size or got.get("state") not in (None, "uploaded"):
+                raise ReleaseError(f"GitHub n'a pas bien reçu {label} (taille {got.get('size') if got else 'absente'}).")
+            if got.get("digest"):  # empreinte que GitHub calcule sur le fichier reçu (« sha256:… »), quand l'API la donne
+                if got["digest"] != f"sha256:{local_sha}":
+                    raise ReleaseError(f"GitHub a reçu {label} avec une autre empreinte SHA-256 que le fichier local.")
+                confirmed += 1
+        print("Fichiers reçus par GitHub, tailles vérifiées" + (", empreintes SHA-256 confirmées par GitHub." if confirmed == 2 else "."))
     except ReleaseError as e:
         print(f"{e}\nLa release {tag} reste en brouillon : relance le script pour la reprendre.", file=sys.stderr)
         return 1
+    facts = [f"- Fichier : `{name}` ({installer.stat().st_size / 1e6:.0f} Mo)", f"- SHA-256 : `{sha}`", f"- Commit : `{commit}`"]
     if args.draft:
         print(f"Laissée en brouillon : {release.get('html_url')}")
+        if args.ci:
+            ci_summary([f"### {title} : release {tag} en brouillon", *facts, f"- À relire, puis à publier à la main : {release.get('html_url')}"])
         return 0
     done = gh.call("PATCH", f"/repos/{args.repo}/releases/{release['id']}", {"draft": False, "make_latest": "true"})
     print(f"Release publiée : {done.get('html_url')}")
+    if args.ci:
+        ci_summary([f"### {title} : release {tag} publiée", *facts, f"- {done.get('html_url')}"])
     return 0
 
 
@@ -322,7 +381,8 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     ap = argparse.ArgumentParser(description="Publie une version de Monteur IA sur GitHub.")
     ap.add_argument("--dry-run", action="store_true", help="contrôles locaux seulement : rien n'est envoyé ni écrit")
     ap.add_argument("--draft", action="store_true", help="laisse la release en brouillon au lieu de la publier")
-    ap.add_argument("--repo", default=REPO, help=argparse.SUPPRESS)
+    ap.add_argument("--ci", action="store_true", help="sur GitHub Actions : jeton, dépôt et commit donnés par le workflow")
+    ap.add_argument("--repo", default=None, help=argparse.SUPPRESS)
     ap.add_argument("--api", default=os.environ.get("MONTEUR_RELEASE_API", API), help=argparse.SUPPRESS)  # faux serveur d'essai
     args = ap.parse_args(argv)
     try:

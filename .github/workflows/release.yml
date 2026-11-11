@@ -1,0 +1,241 @@
+# Construit l'installateur Windows de Monteur IA sur un runner GitHub, puis crée la release.
+#
+# Pourquoi ici plutôt que sur un poste : l'installateur pèse 1,3 Go. Depuis une connexion lente, son envoi prend des
+# heures et ne se reprend pas s'il se coupe. Le runner le construit et le dépose directement chez GitHub.
+#
+# Deux façons de le lancer :
+#   - à la main (onglet Actions, « Publier une version », « Run workflow ») : la release reste en BROUILLON par défaut,
+#     à relire puis à publier d'un clic sur GitHub. Décocher « brouillon » la publie tout de suite ;
+#   - en poussant un tag vX.Y.Z (égal à backend/app/version.py) sur un commit de main : la release est PUBLIÉE.
+#
+# Ce que le runner n'a pas et que ce fichier apporte : FFmpeg (téléchargé à une version épinglée, empreinte vérifiée).
+# Python 3.12, Node 22 et Inno Setup 6 (avec French.isl) font partie de l'image windows-latest (Windows Server 2025,
+# vérifié le 2026-11-11 dans actions/runner-images) ; Python et Node sont tout de même fixés par setup-python et
+# setup-node, et l'absence d'Inno Setup arrête le run avec un message clair.
+#
+# Seul secret : le GITHUB_TOKEN du run, en lecture pour les contrôles et avec « contents: write » pour le seul job
+# qui crée la release et y dépose les fichiers.
+# La publication elle-même est faite par desktop/release.py --ci : mêmes contrôles que depuis un poste.
+
+name: Publier une version
+
+run-name: Version de Monteur IA depuis ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      brouillon:
+        description: "Laisser la release en brouillon (à publier ensuite à la main sur GitHub)"
+        type: boolean
+        default: true
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # Tout ce qui peut refuser la publication est contrôlé ici, en quelques secondes, avant les 40 minutes de construction.
+  controles:
+    name: Version, tag et notes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.lire.outputs.version }}
+      mode: ${{ steps.lire.outputs.mode }}
+      construire: ${{ steps.lire.outputs.construire }}
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Lire la version et décider du mode
+        id: lire
+        shell: python
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BROUILLON: ${{ inputs.brouillon }}
+        run: |
+          import os
+          import sys
+
+          sys.path.insert(0, "desktop")
+          import release
+
+
+          def stop(message):
+              print(f"::error::{message}")
+              sys.exit(1)
+
+
+          version = release.read_version()
+          tag = f"v{version}"
+          ref = os.environ["GITHUB_REF"]
+          pushed_tag = ref.startswith("refs/tags/")
+          if pushed_tag and ref != f"refs/tags/{tag}":
+              stop(f"Le tag poussé ({ref[len('refs/tags/'):]}) n'est pas celui de backend/app/version.py ({tag}).")
+          # Publiée : tag poussé, ou lancement à la main avec « brouillon » décoché. Tout le reste : brouillon.
+          publish = pushed_tag or (os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch" and os.environ.get("BROUILLON") == "false")
+          build = True
+          try:
+              notes = release.changelog_notes(version)
+              gh = release.GitHub(release.API, os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"])
+              found = gh.find_release(tag)
+              if found and not found.get("draft"):
+                  if not pushed_tag:
+                      stop(f"Une release publiée existe déjà pour {tag} ({found.get('html_url')}) : rien n'est modifié.")
+                  # Publier un brouillon d'un clic sur GitHub crée le tag, ce qui relance ce workflow : il n'y a rien à refaire.
+                  print(f"::notice::La release {tag} est déjà publiée ({found.get('html_url')}) : rien à construire.")
+                  build = False
+              elif publish and not gh.in_main(os.environ["GITHUB_SHA"]):
+                  stop("Ce commit n'est pas dans main : hors de main, seule une release en brouillon est permise.")
+          except release.ReleaseError as e:
+              stop(str(e))
+          print(f"Version {version} (tag {tag}), {'publication' if publish else 'brouillon'}, {len(notes.splitlines())} ligne(s) de notes.")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              for key, value in (("version", version), ("mode", "" if publish else "--draft"), ("construire", "oui" if build else "non")):
+                  print(f"{key}={value}", file=out)
+
+  installateur:
+    name: Installateur et release
+    needs: controles
+    if: needs.controles.outputs.construire == 'oui'
+    runs-on: windows-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write  # créer la release et y déposer les fichiers : le seul droit d'écriture du workflow
+    env:
+      PYTHONUTF8: "1"  # les scripts affichent des accents ; la console du runner n'est pas en UTF-8
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PIP_NO_CACHE_DIR: "1"  # les roues NVIDIA pèsent 1,5 Go : inutile de les garder en double sur le disque du runner
+      # FFmpeg embarqué : la même construction que celle du poste de développement (winget Gyan.FFmpeg), prise dans
+      # les releases GitHub de son auteur. Pour changer de version : les deux lignes, l'empreinte étant le « digest »
+      # du fichier ffmpeg-<version>-full_build.7z sur https://github.com/GyanD/codexffmpeg/releases.
+      FFMPEG_VERSION: "8.1.2"
+      FFMPEG_SHA256: 0fff188997a499b5382e0f66e845d4556c48c54f0113ebed4853d556dbdd7059
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Outils du runner (Inno Setup, place sur le disque)
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          $french = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\Languages\French.isl'
+          foreach ($f in $iscc, $french) {
+            if (-not (Test-Path $f)) {
+              throw "$f est introuvable : Inno Setup 6 n'est plus fourni par l'image du runner. Ajouter une étape qui l'installe (choco install innosetup)."
+            }
+          }
+          "Inno Setup : $((Get-Item $iscc).VersionInfo.ProductVersion)"
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{n = 'Libre (Go)'; e = { [math]::Round($_.Free / 1GB, 1) } }, @{n = 'Utilisé (Go)'; e = { [math]::Round($_.Used / 1GB, 1) } }
+
+      - name: Interface (contrôles, puis construction)
+        shell: bash
+        working-directory: frontend
+        run: |
+          npm ci
+          npx tsc -p tsconfig.json --noEmit
+          npm test
+          npm run check
+          npm run build
+
+      - name: Paquets Python (dont les bibliothèques NVIDIA)
+        shell: bash
+        run: |
+          python -m pip install -r desktop/requirements.txt -r backend/requirements-cuda.txt
+          python -m pip freeze
+
+      - name: FFmpeg ${{ env.FFMPEG_VERSION }} (empreinte vérifiée)
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $name = "ffmpeg-$env:FFMPEG_VERSION-full_build"
+          $archive = Join-Path $env:RUNNER_TEMP "$name.7z"
+          curl.exe --fail --location --silent --show-error --retry 3 --output $archive "https://github.com/GyanD/codexffmpeg/releases/download/$env:FFMPEG_VERSION/$name.7z"
+          $sha = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -ne $env:FFMPEG_SHA256) { throw "Empreinte de $name.7z inattendue : $sha (attendue : $env:FFMPEG_SHA256)." }
+          7z x $archive "-o$env:RUNNER_TEMP\ffmpeg" -y | Out-Null
+          $bin = Join-Path $env:RUNNER_TEMP "ffmpeg\$name\bin"
+          & "$bin\ffmpeg.exe" -hide_banner -version | Select-Object -First 1
+          Get-FileHash "$bin\ffmpeg.exe", "$bin\ffprobe.exe" -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path $_.Path -Leaf)" }
+          # Dossier donné à build.py (--ffmpeg), et PATH : le clip de démo est rendu avec ce FFmpeg pendant la construction.
+          "FFMPEG_DIR=$bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Application et installateur
+        shell: bash
+        run: python desktop/build.py --ffmpeg "$FFMPEG_DIR" --installer
+
+      # L'installateur est installé pour de bon dans un dossier jetable, puis l'application est lancée : un fichier
+      # manquant ou un module Python absent se voit ici, pas chez la première personne qui met à jour.
+      - name: Essai de l'installateur (installation silencieuse, démarrage)
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.controles.outputs.version }}
+        run: |
+          $setup = "dist\installer\MonteurIA-Setup-$env:VERSION.exe"
+          $dir = Join-Path $env:RUNNER_TEMP 'essai-installation'
+          $data = Join-Path $env:RUNNER_TEMP 'essai-donnees'
+          $log = Join-Path $env:RUNNER_TEMP 'installation.log'
+          "Installateur : {0:N0} Mo" -f ((Get-Item $setup).Length / 1MB)
+          if (-not (Test-Path 'dist\Monteur IA\_internal\nvidia')) { throw "Les bibliothèques NVIDIA ne sont pas dans l'application construite." }
+
+          $install = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS /DIR=`"$dir`" /LOG=`"$log`""
+          if ($install.ExitCode -ne 0) {
+            Get-Content $log -Tail 60 -ErrorAction SilentlyContinue
+            throw "L'installation silencieuse a échoué (code $($install.ExitCode))."
+          }
+          foreach ($f in 'Monteur IA.exe', '_internal\bin\ffmpeg.exe', '_internal\bin\ffprobe.exe', '_internal\assets\demo_pvp.mp4', '_internal\frontend\dist\index.html') {
+            if (-not (Test-Path (Join-Path $dir $f))) { throw "Fichier absent après l'installation : $f" }
+          }
+          "Installé : {0:N0} Mo dans $dir" -f ((Get-ChildItem $dir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
+
+          # --browser : pas de fenêtre native sur un runner. Le serveur, l'interface et FFmpeg sont ceux de l'application installée.
+          $env:MONTEUR_DATA_DIR = $data
+          $app = Start-Process -FilePath (Join-Path $dir 'Monteur IA.exe') -ArgumentList '--browser', '--port', '8765' -PassThru
+          try {
+            $health = $null
+            foreach ($i in 1..60) {
+              Start-Sleep -Seconds 2
+              try { $health = Invoke-RestMethod 'http://127.0.0.1:8765/api/health' -TimeoutSec 10; break } catch { if ($app.HasExited) { break } }
+            }
+            if (-not $health) { throw "L'application installée ne répond pas sur /api/health." }
+            $health | ConvertTo-Json -Depth 5
+            if ($health.version -ne $env:VERSION) { throw "L'application installée annonce la version $($health.version), pas $env:VERSION." }
+            $page = Invoke-WebRequest 'http://127.0.0.1:8765/' -UseBasicParsing
+            if ($page.StatusCode -ne 200 -or $page.Content -notmatch '<div id="root"') { throw "L'application installée ne sert pas l'interface." }
+            "Application installée : version $($health.version), interface servie."
+          } catch {
+            Get-Content (Join-Path $data 'monteur.log') -Tail 80 -ErrorAction SilentlyContinue
+            throw
+          } finally {
+            if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
+          }
+
+      # Écrit SHA256SUMS.txt, crée (ou reprend) la release en brouillon, y dépose les deux fichiers, vérifie leurs
+      # tailles et leurs empreintes côté GitHub, puis la publie si le mode le demande.
+      - name: Release GitHub
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ needs.controles.outputs.mode }}
+        run: python desktop/release.py --ci $MODE
