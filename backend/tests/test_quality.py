@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from app import pipeline, storage
 from app.ai import quality, review, soundsheet
 from app.main import app
-from app.models import (Clip, EditSettings, ImpactItem, SfxItem, TextItem, Timeline, Transcript, Word)
+from app.models import (AudioItem, Clip, EditSettings, ImageItem, ImpactItem, SfxItem, TextItem, Timeline, Transcript, Word)
 
 c = TestClient(app)
 
@@ -59,6 +59,67 @@ def test_plan_checks_find_and_fix_problems():
     assert not any(i.check == "flashs" for i in fixed.quality.issues)
     # Le contrôle local note la version : meilleure après corrections.
     assert review.local_review(fixed.quality).score > review.local_review(rep).score
+
+
+def test_moving_the_strongest_shot_first_carries_what_sits_on_it():
+    """Placer un plan en ouverture déplace aussi ses impacts, textes et bruitages ; ceux des plans dépassés reculent."""
+    tl = Timeline(clips=[Clip(media_id="m", src_in=0, src_out=4, score=0.3), Clip(media_id="m", src_in=10, src_out=12, score=0.4),
+                         Clip(media_id="m", src_in=30, src_out=33, score=0.9), Clip(media_id="m", src_in=40, src_out=42, score=0.5)])
+    tl.impacts = [ImpactItem(start=1.0, kind="secousse"), ImpactItem(start=6.5, kind="secousse"), ImpactItem(start=9.5, kind="secousse")]
+    tl.sfx = [SfxItem(start=6.0, kind="boom")]
+    tl.texts = [TextItem(start=4.0, duration=1.0, text="Deux"), TextItem(start=7.0, duration=1.0, text="Fort")]
+    quality._move_first(tl, 2)
+    assert [c.score for c in tl.clips] == [0.9, 0.3, 0.4, 0.5] and tl.clips[0].transition == "aucune"
+    # Le plan fort allait de 6 à 9 s : ce qui était posé dessus garde sa place dans le plan (6,5 → 0,5 ; 6,0 → 0,0 ; 7,0 → 1,0).
+    assert [i.start for i in tl.impacts] == [4.0, 0.5, 9.5]  # avant lui : +3 s ; sur lui : -6 s ; après lui : inchangé
+    assert tl.sfx[0].start == 0.0
+    assert [x.start for x in tl.texts] == [7.0, 1.0]
+
+
+def test_moving_a_shot_leaves_what_covers_the_whole_edit_and_supports_the_moved_shot():
+    tl = Timeline(clips=[Clip(media_id="m", src_in=0, src_out=4, score=0.3), Clip(media_id="m", src_in=10, src_out=12, score=0.4),
+                         Clip(media_id="m", src_in=30, src_out=33, score=0.9), Clip(media_id="m", src_in=40, src_out=42, score=0.5)])
+    tl.images = [ImageItem(asset="logo.png", start=0.0, duration=None)]  # filigrane
+    tl.audio = [AudioItem(asset="voix.wav", start=0.0, src_out=11.0, kind="voix")]
+    out = quality.check_and_fix(tl, {}, EditSettings(style="short"))
+    assert out.clips[0].score == 0.9
+    assert out.images[0].start == 0.0 and out.audio[0].start == 0.0  # ni l'un ni l'autre n'est posé sur un plan
+    # L'appui du moment fort (bruitage) tombe sur le plan déplacé, à 0 s, pas à son ancienne place (6 s).
+    assert [s.start for s in out.sfx] == [0.0]
+
+
+def _pvp_timeline():
+    tl = Timeline(director="pvp")
+    tl.clips = [Clip(media_id="m", src_in=70, src_out=71, score=0.4, reason="Aperçu du moment fort, en accroche.", effects=["3d_bascule"]),
+                Clip(media_id="m", src_in=260, src_out=264, score=1.0), Clip(media_id="m", src_in=110, src_out=112, score=0.7),
+                Clip(media_id="m", src_in=70, src_out=71, score=0.4, speed=0.4, transition="flash")]
+    tl.impacts = [ImpactItem(start=0.4, kind="secousse"), ImpactItem(start=1.5, kind="secousse"), ImpactItem(start=3.2, kind="secousse"),
+                  ImpactItem(start=7.4, kind="flash")]
+    # Comme `pvp.build` : le souffle part 0,25 s avant la coupe du moment fort (7,0 s), la carte ne dépasse pas de son plan.
+    tl.sfx = [SfxItem(start=0.0, kind="boom"), SfxItem(start=6.75, kind="whoosh"), SfxItem(start=7.4, kind="boom")]
+    tl.texts = [TextItem(start=7.4, duration=0.7, text="KILL", style="gros_texte")]
+    return tl
+
+
+def test_pvp_edit_is_not_reordered_nor_dressed_again():
+    """Un edit PvP est calé coup par coup et ouvre sur son aperçu : le contrôle qualité ne déplace aucun plan (les
+    secousses resteraient à l'ancienne place) et n'ajoute ni zoom ni bruitage sur le plan au meilleur score."""
+    tl = _pvp_timeline()
+    before = tl.model_dump()
+    st = EditSettings(style="pvp", captions="aucun")
+    rep = quality.plan_checks(tl, {}, st)
+    assert not any(i.fix in ("accroche_ordre", "moment_fort") for i in rep.issues)
+    out = quality.check_and_fix(tl, {}, st)
+    assert [(c.src_in, c.speed) for c in out.clips] == [(c["src_in"], c["speed"]) for c in before["clips"]]
+    assert [c.zoom for c in out.clips] == [1.0] * 4
+    assert [i.start for i in out.impacts] == [0.4, 1.5, 3.2, 7.4]
+    assert [(s.kind, s.start) for s in out.sfx] == [("boom", 0.0), ("whoosh", 6.75), ("boom", 7.4)]
+    assert out.texts[0].duration == 0.7  # signalée comme courte à lire, pas rallongée sur autre chose
+    assert out.quality.fixed == []
+    # Le même montage, sans la marque PvP, serait réordonné : c'est bien la marque qui protège.
+    autre = _pvp_timeline()
+    autre.director = "local"
+    assert any(i.fix == "accroche_ordre" for i in quality.plan_checks(autre, {}, EditSettings(style="short")).issues)
 
 
 def test_hook_trims_silent_start():

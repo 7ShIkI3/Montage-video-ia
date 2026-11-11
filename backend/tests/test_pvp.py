@@ -960,9 +960,17 @@ def test_the_music_peak_lands_on_the_kill_and_the_full_stack_serves_only_one_mom
     assert round(30.25 - tl.music.start, 3) == pytest.approx(kill_at, abs=0.02)
     assert abs((tl.music.start - 0.25) / beat - round((tl.music.start - 0.25) / beat)) < 0.02, "la musique part toujours sur un temps"
     assert abs(kill_at / beat - round(kill_at / beat)) < 0.02, "le coup final du kill tombe sur un temps de la musique"
+    # La fin ne traîne pas : après un kill l'adversaire disparaît, le ralenti ne garde que `HOLD_KILL` secondes de rush
+    # (à un temps près), et le montage s'arrête peu après la carte « KILL ».
+    coup_final = max(t for t, _ in h if 100 <= t < 110)
+    assert 0 < plein.src_out - coup_final <= pvp.HOLD_KILL + beat * pvp.SLOW / 2 + 1e-6
+    carte = [t for t in tl.texts if t.text == "KILL"][0]
+    assert 0 <= tl.duration - (carte.start + carte.duration) <= beat + 1e-6
     # Sans kill, la règle d'avant reste : le pic sur une coupe, la pile complète sur le meilleur combo.
     sans = {k: {**v, "fin": "rien"} for k, v in verdicts.items()}
     tl2 = pvp.build([m], {"m1": h}, s, "x", "morceau.mp3", verdicts=sans)
+    # ... et le coup final d'un combo, lui, garde le temps de voir l'adversaire reculer.
+    assert tl2.clips[-1].src_out - max(t for t, _ in h if 60 <= t < 70) > pvp.HOLD_KILL + beat * pvp.SLOW / 2
     assert "Pic de la musique posé sur la coupe" in tl2.summary and [x.speed for x in tl2.clips if x.speed < 1] == [pvp.SLOW]
     assert [i.kind for i in tl2.impacts].count("flash") == 1
 
@@ -1101,6 +1109,8 @@ def test_the_teaser_of_an_unproven_kill_does_not_show_more_than_its_last_second(
         teaser = tl.clips[0]
         assert 100 <= teaser.src_in and teaser.src_out <= 106
         assert teaser.src_in >= 103.5 - pvp.KILL_LEAD - 0.06, (bpm, teaser.src_in)
+        # ... ni l'arène vide d'après : il s'arrête où s'arrêtera le ralenti final, à moins qu'il lui faille ses deux temps.
+        assert teaser.src_out <= max(103.5 + pvp.HOLD_KILL, teaser.src_in + 2 * 60 / bpm) + 0.06, (bpm, teaser.src_out)
 
 
 def test_a_kill_whose_life_drops_right_before_the_last_blow_still_gets_its_slow_motion():
