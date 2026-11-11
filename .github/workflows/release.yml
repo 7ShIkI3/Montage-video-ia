@@ -30,6 +30,7 @@ on:
         default: true
   push:
     tags: ["v*"]
+    branches: ["ci/release-github-actions"]  # ESSAI TEMPORAIRE, retiré avant la fusion : brouillon seulement
 
 permissions:
   contents: read
