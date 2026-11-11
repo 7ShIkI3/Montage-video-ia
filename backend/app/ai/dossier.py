@@ -8,6 +8,8 @@ mesuré, pour que l'IA réponde « probable » ou aille regarder, plutôt qu'inv
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from .. import storage
 from ..analysis import hits as hits_an
 from ..models import Project, Transcript
@@ -63,19 +65,26 @@ def media_section(project: Project, m, max_phrases: int = 30, max_seen: int = 40
         # Les rafales sont les vrais combos (coups à 0,5 s d'écart). Le son ne dit pas qui frappe : seul le jury
         # (images regardées par Claude lors d'un montage PvP) le sait.
         from ..analysis import video as video_an
+        from ..analysis import duel
         from . import jury, pvp
         seen = (sig.get("jury") or {}).get("verdicts") or {}
         v0 = sig.get("video") or {}
         menus = video_an.overlays(v0.get("brightness") or [], v0.get("fps") or 5)
         # Mêmes rafales que le montage PvP (hors menus) : leurs clés sont celles des verdicts du jury.
-        bursts = sorted((c for _, c in pvp.candidates([m], {m.id: hits}, {m.id: menus})),
-                        key=lambda c: (jury.key(c) not in seen, -c["score"]))
-        if bursts:
-            lines.append(f"  Rafales au rythme d'un combo : {len(bursts)}"
-                         + (f", dont {len(seen)} jugées sur images" if seen else " (auteur des coups inconnu sans images)"))
+        mesures = {(m.id, k): v for k, v in duel.rafales_de(sig).items()}  # seulement la version actuelle des règles
+        toutes = [c for _, c in pvp.candidates([m], {m.id: hits}, {m.id: menus}, mesures)]
+        # Les combos que le joueur subit ne sont pas proposés (le montage les refuse) ; les meilleurs d'abord.
+        bursts = sorted((c for c in toutes if duel.admissible(c.get("duel"))),
+                        key=lambda c: (duel.rang(c.get("duel")), jury.key(c) not in seen, -c["score"]))
+        if toutes:
+            lines.append(f"  Rafales au rythme d'un combo : {len(toutes)}"
+                         + (f", dont {len(seen)} jugées sur images" if seen else " (auteur des coups inconnu sans images)")
+                         + (f" ; {len(toutes) - len(bursts)} non listées : tu les subis ou y encaisses trop"
+                            if len(bursts) < len(toutes) else ""))
         for c in bursts[:14]:
             v = seen.get(jury.key(c))
             lines.append(f"  · combo {mmss(c['start'])} → {mmss(c['end'])} : {c['n']} coups"
+                         + (f" — mesure locale : {duel.label(c['duel'])}" if c.get("duel") else "")
                          + (f" — jury : {jury.label(v)}" if v else ""))
     video = sig.get("video") or {}
     if sig and m.has_video and "red_flashes" not in video:
@@ -134,6 +143,7 @@ def montage_section(project: Project, max_clips: int = 40) -> list[str]:
         t += c.duration
     if len(tl.clips) > max_clips:
         out.append(f"  … {len(tl.clips) - max_clips} autres plans")
+    out.append("Musique : " + (Path(tl.music.track).name if tl.music.track else "aucune"))
     if tl.texts:
         out.append("Textes : " + " | ".join(f"{mmss(x.start)} « {x.text[:60]} »" for x in tl.texts[:12]))
     mix = {"plans": tl.mix.rushes, "musique": tl.mix.music, "bruitages": tl.mix.sfx, "pistes": tl.mix.tracks}

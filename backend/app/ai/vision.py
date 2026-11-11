@@ -55,9 +55,10 @@ SCHEMA = {
 }
 
 
-def jpeg(path: str, t: float, zone: str = "entier", width: int = WIDTH) -> bytes | None:
-    """Une image du rush à l'instant t, en JPEG ; `zone` recadre un quart de l'image avant la mise à l'échelle."""
-    z = ZONES.get(zone)
+def jpeg(path: str, t: float, zone: str | tuple = "entier", width: int = WIDTH) -> bytes | None:
+    """Une image du rush à l'instant t, en JPEG ; `zone` recadre l'image avant la mise à l'échelle : le nom d'une
+    zone de `ZONES`, ou directement (x, y, largeur, hauteur) en fractions de l'image."""
+    z = ZONES.get(zone) if isinstance(zone, str) else zone
     vf = f"scale={width}:-2"
     if z:
         x, y, w, h = z

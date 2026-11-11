@@ -5,6 +5,8 @@ d'appeler des outils que l'app exécute pour lui, autant de fois qu'il faut, ava
 - voir_images : des images du rush à des instants précis (c'est ce qui lui permet de dire qui gagne un combat) ;
 - lire_paroles : la transcription d'un passage ;
 - definir_plans, retoucher_plan, ajouter_texte, poser_reperes : modifications directes et précises du montage ;
+- monter_edit_pvp : l'edit PvP complet (combos calés sur la musique, habillage), avec le même moteur que le bouton
+  « Edit PvP » ;
 - modifier_montage : une consigne libre confiée au monteur automatique (effets, musique, format, durée…) ;
 - web_search : une recherche web faite côté Anthropic, pour un fait extérieur.
 La réponse arrive au fil de l'eau (aperçu dans la tâche). Sans clé : pas de discussion ; le message est appliqué
@@ -14,17 +16,20 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .. import config, storage
+from ..analysis import duel
 from ..models import ChatMessage, Clip, ColorAdjust, Marker, Project, TextItem
 from . import vision
 from .dossier import _phrases, mmss, montage_section, project_dossier
 
 log = logging.getLogger(__name__)
 
+SEP = "\n"  # un backslash ne passe pas dans une f-string avant Python 3.12
 HISTORY = 12  # derniers messages donnés au modèle
 MAX_TURNS = 12  # allers-retours modèle ↔ outils par message
 MAX_IMAGES = 30  # images par message du monteur (coût maîtrisé)
@@ -39,6 +44,13 @@ SYSTEM = (
     "en général juste après la fin du combo (0,5 à 2 s après) ; les messages d'élimination et le chat sont souvent "
     "en bas à gauche, le fil des éliminations en haut à droite : la zone correspondante donne une image plus nette. "
     "Regarde peu d'images à la fois, bien choisies, et arrête-toi dès que tu sais.\n\n"
+    "Edit PvP : pour toute demande d'edit PvP, de combos ou de highlights de jeu, utilise monter_edit_pvp, pas "
+    "definir_plans : cet outil pose la musique, cale les coupes sur son tempo et habille le montage, ce que tu ne "
+    "ferais pas à la main. Tu peux lui donner les combos que tu as choisis (après les avoir regardés), ou aucun pour "
+    "le laisser choisir. Ne retiens jamais un moment où le joueur se fait enchaîner : le son d'un coup est le même "
+    "qu'il le donne ou le reçoive, donc vérifie sur les images qui frappe (vie qui chute, vue qui penche, mort juste "
+    "après), et écarte ce que l'outil signale comme subi. S'il manque de bons combos, le montage est plus court : "
+    "dis-le, ne remplis pas avec des combos subis.\n\n"
     "Agir quand on te le demande : une question, un avis ou un tri de passages n'est pas une demande de "
     "modification. Quand le monteur veut un changement, fais-le avec les outils : definir_plans pour construire ou "
     "refaire le découpage à des instants précis, retoucher_plan pour un plan (durée, vitesse, couleurs), "
@@ -128,6 +140,18 @@ class ModifierMontage(_In):
     consigne: str
 
 
+class RafaleIn(_In):
+    media: str = ""
+    debut: float
+    fin: float
+
+
+class MonterEditPvp(_In):
+    rafales: list[RafaleIn] = []
+    musique: str = ""
+    duree: float | None = None
+
+
 def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
     # Requête diffusée (stream) : les entrées d'outil arrivent au fil de l'eau, non validées côté serveur.
     # Chaque entrée est donc validée ici (modèles pydantic ci-dessus) avant d'exécuter l'outil.
@@ -189,6 +213,21 @@ TOOLS: list[dict] = [
           "revoir. À appeler quand le monteur demande de marquer des moments.",
           {"reperes": {"type": "array", "items": {"type": "object", "properties": {
               "t": {"type": "number"}, "label": {"type": "string"}}, "required": ["t", "label"]}}}, ["reperes"]),
+    _tool("monter_edit_pvp",
+          "Construit l'edit PvP complet avec le même moteur que le bouton « Edit PvP » : combos au rythme de la "
+          "musique (chaque coupe tombe sur un temps), ralenti sur le coup final, secousses, carte « COMBO », musique "
+          "posée (générée si aucune n'est choisie). Remplace le montage. À appeler pour toute demande d'edit PvP, de "
+          "combos ou de highlights de jeu, à la place de definir_plans. `rafales` : les combos que tu as choisis "
+          "(rush, début et fin en secondes dans le rush, d'après les lignes « combo m:ss → m:ss » du dossier) ; un "
+          "passage qui en contient plusieurs les retient tous. Laisse-la vide pour que le moteur choisisse seul "
+          "(mesure de la vie et de la caméra, puis jury sur images si une clé est là). Une rafale que le joueur subit "
+          "est toujours refusée, même choisie, et l'outil dit lesquelles. `musique` : nom d'un morceau de la "
+          "bibliothèque ; sinon la musique du montage, sinon un morceau de la bibliothèque, sinon un rythme électro "
+          "généré. `duree` : durée visée en secondes (sinon la longueur des rafales choisies, ou 30 s).",
+          {"rafales": {"type": "array", "items": {"type": "object", "properties": {
+              "media": _MEDIA, "debut": {"type": "number"}, "fin": {"type": "number"}}, "required": ["debut", "fin"]}},
+           "musique": {"type": "string", "description": "Nom de fichier d'un morceau de la bibliothèque (facultatif)."},
+           "duree": {"type": "number"}}, []),
     _tool("modifier_montage",
           "Confie une consigne libre au monteur automatique, qui refait le montage en conséquence : durée cible, "
           "format (vertical, carré), rythme, effets, transitions, musique, sous-titres, retrait d'un sujet. À appeler "
@@ -198,7 +237,7 @@ TOOLS: list[dict] = [
 _INPUTS: dict[str, type[_In]] = {
     "voir_images": VoirImages, "lire_paroles": LireParoles, "definir_plans": DefinirPlans,
     "retoucher_plan": RetoucherPlan, "ajouter_texte": AjouterTexte, "poser_reperes": PoserReperes,
-    "modifier_montage": ModifierMontage, "regler_mixage": ReglerMixage,
+    "modifier_montage": ModifierMontage, "regler_mixage": ReglerMixage, "monter_edit_pvp": MonterEditPvp,
 }
 _MIX_GROUPS = {"plans": "rushes", "musique": "music", "bruitages": "sfx", "pistes": "tracks"}
 
@@ -284,11 +323,14 @@ class Agent:
         project = storage.load_project(self.pid)
         clips: list[Clip] = []
         used = []
-        for p in a.plans:
+        subis: list[str] = []
+        for k, p in enumerate(a.plans, 1):
             m = self._media(project, p.media)
             lo, hi = max(0.0, min(p.debut, m.duration)), max(0.0, min(p.fin, m.duration))
             if hi - lo < 0.3:
                 raise ToolError(f"Plan trop court ou hors du rush : {m.filename} {p.debut}→{p.fin} s (le rush dure {m.duration:.1f} s).")
+            if any(x < hi - 0.3 and y > lo + 0.3 for x, y in duel.plages_subies(self.pid, m.id)):
+                subis.append(f"plan {k} ({m.filename} {mmss(lo)}→{mmss(hi)})")
             clips.append(Clip(media_id=m.id, src_in=round(lo, 3), src_out=round(hi, 3),
                               speed=max(0.25, min(4.0, p.vitesse or 1.0)), reason=p.raison[:200]))
             if m not in used:
@@ -314,7 +356,9 @@ class Agent:
         storage.update_project(self.pid, apply)
         self.applied = True
         self.actions.append(f"A défini le montage : {len(clips)} plan(s)")
-        return "Montage remplacé.\n" + self._state()
+        alerte = (SEP + "ATTENTION : la mesure de la vie et de la caméra donne ces plans pour des combos que le joueur SUBIT : "
+                  + " ; ".join(subis[:12]) + ". Retire-les, ou vérifie sur les images qui frappe." if subis else "")
+        return "Montage remplacé." + alerte + SEP + self._state()
 
     def retoucher_plan(self, a: RetoucherPlan) -> str:
         project = storage.load_project(self.pid)
@@ -397,6 +441,44 @@ class Agent:
             parts.append(f"{name} coupé" if ch.mute else f"{name} {ch.volume * 100:.0f} %")
         self.actions.append("A réglé le mixage : " + ", ".join(r.groupe for r in a.reglages))
         return "Mixage : " + ", ".join(parts)
+
+    def monter_edit_pvp(self, a: MonterEditPvp) -> str:
+        from .. import pipeline
+        project = storage.load_project(self.pid)
+        if not project.media:
+            raise ToolError("Pas de rush dans le projet.")
+        chosen = None
+        if a.rafales:
+            chosen = []
+            for r in a.rafales[:60]:
+                if r.fin - r.debut < 0.3:
+                    raise ToolError(f"Rafale invalide : {r.debut}→{r.fin} s (donne le début et la fin en secondes dans le rush).")
+                chosen.append((self._media(project, r.media).id, r.debut, r.fin))
+        self.ctx.step("Le réalisateur lance l'edit PvP (même moteur que le bouton « Edit PvP »)")
+        try:
+            res = pipeline.pvp_edit_chat(self.pid, pipeline._Scoped(self.ctx, 0.3, 0.9), chosen, a.musique.strip() or None, a.duree)
+        except ValueError as e:
+            raise ToolError(str(e))
+        names = {m.id: m.filename for m in project.media}
+
+        def span(mid: str, lo: float, hi: float) -> str:
+            return f"{names.get(mid, mid)} {mmss(lo)}→{mmss(hi)}"
+        notes = []
+        if res["refusees"]:
+            notes.append("Rafales choisies mais écartées : "
+                         + " ; ".join(f"{span(mid, lo, hi)} ({why})" for mid, lo, hi, why in res["refusees"][:12]))
+        if res["introuvables"]:
+            notes.append("Aucun combo détecté pour : " + " ; ".join(span(*x) for x in res["introuvables"][:12])
+                         + ". Reprends les instants des lignes « combo » du dossier.")
+        notes += res["avertissements"]  # mesure en échec, jury absent... : le réalisateur doit le savoir
+        tl = res["timeline"]
+        if not res["applied"]:
+            raise ToolError("Montage inchangé. " + tl.summary + (SEP + SEP.join(notes) if notes else ""))
+        self.applied = True
+        track = Path(res["music"]).name if res["music"] else "aucune"
+        self.actions.append(f"A monté l'edit PvP : {len(tl.clips)} plan(s), musique {track}")
+        music = f"Musique : {track}" + (" (rythme généré, libre de droits)" if res["generated"] else "") + ", calée sur le tempo."
+        return SEP.join(["Edit PvP monté.", tl.summary, music, *notes, self._state()])
 
     def modifier_montage(self, a: ModifierMontage) -> str:
         from .. import pipeline

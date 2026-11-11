@@ -1,8 +1,11 @@
 """Style « Edit PvP » : montage gaming rythmé à partir des coups détectés dans le son.
 
-1. Les coups sont regroupés en rafales au rythme d'un combo (0,5 s entre deux coups), hors menus. Avec une
-   clé Claude, un jury regarde les images des meilleures et ne garde que celles à l'avantage du joueur.
-   On garde les meilleures jusqu'à la durée cible.
+1. Les coups sont regroupés en rafales au rythme d'un combo (0,5 s entre deux coups), hors menus. Le son ne dit
+   pas qui frappe : deux mesures locales sur l'image (vie du joueur, roulis de la caméra, voir `analysis/duel.py`)
+   écartent d'emblée les rafales que le joueur subit et classent d'abord celles qu'il donne. Avec une clé Claude,
+   un jury regarde les images des meilleures restantes et ne garde que celles à l'avantage du joueur. On garde les
+   meilleures jusqu'à la durée cible, sans remplir avec des combos subis : s'il manque de bons combos, le montage
+   est plus court et son résumé le dit.
 2. Chaque combo devient un plan, plus un ralenti sur le coup final (velocity edit).
 3. Les durées sont calées sur la grille de temps de la musique : chaque coupe tombe sur un temps.
 4. Habillage sobre, pour que le final ressorte : une secousse sur le coup final de chaque combo et sur son
@@ -20,6 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import config
+from ..analysis import duel as duel_an
 from ..analysis import hits as hits_an
 from ..models import Clip, EditSettings, ImpactItem, MusicSettings, SfxItem, TextItem, Timeline
 from . import jury
@@ -112,9 +116,21 @@ def music_grid(path: str | None) -> tuple[float, float]:
 # Montage
 # ---------------------------------------------------------------------------
 
-def candidates(media: list, hits_by_media: dict[str, list], blocked: dict[str, list] | None = None) -> list[tuple[str, dict]]:
+def annotate(cands: list[tuple[str, dict]], duel: dict | None) -> list[tuple[str, dict]]:
+    """Pose sur chaque rafale le résultat du signal local « qui porte le combo ? » (`analysis/duel.py`), clé
+    `duel` : None si la rafale n'a pas été mesurée. Une rafale non mesurée n'est jamais écartée. `fermeture` :
+    dernière rafale de son combat (le kill éventuel, voir `duel.a_confirmer`)."""
+    for mid, c in cands:
+        res = (duel or {}).get((mid, jury.key(c)))
+        c["duel"] = {**res, "fermeture": bool(c.get("closing"))} if res else None
+    return cands
+
+
+def candidates(media: list, hits_by_media: dict[str, list], blocked: dict[str, list] | None = None,
+               duel: dict | None = None) -> list[tuple[str, dict]]:
     """Rafales candidates de tous les rushes, hors menus. Si aucun coup ne s'enchaîne au rythme d'un combo
-    (jeu plus lent, coups espacés), on se rabat sur les séries de coups rapprochés, bornées à quelques secondes."""
+    (jeu plus lent, coups espacés), on se rabat sur les séries de coups rapprochés, bornées à quelques secondes.
+    `duel` : résultats du signal local par (média, clé de rafale), posés sur chaque rafale (clé `duel`)."""
     clean = {m.id: hits_an.outside(hits_by_media.get(m.id) or [], (blocked or {}).get(m.id) or []) for m in media}
     # Le repli se décide rush par rush : un rush au rythme lent garde ses séries même si un autre a de vrais combos
     # (et ses rafales gardent les mêmes bornes d'un montage à l'autre, donc les verdicts du jury restent valables).
@@ -137,33 +153,57 @@ def candidates(media: list, hits_by_media: dict[str, list], blocked: dict[str, l
             if inside:
                 last = max(inside, key=lambda c: c["end"])
                 last["closing"], last["fight"] = True, g["n"]
-    return out
+    return annotate(out, duel)
 
 
 def shortlist(cands: list[tuple[str, dict]], limit: int, known: set | None = None, span: float = 25.0) -> list[tuple[str, dict]]:
     """Les rafales à montrer au jury : la meilleure de chaque passage d'abord, puis les suivantes.
 
     Classées au seul score, les quatorze premières viendraient souvent du même duel. Ici on fait un tour par
-    tranche de 25 s de rush, pour couvrir tous les combats. `known` : rafales déjà jugées, à ne pas reprendre."""
+    tranche de 25 s de rush, pour couvrir tous les combats. `known` : rafales déjà jugées, à ne pas reprendre.
+    Le jury est payant : il ne voit jamais une rafale que le signal local a écartée (combo subi, échange coûteux)
+    et regarde d'abord celles que le joueur donne."""
     groups: dict[tuple[str, int], list[dict]] = {}
     for mid, c in cands:
         if known and (mid, jury.key(c)) in known:
             continue
+        if not duel_an.admissible(c.get("duel")):
+            continue
         groups.setdefault((mid, int(c["start"] // span)), []).append(c)
     for g in groups.values():
-        g.sort(key=lambda c: -c["score"])
+        g.sort(key=lambda c: (duel_an.rang(c.get("duel")), -c["score"]))
     # La plus grande part des places va aux fins de combat (c'est là que se voient les kills), gros duels d'abord.
     closing = sorted(((k[0], c) for k, g in groups.items() for c in g if c.get("closing")),
-                     key=lambda x: (-x[1].get("fight", 0), -x[1]["score"]))
+                     key=lambda x: (duel_an.rang(x[1].get("duel")), -x[1].get("fight", 0), -x[1]["score"]))
     out: list[tuple[str, dict]] = closing[: limit * 7 // 10]
     taken = {(mid, jury.key(c)) for mid, c in out}
     rank = 0
     while len(out) < limit and any(len(g) > rank for g in groups.values()):
         row = [(k[0], g[rank]) for k, g in groups.items() if len(g) > rank and (k[0], jury.key(g[rank])) not in taken]
-        row.sort(key=lambda x: -x[1]["score"])
+        row.sort(key=lambda x: (duel_an.rang(x[1].get("duel")), -x[1]["score"]))
         out += row[: limit - len(out)]
         rank += 1
     return out
+
+
+def match_requested(cands: list[tuple[str, dict]], wanted: list[tuple[str, float, float]]) -> tuple[set, list[tuple[str, float, float]]]:
+    """Rafales désignées par (média, début, fin en secondes du rush), par exemple celles que le réalisateur du chat a
+    choisies. Une demande retient chaque rafale dont elle recouvre au moins la moitié (ou une seconde) ; un passage
+    qui contient plusieurs rafales les retient toutes. Renvoie (clés retenues, demandes sans aucune rafale)."""
+    keys: set = set()
+    lost = []
+    for mid, a, b in wanted:
+        hit = False
+        for m2, c in cands:
+            if m2 != mid:
+                continue
+            common = min(b, c["end"]) - max(a, c["start"])
+            if common >= min(1.0, 0.5 * max(c["end"] - c["start"], 0.1)):
+                keys.add((m2, jury.key(c)))
+                hit = True
+        if not hit:
+            lost.append((mid, a, b))
+    return keys, lost
 
 
 def _worth(v: dict) -> float:
@@ -174,21 +214,38 @@ def _worth(v: dict) -> float:
 def rank_candidates(cands: list[tuple[str, dict]], verdicts: dict | None, target: float) -> tuple[list, dict, int]:
     """Ordre de préférence des rafales. Renvoie (classées, raisons d'écart par (média, clé), nombre de vérifiées).
 
-    Avec des verdicts : d'abord les rafales à l'avantage du joueur, par valeur ; celles que le jury écarte ne
-    reviennent jamais. Les rafales non regardées ne complètent que si les vérifiées n'atteignent pas la moitié
-    de la durée cible (ou s'il n'y en a aucune)."""
+    Une rafale que le signal local donne pour subie (ou pour un échange coûteux) est écartée avant tout : le jury
+    ne la sauve pas. Seule exception, la dernière rafale d'un combat (le kill du duel gagné : la vie y a chuté) : elle
+    n'entre que si le jury y voit le kill du joueur. Ensuite, avec des verdicts : d'abord les rafales que le joueur donne (confirmées par le signal
+    local), puis les autres à son avantage, par valeur ; celles que le jury écarte ne reviennent jamais. Les
+    rafales non regardées ne complètent que si les vérifiées n'atteignent pas la moitié de la durée cible (ou s'il
+    n'y en a aucune), sauf celles que le signal local voit « donne » : une preuve positive suffit à les garder."""
     verdicts = verdicts or {}
     good, unseen, why = [], [], {}
     for mid, c in cands:
+        d = c.get("duel")
+        if not duel_an.admissible(d):
+            why[(mid, jury.key(c))] = duel_an.pourquoi(d)
+            continue
         v = verdicts.get((mid, jury.key(c)))
+        if duel_an.a_confirmer(d):
+            # Dernière rafale d'un combat que la mesure donne pour subie : elle n'entre que si le jury voit le joueur tuer
+            # l'adversaire. Sans verdict, ou sans kill, c'est (très probablement) sa défaite : écartée.
+            if v and v.get("fin") == "kill" and v.get("verdict") != "hors_combat":
+                good.append((mid, c, v))
+            else:
+                why[(mid, jury.key(c))] = ("Écarté : tu subissais cette fin de combat et le jury n'y voit pas ton kill."
+                                           if v else "Écarté : tu subissais probablement cette fin de combat, et "
+                                           "aucun kill de ta part n'est confirmé (jury non consulté).")
+            continue
         if v is None:
             unseen.append((mid, c))
         elif v["verdict"] in jury.GOOD and v.get("fin") != "mort" and v["note"] >= 3:
             good.append((mid, c, v))
         else:
             why[(mid, jury.key(c))] = f"Écarté par le jury IA : {jury.label(v)}."
-    good.sort(key=lambda x: -(_worth(x[2]) + 0.001 * x[1]["score"]))
-    unseen.sort(key=lambda x: -x[1]["score"])
+    good.sort(key=lambda x: (duel_an.rang(x[1].get("duel")), -(_worth(x[2]) + 0.001 * x[1]["score"])))
+    unseen.sort(key=lambda x: (duel_an.rang(x[1].get("duel")), -x[1]["score"]))
     ranked = [(mid, c) for mid, c, _ in good]
     checked = len(ranked)
     span = sum(c["end"] - c["start"] + 0.9 for _, c in ranked)
@@ -196,7 +253,10 @@ def rank_candidates(cands: list[tuple[str, dict]], verdicts: dict | None, target
         ranked += unseen
     else:
         for mid, c in unseen:
-            why[(mid, jury.key(c))] = "Écarté : pas regardé par le jury, assez de combos vérifiés."
+            if duel_an.rang(c.get("duel")) <= 1:
+                ranked.append((mid, c))
+            else:
+                why[(mid, jury.key(c))] = "Écarté : pas regardé par le jury, assez de combos vérifiés."
     return ranked, why, checked
 
 
@@ -258,8 +318,12 @@ def _to_timeline_time(clips: list[Clip], starts: list[float], media_id: str, t: 
 
 
 def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, title: str = "",
-          music_path: str | None = None, verdicts: dict | None = None, blocked: dict[str, list] | None = None) -> Timeline:
-    """`verdicts` : avis du jury par (média, clé de rafale), voir `jury.judge`. `blocked` : menus par média."""
+          music_path: str | None = None, verdicts: dict | None = None, blocked: dict[str, list] | None = None,
+          duel: dict | None = None, only: set | None = None) -> Timeline:
+    """`verdicts` : avis du jury par (média, clé de rafale), voir `jury.judge`. `blocked` : menus par média.
+    `duel` : signal local « qui porte le combo ? » par (média, clé), voir `analysis/duel.py`.
+    `only` : si donné, seules ces rafales (clés de `match_requested`) peuvent entrer ; le refus des rafales subies
+    s'applique quand même à celles-ci."""
     target = settings.target_duration or 30.0
     verdicts = verdicts or {}
     if not music_path:
@@ -272,7 +336,8 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
     durations = {m.id: m.duration for m in media}
     order = {m.id: i for i, m in enumerate(media)}
 
-    all_combos = candidates(media, hits_by_media, blocked)
+    all_combos = candidates(media, hits_by_media, blocked, duel)
+    bilan = duel_an.bilan(all_combos)
     tl = Timeline(format=settings.format, captions="aucun",
                   music=MusicSettings(track=music_path, volume=0.5, ducking=False, start=skip))
     tl.director = "pvp"
@@ -280,11 +345,25 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
         tl.summary = "Aucun combat détecté (pas de série de coups dans le son)."
         return tl
 
-    ranked, why, checked = rank_candidates(all_combos, verdicts, target)
+    pool = all_combos if only is None else [(m, c) for m, c in all_combos if (m, jury.key(c)) in only]
+    ranked, why, checked = rank_candidates(pool, verdicts, target)
+    if only is not None:
+        for m, c in all_combos:
+            why.setdefault((m, jury.key(c)), "Non choisi pour cet edit.")
     if not ranked:
-        # Le jury a regardé toutes les rafales et n'en retient aucune : mieux vaut le dire que monter des rafales subies.
-        tl.summary = (f"Le jury IA a regardé {len(all_combos)} rafales de coups et n'en a trouvé aucune à ton avantage "
-                      "dans ces rushes (combos subis ou hors combat).")
+        # Rien de montrable : mieux vaut le dire que monter des rafales subies.
+        if only is not None:
+            refused = sum(1 for m, c in pool if why.get((m, jury.key(c)), "").startswith("Écarté : tu "))
+            tl.summary = (f"Aucune des {len(pool)} rafales choisies n'est montrable"
+                          + (f" : {refused} sont écartées parce que tu les subissais (vie qui chute, coups reçus)." if refused
+                             else " : le jury IA ne les trouve pas à ton avantage.")
+                          if pool else "Aucune des rafales choisies ne correspond à un combo détecté dans les rushes.")
+        elif bilan["ecartees"]:
+            tl.summary = (f"Aucun combo à montrer : sur {len(all_combos)} rafales de coups, {bilan['ecartees']} sont écartées "
+                          "parce que tu les subissais (vie qui chute, coups reçus), les autres n'ont pas convaincu le jury IA.")
+        else:
+            tl.summary = (f"Le jury IA a regardé {len(all_combos)} rafales de coups et n'en a trouvé aucune à ton avantage "
+                          "dans ces rushes (combos subis ou hors combat).")
         tl.rejected = [Clip(media_id=m, src_in=c["start"], src_out=c["end"], score=0.0,
                             reason=why.get((m, jury.key(c)), "Écarté par le jury IA.")) for m, c in all_combos]
         return tl
@@ -328,6 +407,8 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
         part = _plan_combo(c, mid, durations.get(mid, c["end"] + 2), beat, slow=is_best or _kill(mid, c),
                            hold=HOLD_BEST if is_best else 0.5)
         v = verdicts.get((mid, jury.key(c)))
+        if c.get("duel"):
+            part[0].reason += f" Signal local : {duel_an.label(c['duel'])}."
         if v:
             part[0].reason += f" Jury IA : {jury.label(v).rstrip('.')}."
         elif verdicts:
@@ -431,6 +512,20 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
     tl.title = title_txt
     tl.summary = (f"Edit PvP : {len(groups)} combos sur {len(all_combos)} rafales, {sum(c['n'] for _, c, _ in groups)} coups "
                   f"synchronisés, coupes calées sur le tempo ({bpm:.0f} BPM), durée {int(total // 60)}:{total % 60:04.1f}.{peak_note}")
+    measured = any(c.get("duel") for _, c in all_combos)
+    if measured:
+        sauvees = sum(duel_an.a_confirmer(c.get("duel")) for _, c, _ in groups)  # fins de combat confirmées par le jury
+        bilan["ecartees"] -= sauvees
+        bilan["subies"] -= sauvees
+        n = bilan["ecartees"]
+        tl.summary += (f" Signal local (vie et caméra) : {bilan['donne']} où tu enchaînes, {bilan['echange']} échanges peu coûteux, "
+                       f"{bilan['inconnu']} non tranchées" + ("." if not n else
+                       f" ; {n} rafale{'s' if n > 1 else ''} écartée{'s' if n > 1 else ''} parce que tu {'les ' if n > 1 else 'la '}"
+                       "subissais" + (f" ou y perdais trop de vie ({bilan['subies']} subie{'s' if bilan['subies'] > 1 else ''} nettement)."
+                                      if n > bilan["subies"] else ".")))
+        if total < 0.8 * target and n:
+            tl.summary += (f" Montage plus court que la cible ({total:.0f} s sur {target:.0f} s) : il n'y a pas assez de combos "
+                           "que tu donnes, et les combos subis ne servent pas de remplissage.")
     seen = [v for (m, k), v in verdicts.items() if any(m == mid and k == jury.key(c) for mid, c in all_combos)]
     if seen:
         mine = sum(v["verdict"] == "joueur_domine" for v in seen)
@@ -439,6 +534,8 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
                        f"kills : {sum(v.get('fin') == 'kill' for v in seen)}).")
         if not checked:
             tl.summary += " Aucune rafale regardée n'est à ton avantage : montage fait avec des rafales non vérifiées."
+    elif measured:
+        tl.summary += " Sans jury IA : tri fait sur la vie et la caméra seulement."
     else:
         tl.summary += " Sans jury IA, les rafales sont classées au son : l'app ne sait pas qui porte les coups."
     top = max((c["score"] for _, c in all_combos), default=1.0) or 1.0

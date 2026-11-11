@@ -18,6 +18,7 @@ from .ai import soundsheet
 from .ai.segments import build_segments
 from .analysis import audio as audio_an
 from .analysis import faces as faces_an
+from .analysis import duel as duel_an
 from .analysis import hits as hits_an
 from .analysis import transcribe as tr_mod
 from .analysis import video as video_an
@@ -161,13 +162,51 @@ def _save_media(project: Project) -> None:
 JURY_ROUNDS = 2  # tours de jury par montage : le second seulement si le premier ne trouve pas assez de bons combos
 
 
-def _pvp_edit(project: Project, settings: EditSettings, music: str | None, ctx: JobContext) -> Timeline:
-    """Montage PvP : rafales de coups hors menus, jugées sur images par Claude quand une clé est là."""
+def _pvp_edit(project: Project, settings: EditSettings, music: str | None, ctx: JobContext,
+              chosen: list[tuple[str, float, float]] | None = None, info: dict | None = None) -> Timeline:
+    """Montage PvP : rafales de coups hors menus. Le signal local (vie et caméra) écarte les combos subis ; le jury
+    Claude, quand une clé est là, ne juge que les rafales restantes.
+
+    `chosen` : rafales désignées par le réalisateur du chat (média, début, fin dans le rush). Seules elles entrent
+    (celles que le joueur subit restent refusées) et le jury n'est pas appelé : le réalisateur les a déjà regardées.
+    `info` (sortie) : `introuvables` (demandes sans rafale) et `refusees` (rafales choisies mais écartées, avec la raison)
+    et `subies` (plages des rafales que la mesure donne pour subies, pour que le repli n'y retombe pas).
+    Si la mesure locale tombe en panne, un edit sur rafales choisies est refusé (`ValueError`) : sans jury, rien d'autre
+    ne vérifie que le joueur ne subit pas ces combos."""
     sigs = {m.id: storage.load_signals(project.id, m.id) or {} for m in project.media}
     hits_by = {mid: s.get("hits") or [] for mid, s in sigs.items()}
     blocked = {mid: video_an.overlays((s.get("video") or {}).get("brightness") or [],
                                       (s.get("video") or {}).get("fps") or config.ANALYSIS_FPS) for mid, s in sigs.items()}
     cands = pvp_mod.candidates(project.media, hits_by, blocked)
+    only = None
+    if chosen is not None:
+        only, lost = pvp_mod.match_requested(cands, chosen)
+        if info is not None:
+            info["introuvables"] = lost
+    # Qui porte les coups ? Mesuré une fois sur les images autour des rafales (celles visées, si l'edit en désigne),
+    # gardé avec les signaux du rush.
+    duel: dict = {}
+    if cands:
+        try:
+            duel = duel_an.analyse(project.id, project.media, cands, ctx, seulement=only)
+            pvp_mod.annotate(cands, duel)
+        except JobCancelled:
+            raise
+        except Exception as e:  # le montage se fait alors sans ce signal, comme avant
+            log.warning("Signal local des combos indisponible : %s", e)
+            if chosen is not None:
+                raise ValueError(f"La mesure de la vie et de la caméra a échoué ({e}) : je ne peux pas vérifier que tu ne subis "
+                                 "pas les combos choisis, donc je n'ai rien monté. Réessaie dans un moment.")
+            project.warnings.append(f"Mesure locale de la vie et de la caméra indisponible ({e}) : combos non triés selon qui les porte.")
+        if only is not None:
+            manque = sum(1 for mid, c in cands if (mid, jury_mod.key(c)) in only
+                         and (not c.get("duel") or c["duel"].get("echec")))
+            if manque:
+                project.warnings.append(f"{manque} rafale(s) choisie(s) n'ont pas pu être mesurées (lecture de la vie ou de la "
+                                        "caméra en échec) : elles ne sont pas triées selon qui les porte.")
+    if info is not None:
+        info["subies"] = [(mid, c["start"], c["end"]) for mid, c in cands
+                          if (c.get("duel") or {}).get("label") == "subit"]
     by_id = {m.id: m for m in project.media}
     target = settings.target_duration or 30.0
     # Verdicts déjà rendus lors d'un montage précédent : s'ils suffisent, aucun appel.
@@ -180,7 +219,7 @@ def _pvp_edit(project: Project, settings: EditSettings, music: str | None, ctx: 
     # Un re-montage (des verdicts existent déjà) ne fait qu'un tour : le coût d'un « Remonter » reste borné.
     rounds = 1 if verdicts else JURY_ROUNDS
     passed = {(mid, k) for mid in sigs for k in jury_mod.skipped(project.id, mid)}
-    if cands and config.claude_available():
+    if cands and config.claude_available() and chosen is None:
         try:
             for _ in range(rounds):
                 rows = pvp_mod.shortlist(cands, jury_mod.MAX_CANDIDATES, set(verdicts) | passed)
@@ -195,9 +234,14 @@ def _pvp_edit(project: Project, settings: EditSettings, music: str | None, ctx: 
         except Exception as e:
             log.warning("Jury des combos indisponible : %s", e)
             project.warnings.append(f"Jury IA indisponible ({e}) : combos classés au son, sans savoir qui porte les coups.")
-    elif cands and not verdicts:
+    elif cands and not verdicts and chosen is None:
         project.warnings.append("Sans clé Claude, les combos sont classés au son : l'app ne sait pas qui porte les coups.")
-    return pvp_mod.build(project.media, hits_by, settings, project.name, music, verdicts=verdicts, blocked=blocked)
+    tl = pvp_mod.build(project.media, hits_by, settings, project.name, music, verdicts=verdicts, blocked=blocked, duel=duel,
+                       only=only)
+    if info is not None and only is not None:
+        info["refusees"] = [(c.media_id, c.src_in, c.src_out, c.reason) for c in tl.rejected
+                            if (c.media_id, f"{c.src_in:.2f}-{c.src_out:.2f}") in only and c.reason.startswith("Écarté")]
+    return tl
 
 
 def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timeline:
@@ -250,11 +294,22 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     try:
         if settings.style == "pvp":
             # Edit PvP : calé sur les coups et le tempo, construit localement (calcul précis au centième).
-            tl = _pvp_edit(project, settings, music, ctx)
+            pvp_info: dict = {}
+            tl = _pvp_edit(project, settings, music, ctx, info=pvp_info)
             if not tl.clips:
-                project.warnings.append(tl.summary + " Montage classique utilisé à la place.")
-                tl = dir_mod.HeuristicDirector().direct(segments, settings.model_copy(update={"style": "short"}),
-                                                        order, music)
+                # Le montage classique de repli ne reprend jamais un combo que le joueur subit : sans cette exclusion,
+                # un rush où tout est écarté ressortirait sur ces mêmes plans.
+                subies = pvp_info.get("subies") or []
+                reste = [s for s in segments if not any(mid == s.media_id and a < s.end - 0.3 and b > s.start + 0.3
+                                                        for mid, a, b in subies)]
+                ecart = len(segments) - len(reste)
+                project.warnings.append(
+                    tl.summary + (" Montage classique utilisé à la place" + (f", sans les {ecart} passage(s) où tu subis un combo." if ecart else ".")
+                                  if reste or not segments else " Pas de montage classique de repli : il reprendrait des combos que tu subis."))
+                if reste or not segments:
+                    # La musique de l'edit (générée au besoin) suit : le montage de repli ne doit pas être muet.
+                    tl = dir_mod.HeuristicDirector().direct(reste, settings.model_copy(update={"style": "short", "music": True}),
+                                                            order, music or tl.music.track)
         elif director.name == "claude" and notes:
             lines = [comments_mod.context_line(project.timeline, c, segments, k + 1) for k, c in enumerate(notes)]
             tl = director.direct(segments, settings, order, music, comment_lines=lines)
@@ -304,6 +359,87 @@ def auto_edit(project_id: str, settings: EditSettings, ctx: JobContext) -> Timel
     rv = f", note du relecteur {tl.review.score:.1f}/10" if tl.review else ""
     ctx.step(f"Montage prêt : {len(tl.clips)} plans, {tl.duration:.0f} s{rv}", 1.0, stage="pret")
     return tl
+
+
+def find_music(project: Project, name: str) -> str | None:
+    """Morceau de la bibliothèque ou du projet désigné par son nom de fichier (avec ou sans extension)."""
+    want = (name or "").strip().lower()
+    for d in (storage.project_dir(project.id) / "music", config.MUSIC_DIR):
+        if d.exists():
+            for p in sorted(d.iterdir()):
+                if p.suffix.lower() in MUSIC_EXT and want in (p.name.lower(), p.stem.lower()):
+                    return str(p.resolve())
+    return None
+
+
+def music_names(project: Project) -> list[str]:
+    pdir = storage.project_dir(project.id) / "music"
+    return sorted({p.name for d in (pdir, config.MUSIC_DIR) if d.exists() for p in d.iterdir() if p.suffix.lower() in MUSIC_EXT})
+
+
+def pvp_edit_chat(project_id: str, ctx, chosen: list[tuple[str, float, float]] | None = None,
+                  music: str | None = None, target: float | None = None, base: EditSettings | None = None,
+                  sans_musique: bool = False) -> dict:
+    """Edit PvP demandé depuis le chat : le même moteur que le bouton « Edit PvP » (rafales, refus des combos subis,
+    calage sur le tempo, habillage), enregistré comme montage du projet.
+
+    `chosen` : rafales choisies par le réalisateur (média, début, fin dans le rush), ou None pour laisser le moteur
+    choisir comme le bouton. `music` : nom d'un morceau ; sinon celui du montage, sinon un de la bibliothèque, sinon
+    un rythme généré. Rien n'est remplacé si aucune rafale n'est montrable. `base` : réglages du projet à
+    garder (sinon ceux du projet) ; `sans_musique` : le monteur a demandé de retirer la musique. Seuls la durée
+    demandée et les réglages de `base` sont enregistrés : ni le style, ni la musique, ni les sous-titres de l'edit ne
+    deviennent des réglages du projet. Renvoie `timeline`, `music`, `generated`, `introuvables`, `refusees`,
+    `avertissements` (ceux du montage : mesure en échec, jury absent...) et `applied`."""
+    project = storage.load_project(project_id)
+    if not project.media:
+        raise ValueError("Ajoute au moins une vidéo avant de lancer le montage.")
+    project.warnings = []
+    n = len(project.media)
+    for i, m in enumerate(project.media):
+        ctx.check()
+        analyze_media(project, m, ctx, 0.3 * i / n, 0.3 * (i + 1) / n)
+        _save_media(project)
+    track = None
+    if music:
+        track = find_music(project, music)
+        if not track:
+            raise ValueError(f"Musique inconnue : « {music} ». Morceaux disponibles : {', '.join(music_names(project)[:20]) or 'aucun'}.")
+    else:  # le choix du monteur d'abord, puis la bibliothèque ; à défaut le rythme généré par le moteur
+        current = storage.safe_music_path(project.timeline.music.track)
+        track = current if current and Path(current).exists() else pick_music(project, "pvp")
+    kept = (base or project.settings).model_copy()  # ce qui sera enregistré comme réglages du projet
+    settings = kept.model_copy(update={"style": "pvp", "music": True, "captions": "aucun"})
+    if target:
+        settings.target_duration = max(5.0, min(float(target), 600.0))
+    elif chosen:
+        # Les rafales désignées doivent toutes tenir : la durée cible suit leur longueur (plus le ralenti final).
+        by_id = {m.id: m for m in project.media}
+        span = sum(max(0.0, min(b, by_id[mid].duration) - max(a, 0.0)) + 0.9 for mid, a, b in chosen if mid in by_id)
+        settings.target_duration = max(10.0, min(span + 3.0, 600.0))
+    ctx.step("Edit PvP : mesure des combos, calage sur la musique", 0.35)
+    info: dict = {}
+    tl = _pvp_edit(project, settings, track, ctx, chosen=chosen, info=info)
+    out = {"timeline": tl, "music": tl.music.track, "generated": bool(tl.music.track and Path(tl.music.track).name.startswith("beat_pvp_")),
+           "introuvables": info.get("introuvables") or [], "refusees": info.get("refusees") or [],
+           "avertissements": list(project.warnings), "applied": False}
+    if not tl.clips:
+        return out
+    if sans_musique:
+        tl.music.track = None
+        out["music"], out["generated"] = None, False
+    tl.comments, tl.brand, tl.mix = project.timeline.comments, project.timeline.brand, project.timeline.mix
+    tl = quality_mod.check_and_fix(tl, transcripts_for(project), settings)
+    tl.review = review_mod.local_review(tl.quality)  # contrôle local seulement : pas de relecture payante depuis le chat
+    # Les réglages du monteur restent les siens : seule une durée demandée est enregistrée (celle calculée pour les
+    # rafales choisies n'en est pas une), et un edit demandé en passant ne change ni le style ni la musique du projet.
+    saved = kept.model_copy(update={"instructions": project.settings.instructions,
+                                    "target_duration": settings.target_duration if target else kept.target_duration})
+
+    def apply(p: Project) -> None:
+        p.settings, p.warnings, p.timeline = saved, project.warnings, tl
+    storage.update_project(project_id, apply)
+    out["timeline"], out["applied"] = tl, True
+    return out
 
 
 def polish(project: Project, tl: Timeline, segments: list[Segment], settings: EditSettings, music: str | None,
@@ -357,8 +493,42 @@ def polish(project: Project, tl: Timeline, segments: list[Segment], settings: Ed
     return tl
 
 
+def _sans_combos_subis(tl: Timeline, old: Timeline) -> tuple[Timeline, int]:
+    """Retire d'un montage refait par une consigne les plans qui reprennent un combo que l'edit PvP précédent avait
+    écarté parce que le joueur le subissait. Renvoie (montage, nombre de plans retirés)."""
+    banned = [(c.media_id, c.src_in, c.src_out) for c in old.rejected if c.reason.startswith("Écarté : tu subissais")]
+    keep = [c for c in tl.clips if not any(c.media_id == m and c.src_in < b - 0.3 and c.src_out > a + 0.3 for m, a, b in banned)]
+    retires = len(tl.clips) - len(keep)
+    if retires:
+        tl = tl.model_copy(update={"clips": keep})
+    return tl, retires
+
+
+def _ai_command_pvp(project: Project, instruction: str, settings: EditSettings, changed: list[str], ctx) -> dict:
+    """Consigne de réglages (durée, format, musique...) sur un edit PvP : l'edit est refait par le moteur PvP avec ces
+    réglages. Le montage classique, lui, reconstruirait un montage sur tout le rush et reprendrait les combos subis."""
+    text = instruction.lower()
+    target = settings.target_duration if settings.target_duration != project.settings.target_duration else None
+    sans = "musique" in text and not settings.music
+    ctx.step("Edit PvP refait avec : " + ", ".join(changed), 0.2)
+    res = pvp_edit_chat(project.id, ctx, None, None, target, base=settings, sans_musique=sans)
+    tl = res["timeline"]
+    if not res["applied"]:
+        msg = "Edit PvP inchangé : " + tl.summary
+    else:
+        msg = "Edit PvP refait (" + ", ".join(changed) + "). " + tl.summary
+    if res["avertissements"]:
+        msg += " " + " ".join(res["avertissements"])
+    ctx.step(msg, 1.0)
+    return {"message": msg, "director": "pvp"}
+
+
 def ai_command(project_id: str, instruction: str, ctx: JobContext) -> dict:
     project = storage.load_project(project_id)
+    if project.timeline.director == "pvp" and project.timeline.clips:
+        s2, changed = dir_mod.parse_settings(instruction, project.settings)
+        if changed:
+            return _ai_command_pvp(project, instruction, s2, changed, ctx)
     segments = storage.load_segments(project.id) or all_segments(project, project.settings)
     order = [m.id for m in project.media]
     music = project.timeline.music.track or (pick_music(project, project.settings.style)
@@ -372,6 +542,12 @@ def ai_command(project_id: str, instruction: str, ctx: JobContext) -> dict:
             instruction = research_mod.notes_as_instructions(project.research) + "\n\nConsigne : " + instruction
         tl = director.command(instruction, project.timeline, segments, project.settings, music)
         msg = tl.summary
+        if project.timeline.director == "pvp":  # le modèle ne remet pas un combo que l'edit PvP avait écarté comme subi
+            tl, retires = _sans_combos_subis(tl, project.timeline)
+            if retires and not tl.clips:
+                tl, msg = project.timeline, "Consigne non appliquée : elle ne laissait que des combos que tu subis."
+            elif retires:
+                msg += f" ({retires} plan(s) retiré(s) : tu subissais ces combos.)"
     else:
         tl, msg, s2 = dir_mod.heuristic_command(instruction, project.timeline, segments,
                                                 project.settings, order, music)
