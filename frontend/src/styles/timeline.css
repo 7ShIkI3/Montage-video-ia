@@ -1,6 +1,6 @@
 /* =====================================================================
    Timeline : barre d'outils en quatre groupes, pistes, plans, têtes de lecture (lot B).
-   Toutes les règles sont préfixées .timeline ; aucun jeton défini ici.
+   Toutes les règles sont préfixées .timeline ; aucun jeton de :root défini ici (seulement --lbl-h et --row-h, locaux aux pistes).
    Couplages de hauteur à ne pas toucher : CLIP_H = 74 (Timeline.tsx) <-> .track-video 86 px <-> .clip top/bottom 6 px ;
    forme d'onde 26 px <-> .wave bottom 10 px.
    ===================================================================== */
@@ -34,19 +34,21 @@
 }
 
 /* ---------- Pistes ---------- */
+/* Chaque piste secondaire fait deux rangées : une ligne d'étiquette (--lbl-h), puis la rangée des éléments (--row-h).
+   L'étiquette n'est donc jamais sur un élément. Réglages locaux de mise en page, pas des jetons de couleur. */
+.timeline { --lbl-h: 14px; --row-h: 28px; }
 .timeline .track-video { height: 86px; }
-.timeline .track-broll, .timeline .track-texts, .timeline .track-sfx, .timeline .track-comments, .timeline .track-audio { height: 28px; }
-.timeline .track-images, .timeline .track-impacts { height: 26px; }
-.timeline .track-captions { height: 34px; }
-.timeline .track-music { height: 30px; }
-/* Une piste vide se replie à 0 (sa pastille déborderait sinon) ; « Toutes les pistes » (.show-all sur .timeline-inner) les rouvre.
+.timeline .track-broll, .timeline .track-texts, .timeline .track-sfx, .timeline .track-images, .timeline .track-impacts,
+.timeline .track-comments, .timeline .track-audio, .timeline .track-captions, .timeline .track-music { height: calc(var(--lbl-h) + var(--row-h)); }
+/* Une piste vide se replie à 0 ; « Toutes les pistes » (.show-all sur .timeline-inner) les rouvre.
    Vidéo, Sous-titres et Musique restent : ce sont les pistes que l'on s'attend à voir. */
 .timeline .timeline-inner:not(.show-all) .track.is-empty:not(.track-video):not(.track-captions):not(.track-music) { height: 0; overflow: hidden; border-bottom-width: 0; }
 
-/* Étiquette de piste : pastille collante dans la piste, sans gouttière ni décalage de l'origine horizontale */
-.timeline .track[data-label]::after { height: 18px; margin-top: 4px; padding: 0 6px; border-radius: var(--r-ctl); background: var(--scrim); color: var(--text-2); font: 500 11px/18px var(--font); letter-spacing: 0; text-transform: none; }
-/* Là où la piste contient déjà son propre libellé (plans, sous-titres, musique), la pastille ne sert que tant que la piste est vide. */
-.timeline .track-video:not(.is-empty)::after, .timeline .track-captions:not(.is-empty)::after, .timeline .track-music:not(.is-empty)::after { display: none; }
+/* Étiquette de piste : ligne collante à gauche, en flux au-dessus des éléments (position: sticky vient de styles.css).
+   Elle suit le défilement horizontal sans toucher à l'origine des x : aucune colonne d'en-têtes. */
+.timeline .track[data-label]::after { display: block; width: max-content; height: var(--lbl-h); margin: 0; padding: 0 6px; border-radius: 0; background: none; color: var(--muted); font: 500 11px var(--font); line-height: var(--lbl-h); letter-spacing: 0; text-transform: none; }
+/* La piste vidéo porte déjà ses plans : son étiquette ne sert que tant qu'elle est vide. */
+.timeline .track-video:not(.is-empty)::after { display: none; }
 
 /* Dépôt d'un rush glissé depuis le panneau Médias */
 body.dragging-media .timeline .track-video { outline: 2px dashed var(--accent); outline-offset: -2px; background: var(--accent-soft); }
@@ -75,7 +77,7 @@ body.dragging-media .timeline .track-video::before { content: "Déposer ici"; po
   border: 1px solid var(--c); background: var(--surface-2); background: color-mix(in srgb, var(--c) 28%, transparent);
   color: var(--text); font-size: 11px; font-weight: 500;
 }
-.timeline .track .item-block { top: 0; bottom: 0; height: 22px; min-width: 14px; margin: auto 0; padding: 0 6px; border-radius: var(--r-ctl); }
+.timeline .track .item-block { top: var(--lbl-h); bottom: 0; height: 22px; min-width: 14px; margin: auto 0; padding: 0 6px; border-radius: var(--r-ctl); }
 .timeline .track .item-block.broll { --c: var(--trk-broll); box-shadow: inset 3px 0 0 var(--rush, var(--trk-broll)); }
 .timeline .track .item-block.text { --c: var(--trk-text); }
 .timeline .track .item-block.sfx { --c: var(--trk-sfx); }
@@ -85,10 +87,10 @@ body.dragging-media .timeline .track-video::before { content: "Déposer ici"; po
 .timeline .track .item-block.audio.k-son { --c: var(--trk-sound); }
 .timeline .track .item-block.audio.k-musique { --c: var(--trk-music); }
 .timeline .track .item-block.sel { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--sel-glow); z-index: 2; }
-.timeline .track .cap-block { --c: var(--trk-caption); top: 6px; bottom: 6px; border-radius: var(--r-ctl); color: var(--text-2); }
-.timeline .track .music-block { --c: var(--trk-music); top: 5px; bottom: 5px; border-radius: var(--r-ctl); padding: 3px 8px; }
-.timeline .impact-pin { top: 5px; }
-.timeline .cm-pin { top: 5px; }
+.timeline .track .cap-block { --c: var(--trk-caption); top: calc(var(--lbl-h) + 3px); bottom: 3px; border-radius: var(--r-ctl); color: var(--text-2); }
+.timeline .track .music-block { --c: var(--trk-music); top: calc(var(--lbl-h) + 3px); bottom: 3px; border-radius: var(--r-ctl); padding: 3px 8px; }
+.timeline .impact-pin { top: calc(var(--lbl-h) + 6px); }
+.timeline .cm-pin { top: calc(var(--lbl-h) + 6px); }
 
 /* ---------- Tête de lecture : 2 px accent, tête carrée de 12 px, halo léger ---------- */
 .timeline .playhead { width: 2px; background: var(--accent); box-shadow: 0 0 0 2px var(--sel-glow); }
