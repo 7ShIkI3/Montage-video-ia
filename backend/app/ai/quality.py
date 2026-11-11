@@ -73,13 +73,16 @@ def plan_checks(tl: Timeline, transcripts: dict[str, Transcript], settings: Edit
                              0.0, "accroche_debut", tl.clips[0].id))
     hook_text = any(x.start < HOOK_LIMIT and x.style in ("titre", "gros_texte", "texte_3d") for x in tl.texts)
     scores = [c.score for c in tl.clips]
-    if len(tl.clips) > 2 and tl.clips[0].score < 0.6 * max(scores) and not hook_text:
+    # Un edit PvP a sa propre construction (`pvp.build`) : un aperçu du moment fort en ouverture, puis une montée vers ce
+    # moment fort, habillé et calé sur le pic de la musique. Le réordonner ou l'« appuyer » ici déferait ce calage.
+    pvp = tl.director == "pvp"
+    if not pvp and len(tl.clips) > 2 and tl.clips[0].score < 0.6 * max(scores) and not hook_text:
         fix = "accroche_ordre" if settings.style in ("short", "pvp") else "accroche_texte"
         issues.append(_issue("accroche", "alerte" if settings.style not in ("short", "pvp") else "erreur",
                              "Les 3 premières secondes ne sont pas le moment le plus accrocheur.", 0.0, fix))
 
     # 2. Moment fort préparé : une respiration (pause ou coupe) juste avant, et un appui (zoom, bruitage).
-    if best and len(tl.clips) > 1:
+    if best and len(tl.clips) > 1 and not pvp:
         i, t0 = best
         c = tl.clips[i]
         before = [w for w in words if t0 - 1.0 <= w.start < t0]
@@ -111,9 +114,10 @@ def plan_checks(tl: Timeline, transcripts: dict[str, Transcript], settings: Edit
                                  f"({len(x.text)} caractères, {mx} au plus).", x.start, "texte_court", x.id))
         need = 0.6 + 0.28 * len(x.text.split())
         if x.style != "emoji" and x.duration < need:
+            # En PvP une carte ne dépasse jamais de son plan : on signale, sans la rallonger sur le plan suivant.
             issues.append(_issue("lecture", "alerte",
                                  f"Texte « {x.text[:40]} » affiché {x.duration:.1f} s : il faut {need:.1f} s pour le lire.",
-                                 x.start, "texte_duree", x.id))
+                                 x.start, None if pvp else "texte_duree", x.id))
         if x.start >= total:
             issues.append(_issue("texte", "alerte", f"Texte « {x.text[:40]} » placé après la fin.", x.start,
                                  "texte_retirer", x.id))
@@ -134,14 +138,15 @@ def plan_checks(tl: Timeline, transcripts: dict[str, Transcript], settings: Edit
                              f"{settings.target_duration:.0f} s."))
 
     # 7. Bruitages calés sur une coupe, un texte, un impact ou une parole.
-    anchors = sorted(set([round(t, 3) for t in starts[1:]] + [x.start for x in tl.texts] + [i.start for i in tl.impacts]
+    # L'ouverture (0 s) compte comme une coupe : un bruitage sur la première image appuie le début du montage.
+    anchors = sorted(set([round(t, 3) for t in starts] + [x.start for x in tl.texts] + [i.start for i in tl.impacts]
                          + [w.start for w in words]))
     for s in tl.sfx:
         if s.start >= total:
             issues.append(_issue("bruitage", "alerte", f"Bruitage {s.kind} après la fin.", s.start, "bruitage_retirer", s.id))
             continue
         near = min((abs(a - s.start) for a in anchors), default=9.0)
-        if 0.12 < near:
+        if 0.12 < near and not pvp:  # en PvP le souffle est posé exprès un peu avant la coupe du moment fort
             issues.append(_issue("bruitage", "alerte", f"Bruitage {s.kind} à {s.start:.1f} s ne tombe sur rien "
                                  f"(décalé de {near:.2f} s).", s.start, "bruitage_caler" if near < 0.8 else None, s.id))
 
@@ -206,9 +211,7 @@ def apply_fixes(tl: Timeline, report: QualityReport, transcripts: dict[str, Tran
         elif f == "accroche_ordre" and len(tl.clips) > 2:
             i = max(range(len(tl.clips)), key=lambda k: tl.clips[k].score)
             if i:
-                c = tl.clips.pop(i)
-                c.transition = "aucune"
-                tl.clips.insert(0, c)
+                _move_first(tl, i)
                 done.append("moment le plus fort placé en ouverture")
         elif f == "accroche_texte":
             if not any(x.start < HOOK_LIMIT and x.style in ("titre", "gros_texte") for x in tl.texts):
@@ -220,7 +223,7 @@ def apply_fixes(tl: Timeline, report: QualityReport, transcripts: dict[str, Tran
             c = by_id[it.target]
             if c.zoom < 1.08 and not c.keyframes:
                 c.zoom = 1.12
-            t0 = it.t or 0.0
+            t0 = _starts(tl)[tl.clips.index(c)]  # pas `it.t` : le plan a pu être placé en ouverture entre-temps
             if not any(abs(s.start - t0) < 0.3 for s in tl.sfx):
                 tl.sfx.append(SfxItem(start=round(max(0.0, t0), 3), kind="boom" if settings.style in ("short", "pvp") else "whoosh",
                                       volume=0.6))
@@ -279,11 +282,27 @@ def apply_fixes(tl: Timeline, report: QualityReport, transcripts: dict[str, Tran
                 tl.sfx.remove(s)
                 done.append("bruitage hors montage retiré")
             else:
-                cuts = _starts(tl)[1:] + [x.start for x in tl.texts] + [i.start for i in tl.impacts]
+                cuts = _starts(tl) + [x.start for x in tl.texts] + [i.start for i in tl.impacts]
                 if cuts:
                     s.start = round(min(cuts, key=lambda a: abs(a - s.start)), 3)
                     done.append(f"bruitage {s.kind} calé sur {s.start:.1f} s")
     return tl, done
+
+
+def _move_first(tl: Timeline, i: int) -> None:
+    """Place le plan i en ouverture, avec tout ce qui est posé dessus. Sans cela, ses textes, impacts et bruitages
+    resteraient à son ancienne place, et ceux des plans qu'il dépasse seraient en avance de sa durée."""
+    t0, d = _starts(tl)[i], tl.clips[i].duration
+    c = tl.clips.pop(i)
+    c.transition = "aucune"
+    tl.clips.insert(0, c)
+    # Seulement ce qui est lié à un plan : un filigrane, une voix off ou une musique d'appoint couvrent tout le montage.
+    for coll in (tl.texts, tl.sfx, tl.overlays, tl.impacts):
+        for x in coll:
+            if t0 - 1e-6 <= x.start < t0 + d - 1e-6:
+                x.start = round(max(0.0, x.start - t0), 3)  # posé sur le plan déplacé : il le suit
+            elif x.start < t0:
+                x.start = round(x.start + d, 3)  # posé sur un plan dépassé : il recule d'autant
 
 
 def _shift_after(tl: Timeline, t: float, dt: float) -> None:

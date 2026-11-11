@@ -38,6 +38,7 @@ DEFAULT_BPM = 128
 CUT = "flash"  # la seule transition de l'edit, à l'entrée du meilleur combo ; ailleurs, coupes franches sur le temps
 SHAKES_PER_COMBO = 2  # coup final compris
 HOLD_BEST = 0.9  # secondes gardées après le coup final du moment fort : le temps de le voir
+HOLD_KILL = 0.55  # ... après un kill : l'adversaire disparaît aussitôt, au-delà on ne filme plus qu'une arène vide
 SLOW = 0.4  # vitesse du ralenti sur le coup final du moment fort (kill, sinon meilleur combo)
 SLOW_LEGER = 0.6  # ralenti des autres temps forts : plus doux, pour que la pile complète ne serve qu'une fois
 LEAD = 0.2  # secondes avant le premier coup d'un plan : un plan démarre sur un coup, pas sur un temps mort
@@ -533,6 +534,7 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
     # meilleur combo. Les autres ralentis (le meilleur combo, d'autres kills) reçoivent une variante légère.
     kills = [x for x in chosen if _kill(*x)]
     climax = kills[0] if kills else best
+    hold_fort = HOLD_KILL if kills else HOLD_BEST
     second = next((x for x in chosen[1:] if x is not climax), None) if len(chosen) > 2 else None
     # Ordre du montage : un combo en accroche, les autres dans l'ordre du rush, le meilleur combo, puis le moment fort
     # pour la fin.
@@ -544,7 +546,7 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
     for mid, c in chosen:
         v, slow, kill, finale = vues[(mid, jury.key(c))]
         if slow:
-            vit, hold = (SLOW, HOLD_BEST) if (mid, c) == climax else (SLOW_LEGER, 0.5)
+            vit, hold = (SLOW, hold_fort) if (mid, c) == climax else (SLOW_LEGER, 0.5)
             span = max(SPAN_MIN_RALENTI, PLAN_MAX - _ralenti_temps(beat, vit, hold))
             if span < v["end"] - v["start"] - 1e-6:
                 v = _portion(c, kill, finale, beat, span)
@@ -559,6 +561,8 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
         last = v["hits"][-1][0]
         dur = durations.get(climax[0], last + 1)
         lo, hi = max(0.0, v["lo"]), min(dur, v["hi"])  # `lo` tient déjà un kill sans preuve à `KILL_LEAD` avant son coup final
+        if kills:  # un kill : pas plus loin que ce que le ralenti final montrera (après, il n'y a plus d'adversaire à l'image),
+            hi = min(hi, max(last + HOLD_KILL, lo + 2 * beat))  # sans descendre sous les deux temps qu'il faut à un aperçu
         d = min(max(3, round(1.2 / beat)) * beat, int((hi - lo) / beat + 1e-6) * beat)  # un nombre entier de temps, dans les bornes
         if d >= 2 * beat - 1e-6:
             a = max(lo, min(last - 0.75 * d, hi - d))
@@ -569,7 +573,7 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
         v, slow, _, _ = vues[(mid, jury.key(c))]
         role = "climax" if (mid, c) == climax else ("leger" if slow else "")
         vitesse = (SLOW if role == "climax" else SLOW_LEGER) if slow else None
-        part = _plan(v, mid, durations.get(mid, c["end"] + 2), beat, vitesse, hold=HOLD_BEST if role == "climax" else 0.5,
+        part = _plan(v, mid, durations.get(mid, c["end"] + 2), beat, vitesse, hold=hold_fort if role == "climax" else 0.5,
                      contraste=role == "climax")
         shown = _montres(part, v["hits"])
         # La carte « COMBO xN » compte tout ce qui se voit : aussi les coups de la rafale hors de la portion (queue du plan, ralenti).
