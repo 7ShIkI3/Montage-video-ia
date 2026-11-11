@@ -47,8 +47,10 @@
 .export-why { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
 
 /* ---------- Panneau de gauche : barre de modules ---------- */
-.rail { flex: none; display: flex; flex-direction: row; height: 56px; border-bottom: 1px solid var(--line); background: var(--panel); }
-.rail button { position: relative; flex: 1 1 0; min-width: 0; height: 56px; min-height: 56px; flex-direction: column; gap: 4px; padding: 0 2px; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: 10.5px; font-weight: 500; line-height: 1.1; }
+/* Ouvert : une grille de colonnes égales (minmax(0, 1fr)). Ni libellé, ni module, ni pastille « busy » ne peuvent déplacer
+   ou élargir un bouton : chacun garde la même largeur et le même x, à 340 px de panneau comme à 400 px. */
+.rail { flex: none; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); width: 100%; min-width: 0; height: 56px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.rail button { position: relative; width: 100%; min-width: 0; height: 100%; min-height: 0; flex-direction: column; gap: 4px; padding: 0 2px; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: 10.5px; font-weight: 500; line-height: 1.1; }
 .rail button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail button:hover:not(:disabled) { background: var(--surface-2); color: var(--text); border-color: transparent; }
 .rail button.on { background: var(--surface-2); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
@@ -56,7 +58,7 @@
 .rail button:focus-visible { outline-offset: -2px; }
 .rail button.busy::after { content: ""; position: absolute; top: 8px; right: calc(50% - 20px); width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--accent); }
 /* Replié : une colonne de 56 px, icônes et libellés, et « › » en bas pour rouvrir */
-.editor.left-closed .rail { height: 100%; width: 56px; flex-direction: column; gap: 2px; padding: var(--s-1) 2px; border-bottom: 0; }
+.editor.left-closed .rail { display: flex; height: 100%; width: 100%; flex-direction: column; gap: 2px; padding: var(--s-1) 2px; border-bottom: 0; }
 .editor.left-closed .rail { overflow-y: auto; scrollbar-width: none; }
 .editor.left-closed .rail::-webkit-scrollbar { display: none; }
 .editor.left-closed .rail button { flex: 0 1 52px; width: 100%; height: auto; min-height: 36px; max-height: 52px; border-radius: var(--r-ctl); }
