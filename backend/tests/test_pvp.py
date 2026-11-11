@@ -222,7 +222,9 @@ def test_build_prefers_order_over_filling():
     notes = [9, 8, 7, 7, 3]
     verdicts = {("m1", jury.key(c)): {"verdict": "joueur_domine", "fin": "rien", "note": n, "raison": "", "n": c["n"]}
                 for (_, c), n in zip(cands, notes)}
-    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp"), verdicts=verdicts)
+    # Chaque combo de 15 coups est réduit à sa portion la plus dense (un plan court) : la cible est donc plus basse pour
+    # que les quatre bons combos suffisent à l'atteindre.
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=16), verdicts=verdicts)
     assert not any(c.src_in >= 179 for c in tl.clips), "la petite rafale notée 3 ne bouche pas le trou"
 
 
@@ -309,11 +311,12 @@ def test_edit_opens_on_a_teaser_and_closes_on_the_best_combo():
     assert abs(teaser.duration / beat - round(teaser.duration / beat)) < 0.02, "l'aperçu dure un nombre entier de temps"
     normal = [round(c.src_in) for c in tl.clips[1:] if c.speed == 1]
     assert normal[0] in range(137, 141), "le deuxième meilleur combo suit l'aperçu"
-    assert normal[-1] in range(57, 61), "le meilleur ferme"
+    assert normal[-1] in range(60, 64), "le meilleur ferme (ses derniers coups : le plan tient, ralenti compris, dans PLAN_MAX)"
     assert sum(c.speed < 1 for c in tl.clips) == 1 and tl.clips[-1].speed < 1, "un seul ralenti, sur le coup final du meilleur"
     assert tl.clips[-1].duration >= 2.8, "le plan final laisse le temps de voir le coup"
     texts = [t.text for t in tl.texts]
-    assert texts == ["COMBO x8"], "une seule carte, pas de slogan, et l'aperçu ne dévoile pas le compte"
+    vus = [t for t, _ in h if 59 <= t <= 68 and any(c.src_in <= t < c.src_out for c in tl.clips[1:] if 55 < c.src_in < 70)]
+    assert texts == [f"COMBO x{len(vus)}"] and 3 <= len(vus) < 8, "une seule carte avec les coups montrés, et l'aperçu ne dévoile pas le compte"
     assert all(t.start + t.duration <= tl.duration + 1e-6 for t in tl.texts), "aucun texte ne dépasse la fin"
     assert [c.transition for c in tl.clips].count(pvp.CUT) == 1 and tl.clips[-2].transition == pvp.CUT, "un seul flash, à l'entrée du meilleur combo"
     assert {c.transition for c in tl.clips} == {"aucune", pvp.CUT}
@@ -357,7 +360,7 @@ def test_music_peak_lands_on_a_cut(monkeypatch):
     assert abs((tl.music.start - 0.25) / beat - round((tl.music.start - 0.25) / beat)) < 0.02, "la musique part toujours sur un temps"
     assert "Pic de la musique posé sur la coupe" in tl.summary
     # Morceau trop court pour tenir tout l'edit après ce décalage : on ne touche pas au départ.
-    monkeypatch.setattr(pvp, "_music_peak", lambda path: (15.25, 20.0))
+    monkeypatch.setattr(pvp, "_music_peak", lambda path: (15.25, tl.duration + 0.5))
     tl2 = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=60), "x", "morceau.mp3", verdicts=verdicts)
     assert tl2.music.start == 0.25 and "Pic de la musique" not in tl2.summary
 
@@ -802,3 +805,314 @@ def test_pvp_fallback_edit_keeps_a_music(rush):
     assert j["status"] == "termine", j
     tl = c.get(f"/api/projects/{pid}").json()["timeline"]
     assert tl["clips"] and tl["music"]["track"]
+
+
+# ---------------------------------------------------------------- le kill sans la raclée, plans courts, temps forts
+
+def _avec_vie(cands, vie_a, label, **kw):
+    """Résultat du signal local pour la 1re rafale de `cands`, avec une courbe de vie mesurée à 10 i/s (`vie_a(t)` cœurs)."""
+    from app.ai import jury
+    (mid, c), = cands
+    t0 = round(c["start"] - 0.5, 3)
+    v = [round(vie_a(t0 + k / 10), 1) for k in range(int((c["end"] + 1.0 - t0) * 10) + 1)]
+    r = _res(label, **kw)
+    r["vie"] = {"valide": True, "soin": False, "courbe": {"t0": t0, "fps": 10, "v": v}}
+    return {(mid, jury.key(c)): r}
+
+
+def _perte(duel_res, a, b):
+    """Chute de vie (pic -> creux, en cœurs) sur [a, b] d'après la courbe mesurée."""
+    cb = duel_res["vie"]["courbe"]
+    t = cb["t0"] + np.arange(len(cb["v"])) / cb["fps"]
+    v = np.array(cb["v"])[(t >= a - 1e-9) & (t <= b + 1e-9)]
+    return float((np.maximum.accumulate(v) - v).max())
+
+
+def _vie_du_kill(t):
+    """Le joueur boit une potion, puis encaisse : 4 -> 9 cœurs à 41 s, retombe à 8 puis à 5,5 juste avant le kill ; remis à 10 après."""
+    if t < 41.0:
+        return 4.0
+    if t < 44.0:
+        return 9.0
+    if t < 44.85:
+        return 8.0
+    if t < 45.55:
+        return 5.5
+    return 10.0
+
+
+def test_a_kill_kept_over_a_beating_shows_only_the_last_blows_never_the_life_drop():
+    from app.models import EditSettings
+    m = _M()
+    h = _train(40, 12)  # 40 s -> 45,5 s : le kill est le dernier coup
+    cands = pvp.candidates([m], {"m1": h})
+    duel = _avec_vie(cands, _vie_du_kill, "subit", cout=6.0, part=0.8)
+    res = next(iter(duel.values()))
+    assert _perte(res, 40.0, 45.5) > 3, "la mesure donne bien cette fin de combat pour subie"
+    kill = _all_like(cands, "joueur_domine", 9, "kill")
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=20), verdicts=kill, duel=duel)
+    assert tl.clips, "le kill est gardé (le jury le voit)"
+    for x in tl.clips:
+        assert _perte(res, x.src_in, x.src_out) <= 1.0, (x.src_in, x.src_out, "ce plan couvre une chute de vie de plus d'un cœur")
+    assert min(x.src_in for x in tl.clips) >= 44.5, "seulement les derniers coups (de l'ordre de la dernière seconde), pas le combat"
+    ralenti = [x for x in tl.clips if x.speed < 1]
+    assert len(ralenti) == 1 and ralenti[0].src_in < 45.5 < ralenti[0].src_out, "le kill reste montré, au ralenti"
+    assert "KILL" in [t.text for t in tl.texts]
+    assert any("jamais le passage où ta vie chute" in x.reason for x in tl.clips)
+    # Sans la courbe (résultat gardé avant son ajout), on ne garde quand même que la dernière seconde.
+    cle = next(iter(duel))
+    sans = {**res, "vie": {k: v for k, v in res["vie"].items() if k != "courbe"}}
+    tl2 = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=20), verdicts=kill, duel={cle: sans})
+    assert tl2.clips and min(x.src_in for x in tl2.clips) >= 44.4
+    # Un kill gardé alors que la mesure dit « donne » n'est pas rogné à sa dernière seconde : c'est un combo qu'on a donné.
+    donne = _avec_vie(cands, lambda t: 7.0, "donne", cout=0.0, confirme=True)
+    tl3 = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=20), verdicts=kill, duel=donne)
+    assert min(x.src_in for x in tl3.clips) < 44.5
+
+
+def test_a_burst_never_covers_a_life_drop_of_more_than_a_heart_even_without_a_kill():
+    from app.models import EditSettings
+    m = _M()
+    h = _train(40, 10)
+    cands = pvp.candidates([m], {"m1": h})
+    # Une chute de 2 cœurs à 42 s au milieu d'un échange que le signal local admet (coût mesuré : un demi-cœur).
+    duel = _avec_vie(cands, lambda t: 9.0 if t < 42.0 else 7.0, "echange", cout=0.5)
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=20),
+                   verdicts=_all_like(cands, "echange", 6, "rien"), duel=duel)
+    res = next(iter(duel.values()))
+    assert tl.clips
+    assert all(_perte(res, x.src_in, x.src_out) <= 1.0 for x in tl.clips)
+    assert min(x.src_in for x in tl.clips) >= 41.9, "le plan commence après la chute"
+
+
+def test_a_long_combo_becomes_a_short_plan_that_starts_on_a_hit():
+    from app.models import EditSettings
+    m = _M()
+    # 17 coups en 8 s : le milieu est le plus dense (coups à 0,35 s) et le plus fort, les bords sont plus faibles.
+    h = [[round(100 + k * 0.5, 3), 0.5] for k in range(6)] + [[round(103 + k * 0.35, 3), 0.9] for k in range(8)] \
+        + [[round(105.8 + k * 0.5, 3), 0.5] for k in range(3)]
+    cands = pvp.candidates([m], {"m1": h})
+    (mid, c), = cands
+    assert c["n"] >= 15 and c["end"] - c["start"] > 6
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp"), verdicts=_all_like(cands, "joueur_domine", 9, "rien"))
+    x = tl.clips[0]
+    assert x.duration <= 5.0, f"plan trop long pour la musique : {x.duration:.1f} s"
+    beat = 60 / pvp.DEFAULT_BPM
+    assert abs(x.duration / beat - round(x.duration / beat)) < 0.02, "toujours un nombre entier de temps"
+    premier = min(t for t, _ in h if t >= x.src_in)
+    assert premier - x.src_in <= pvp.LEAD_MAX + 1e-6, "le plan démarre sur un coup, pas sur un temps mort"
+    plans = tl.clips
+    assert sum(p.duration for p in plans) <= pvp.PLAN_MAX + 0.25 + pvp.SPAN_MIN_RALENTI, "main + ralenti : le plafond vaut pour les deux"
+    forts = [t for t, s in h if any(p.src_in <= t < p.src_out for p in plans) and s >= 0.9]
+    assert len(forts) >= 4 and all(103 <= t <= 105.8 for t in forts), "la portion la plus dense (et la plus forte) du combo est gardée"
+    assert "Portion la plus dense du combo" in x.reason
+    # Un combo court démarre aussi sur un coup (ses premiers coups cèdent la place au ralenti, plafond oblige).
+    court = pvp.build([m], {"m1": _train(100, 6)}, EditSettings(style="pvp"))
+    x2 = court.clips[0]
+    assert 0 <= min(t for t, _ in _train(100, 6) if t >= x2.src_in - 1e-6) - x2.src_in <= pvp.LEAD_MAX + 1e-6
+
+
+def test_a_long_combo_prefers_the_part_where_the_camera_sees_no_blow_received():
+    from app.models import EditSettings
+    m = _M()
+    h = _train(100, 17)  # 100 -> 108 s, régulier
+    cands = pvp.candidates([m], {"m1": h})
+    duel = _duel_for(cands, [{**_res("donne", cout=0.0), "fenetre": [100.4, 104.2]}])
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp"), verdicts=_all_like(cands, "joueur_domine", 9, "rien"), duel=duel)
+    assert min(x.src_in for x in tl.clips) >= 100.2 and max(x.src_out for x in tl.clips) <= 105.6,         "la portion reste dans la fenêtre sans coup reçu (plus le temps de voir le coup final)"
+
+
+def test_the_music_peak_lands_on_the_kill_and_the_full_stack_serves_only_one_moment(monkeypatch):
+    from app.ai import jury
+    from app.models import EditSettings
+    m = _M()
+    h = _train(20, 8) + _train(60, 12) + _train(100, 8) + _train(140, 8)
+    cands = pvp.candidates([m], {"m1": h})
+    notes = [6, 9, 7, 8]  # le meilleur combo : 60 s (12 coups) ; le kill : 100 s
+    verdicts = {("m1", jury.key(c)): {"verdict": "joueur_domine", "fin": "kill" if i == 2 else "rien", "note": n, "raison": "",
+                                      "n": c["n"]} for i, ((_, c), n) in enumerate(zip(cands, notes))}
+    beat = 60 / 120
+    monkeypatch.setattr(pvp, "music_grid", lambda path: (120.0, 0.25))
+    monkeypatch.setattr(pvp, "_music_peak", lambda path: (30.25, 200.0))
+    s = EditSettings(style="pvp", target_duration=60)
+    tl = pvp.build([m], {"m1": h}, s, "x", "morceau.mp3", verdicts=verdicts)
+
+    def kind(k):
+        return [i for i in tl.impacts if i.kind == k]
+    # La pile complète (ralenti x0,4 + contraste, secousse franche, étincelles, flash, onde, zoom, boom) : une seule fois, sur le kill.
+    kill_at = kind("flash")[0].start
+    assert len(kind("flash")) == len(kind("onde")) == len(kind("zoom")) == 1
+    assert len([x for x in tl.sfx if x.kind == "boom"]) == 1
+    assert [t for t in tl.texts if t.text == "KILL"][0].start == pytest.approx(kill_at, abs=0.01)
+    assert all(abs(i.start - kill_at) < 0.01 for i in kind("onde") + kind("zoom"))
+    lents = [x for x in tl.clips if x.speed < 1]
+    assert sorted(x.speed for x in lents) == [pvp.SLOW, pvp.SLOW_LEGER], "un ralenti plein, un ralenti nettement plus doux"
+    plein = next(x for x in lents if x.speed == pvp.SLOW)
+    doux = next(x for x in lents if x.speed == pvp.SLOW_LEGER)
+    assert "contraste" in plein.effects and "contraste" not in doux.effects
+    assert tl.clips[-1] is plein, "le moment fort ferme l'edit"
+    etincelles = sorted(i.intensity for i in kind("etincelles"))
+    assert len(etincelles) == 2 and etincelles[0] <= 0.8 < 1.5 <= etincelles[1], "l'autre temps fort a une variante légère"
+    finales = sorted(i.intensity for i in kind("secousse") if i.intensity >= 1.0)
+    assert finales[-1] >= 1.5 and finales.count(finales[-1]) == 1, "une seule secousse franche"
+    # Le pic de la musique (30,25 s) tombe sur le kill, pas sur une coupe quelconque.
+    assert tl.music.start > 0.25 and "Pic de la musique posé sur le kill" in tl.summary
+    assert round(30.25 - tl.music.start, 3) == pytest.approx(kill_at, abs=0.02)
+    assert abs((tl.music.start - 0.25) / beat - round((tl.music.start - 0.25) / beat)) < 0.02, "la musique part toujours sur un temps"
+    assert abs(kill_at / beat - round(kill_at / beat)) < 0.02, "le coup final du kill tombe sur un temps de la musique"
+    # Sans kill, la règle d'avant reste : le pic sur une coupe, la pile complète sur le meilleur combo.
+    sans = {k: {**v, "fin": "rien"} for k, v in verdicts.items()}
+    tl2 = pvp.build([m], {"m1": h}, s, "x", "morceau.mp3", verdicts=sans)
+    assert "Pic de la musique posé sur la coupe" in tl2.summary and [x.speed for x in tl2.clips if x.speed < 1] == [pvp.SLOW]
+    assert [i.kind for i in tl2.impacts].count("flash") == 1
+
+
+def test_combo_card_counts_the_blows_shown_in_its_plan_and_stays_short():
+    from app.ai import jury
+    from app.models import EditSettings
+    m = _M()
+    h = _train(20, 8) + _train(60, 16) + _train(100, 8)  # le meilleur combo (16 coups, 7,5 s) est rogné : le compteur doit suivre
+    cands = pvp.candidates([m], {"m1": h})
+    notes = [6, 9, 7]
+    verdicts = {("m1", jury.key(c)): {"verdict": "joueur_domine", "fin": "rien", "note": n, "raison": "", "n": c["n"]}
+                for (_, c), n in zip(cands, notes)}
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=60), "x", verdicts=verdicts)
+    carte = next(t for t in tl.texts if t.text.startswith("COMBO x"))
+    assert carte.duration <= 1.6 + 1e-6, "la carte ne reste pas plus de 1,6 s"
+    plans = [x for x in tl.clips if 55 < x.src_in < 70]
+    montres = [t for t, _ in h if 59 <= t <= 68 and any(x.src_in <= t < x.src_out for x in plans)]
+    assert carte.text == f"COMBO x{len(montres)}" and len(montres) < 16, (carte.text, len(montres))
+    assert carte.start + carte.duration <= tl.duration + 1e-6
+    assert carte.start >= tl.duration - plans[-1].duration - 1.0, "la carte arrive sur les derniers coups du plan"
+
+
+# ---------------------------------------------------------------- relecture : bornes, tempo, textes, plafond
+
+def _duree_en_temps(clips, beat):
+    return [c.duration / beat for c in clips]
+
+
+def _entiers(clips, beat, tol=0.03):
+    return all(abs(d - round(d)) < tol for d in _duree_en_temps(clips, beat))
+
+
+def _avis(cands, fins_notes):
+    """Verdicts « joueur domine » avec la fin et la note voulues pour chaque rafale, dans l'ordre."""
+    from app.ai import jury
+    return {(mid, jury.key(c)): {"verdict": "joueur_domine", "fin": f, "note": n, "raison": "", "n": c["n"]}
+            for (mid, c), (f, n) in zip(cands, fins_notes)}
+
+
+def test_a_long_combo_stops_with_its_calm_window_and_the_card_counts_every_visible_blow():
+    from app.models import EditSettings
+    m = _M()
+    h = _train(100, 17)  # 100 -> 108 s ; la caméra voit un coup reçu à 104,2 s qui ferme la fenêtre calme [100,4 ; 104,2]
+    cands = pvp.candidates([m], {"m1": h})
+    duel = _duel_for(cands, [{**_res("donne", cout=0.0), "fenetre": [100.4, 104.2]}])
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp"), verdicts=_all_like(cands, "joueur_domine", 9, "rien"), duel=duel)
+    limite = 104.2 + 0.35  # l'impulsion qui ferme la fenêtre, plus le décalage de son avec le son
+    assert max(x.src_out for x in tl.clips) <= limite + 1e-3, "ni le plan ni son ralenti ne passent le coup reçu qui ferme la fenêtre"
+    visibles = [t for t, _ in h if any(x.src_in - 1e-6 <= t < x.src_out for x in tl.clips)]
+    carte = next(t for t in tl.texts if t.text.startswith("COMBO x"))
+    assert carte.text == f"COMBO x{len(visibles)}", (carte.text, visibles)
+
+
+def test_texts_never_run_past_their_own_plan_whatever_the_tempo(monkeypatch):
+    from app.models import EditSettings
+    m = _M()
+    h = _train(20, 8) + _train(60, 12) + _train(100, 8) + _train(140, 9)
+    cands = pvp.candidates([m], {"m1": h})
+    # Le meilleur combo (note 9) n'est pas un kill : le kill (note plus basse) est le moment fort, le meilleur combo a le ralenti léger.
+    v = _avis(cands, [("rien", 6), ("rien", 9), ("kill", 6), ("rien", 5)])
+    for bpm in (70, 90, 100, 128, 182):
+        monkeypatch.setattr(pvp, "music_grid", lambda path, b=bpm: (float(b), 0.0))
+        tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=60), "x", verdicts=v)
+        lents, t = [], 0.0
+        for x in tl.clips:
+            if x.speed < 1:
+                lents.append((t, t + x.duration))
+            t += x.duration
+        cartes = tl.texts[1:]  # le titre d'ouverture n'est pas rattaché à un ralenti
+        for texte in cartes:
+            fin_plan = min(e for s, e in lents if e > texte.start)
+            assert texte.start + texte.duration <= fin_plan + 1e-3, (bpm, texte.text, texte.start + texte.duration, fin_plan)
+        assert "KILL" in [x.text for x in cartes] and any(x.text.startswith("COMBO x") for x in cartes), bpm
+
+
+def test_a_plan_stays_on_the_beat_when_the_player_is_hit_right_after_the_last_blow():
+    from app.models import EditSettings
+    m = _M()
+    h = _train(100, 5)  # le coup final est à 102,0 s
+    cands = pvp.candidates([m], {"m1": h})
+    duel = _avec_vie(cands, lambda t: 10.0 if t < 102.15 else 8.0, "echange", cout=0.5)  # deux cœurs perdus 0,15 s après le coup final
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=20), verdicts=_all_like(cands, "echange", 6, "rien"), duel=duel)
+    beat = 60 / pvp.DEFAULT_BPM
+    assert _entiers(tl.clips, beat), _duree_en_temps(tl.clips, beat)
+    res = next(iter(duel.values()))
+    assert all(_perte(res, x.src_in, x.src_out) <= 1.0 for x in tl.clips)
+    ralenti = [x for x in tl.clips if x.speed < 1]
+    assert len(ralenti) == 1 and ralenti[0].src_in < 102.0 < ralenti[0].src_out, "le coup final reste montré, au ralenti"
+    # Le repli de `_caler_fin` (aucune place pour allonger) reste lui aussi sur un nombre entier de temps.
+    s0, out = pvp._caler_fin(100.0, 101.3, 100.0, 101.35, beat, 101.25)
+    assert abs((out - s0) / beat - round((out - s0) / beat)) < 1e-6 and s0 <= 101.25 <= out
+
+
+def test_a_plan_with_slow_motion_stays_within_the_plan_ceiling_for_a_combo_and_for_a_kill():
+    from app.models import EditSettings
+    m = _M()
+    h = _train(20, 8) + _train(60, 17, gap=0.3) + _train(100, 8)  # le meilleur combo : 17 coups à 0,3 s
+    cands = pvp.candidates([m], {"m1": h})
+    duel = _duel_for(cands, [_res("donne", cout=0.0, confirme=True)] * 3)
+    for fin in ("rien", "kill"):
+        v = _avis(cands, [("rien", 6), (fin, 9), ("rien", 7)])
+        tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=30), "x", verdicts=v, duel=duel)
+        plan = [x for x in tl.clips[1:] if 55 < x.src_in < 70]  # sans l'aperçu en accroche, qui est un autre plan
+        assert any(x.speed < 1 for x in plan), fin
+        assert sum(x.duration for x in plan) <= 5.0, (fin, [round(x.duration, 2) for x in plan])
+
+
+def test_a_kill_with_no_proof_that_the_player_gives_it_shows_only_its_last_second(monkeypatch):
+    from app.models import EditSettings
+    m = _M()
+    h = _train(40, 12)  # le kill est le dernier coup, à 45,5 s
+    cands = pvp.candidates([m], {"m1": h})
+    kill = _all_like(cands, "joueur_domine", 9, "kill")
+    for bpm in (60, 128):
+        monkeypatch.setattr(pvp, "music_grid", lambda path, b=bpm: (float(b), 0.0))
+        for duel in (None, _duel_for(cands, [_res("inconnu")])):
+            tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=20), verdicts=kill, duel=duel)
+            assert min(x.src_in for x in tl.clips) >= 45.5 - pvp.KILL_LEAD - 0.06, (bpm, [x.src_in for x in tl.clips])
+            assert any(x.speed < 1 for x in tl.clips) and "KILL" in [t.text for t in tl.texts]
+        # Une mesure qui dit « donne » (sans courbe) est une preuve : le combo n'est pas rogné.
+        donne = _duel_for(cands, [_res("donne", cout=0.0, confirme=True)])
+        tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=20), verdicts=kill, duel=donne)
+        assert min(x.src_in for x in tl.clips) < 45.5 - pvp.KILL_LEAD - 0.5
+
+
+def test_the_teaser_of_an_unproven_kill_does_not_show_more_than_its_last_second(monkeypatch):
+    from app.models import EditSettings
+    m = _M()
+    h = _train(20, 8) + _train(60, 8) + _train(100, 8) + _train(140, 8)
+    cands = pvp.candidates([m], {"m1": h})
+    v = _avis(cands, [("rien", 8), ("rien", 8), ("kill", 9), ("rien", 8)])  # le kill : 100 -> 103,5 s, sans courbe de vie ni mesure
+    for bpm in (60, 128):
+        monkeypatch.setattr(pvp, "music_grid", lambda path, b=bpm: (float(b), 0.0))
+        tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=60), "x", verdicts=v)
+        teaser = tl.clips[0]
+        assert 100 <= teaser.src_in and teaser.src_out <= 106
+        assert teaser.src_in >= 103.5 - pvp.KILL_LEAD - 0.06, (bpm, teaser.src_in)
+
+
+def test_a_kill_whose_life_drops_right_before_the_last_blow_still_gets_its_slow_motion():
+    from app.models import EditSettings
+    m = _M()
+    h = _train(40, 8)  # le kill est à 43,5 s
+    cands = pvp.candidates([m], {"m1": h})
+    duel = _avec_vie(cands, lambda t: 10.0 if t < 43.2 else 7.5, "echange", cout=0.5)  # la vie chute 0,3 s avant le coup final
+    tl = pvp.build([m], {"m1": h}, EditSettings(style="pvp", target_duration=20),
+                   verdicts=_all_like(cands, "joueur_domine", 9, "kill"), duel=duel)
+    res = next(iter(duel.values()))
+    assert tl.clips and all(_perte(res, x.src_in, x.src_out) <= 1.0 for x in tl.clips), "jamais la chute"
+    ralenti = [x for x in tl.clips if x.speed < 1]
+    assert len(ralenti) == 1 and ralenti[0].src_in < 43.5 < ralenti[0].src_out, "le kill reste montré, au ralenti, même sur un seul coup"
+    assert "KILL" in [t.text for t in tl.texts]

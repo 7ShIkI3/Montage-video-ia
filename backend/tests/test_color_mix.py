@@ -54,6 +54,13 @@ def _mean_volume(path) -> float:
     return float(re.search(r"mean_volume: (-?[\d.]+|-inf) dB", r.stderr).group(1))
 
 
+def _peak_volume(path) -> float:
+    """Crête (dB) de la piste audio de l'export, comme `volumedetect` la lit."""
+    r = subprocess.run([ffmpeg.FFMPEG, "-hide_banner", "-nostdin", "-i", str(path), "-vn", "-af", "volumedetect",
+                        "-f", "null", "-"], capture_output=True, text=True)
+    return float(re.search(r"max_volume: (-?[\d.]+|-inf) dB", r.stderr).group(1))
+
+
 # --- Modèle -----------------------------------------------------------------------------------------
 
 def test_defaults_are_neutral_and_old_documents_still_load():
@@ -197,6 +204,43 @@ def test_muting_music_removes_it_from_the_export(rush, tmp_path):
     assert _mean_volume(_export(p, tl, tmp_path, "mus.mp4", str(tone))) > -35
     tl.mix.music.mute = True
     assert _mean_volume(_export(p, tl, tmp_path, "mus_off.mp4", str(tone))) < -60
+
+
+def _sortie_wav(src, chaine: str, out) -> float:
+    """Crête (dB) d'un signal passé dans `chaine`, avant tout encodage AAC."""
+    subprocess.run([ffmpeg.FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", str(src), "-af", chaine, str(out)],
+                   check=True)
+    return _peak_volume(out)
+
+
+def test_peak_limiter_catches_a_peak_the_loudnorm_lets_through(tmp_path):
+    """Le loudnorm en une passe dépasse sa propre limite sur des chocs brefs après une basse faible (mesuré : -0,8 dB au lieu
+    de -1,5 dB). Le limiteur final tient cette crête, avant l'encodage, sans baisser le niveau moyen."""
+    chocs = tmp_path / "chocs.wav"
+    subprocess.run([ffmpeg.FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                    "aevalsrc='0.1*sin(2*PI*50*t)+0.95*(2*random(0)-1)*lt(mod(t,0.2),0.01)*gte(t,4)':s=48000:d=8",
+                    "-ac", "2", str(chocs)], check=True)
+    sans = _sortie_wav(chocs, render.master_chain().replace("," + render.PEAK_LIMITER, ""), tmp_path / "sans.wav")
+    avec = _sortie_wav(chocs, render.master_chain(), tmp_path / "avec.wav")
+    assert sans > -1.2, f"le signal d'essai doit dépasser avant le limiteur (crête {sans} dB)"
+    assert avec <= -1.5, f"le limiteur tient la crête vers -1,7 dB (crête {avec} dB)"
+    assert _mean_volume(tmp_path / "avec.wav") >= _mean_volume(tmp_path / "sans.wav") - 0.5, "niveau moyen préservé"
+
+
+def test_export_peak_stays_below_zero_after_aac(rush, tmp_path):
+    """Après l'AAC la crête remontait à 0,0 dB sur des chocs bruités (mesuré sur un edit PvP) : c'est `-aac_pns 0` qui
+    l'évite (la substitution de bruit de l'encodeur crée le dépassement, qu'aucun filtre en amont ne voit)."""
+    p, m = _project(rush)
+    chocs = tmp_path / "chocs.wav"
+    subprocess.run([ffmpeg.FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                    "aevalsrc='0.9*(2*random(0)-1)*lt(mod(t,0.33),0.015)+0.25*sin(2*PI*80*t)':s=48000:d=8", "-ac", "2",
+                    str(chocs)], check=True)
+    assert render.CONTAINERS["mp4"][2][-2:] == ["-aac_pns", "0"]
+    tl = Timeline(captions="aucun", music=MusicSettings(volume=1.0, ducking=False),
+                  clips=[Clip(media_id=m.id, src_in=0, src_out=6, volume=0.0)])
+    dernier = _graph(p, tl, tmp_path, music_path=str(chocs)).split(";\n")[-1]
+    assert dernier.endswith(f"{render.master_chain()}[aout]"), dernier
+    assert _peak_volume(_export(p, tl, tmp_path, "avec.mp4", str(chocs))) <= -0.7
 
 
 # --- Voix studio ------------------------------------------------------------------------------------

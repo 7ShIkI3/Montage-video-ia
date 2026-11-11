@@ -29,9 +29,21 @@ for _q, _s in QUALITIES.items():
     SIZES[("1:1", _q)] = (_s, _s)
 
 
+# Limiteur de crête en fin de mixage : plafond à 0,82 (-1,7 dB), niveau automatique coupé (sinon il remonterait tout le
+# son). Il rattrape les crêtes que le loudnorm en une passe laisse passer avant l'encodage (mesuré : -0,8 dB sur des chocs
+# brefs après une basse faible). Il ne voit pas ce que l'AAC ajoute ensuite : c'est `-aac_pns 0` (ci-dessous) qui évite
+# la crête à 0,0 dB après l'encodeur (mesuré : -1,2 dB avec, 0,0 dB sans).
+PEAK_LIMITER = "alimiter=limit=0.82:attack=3:release=60:level=disabled"
+
+
+def master_chain() -> str:
+    """Fin de la chaîne audio de l'export : normalisation, rééchantillonnage, puis limiteur de crête."""
+    return f"loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,{PEAK_LIMITER}"
+
+
 # Conteneurs de sortie : (extension, options vidéo, options audio). "mp4" utilise le meilleur encodeur H.264.
 CONTAINERS = {
-    "mp4": ("mp4", None, ["-c:a", "aac", "-b:a", "192k"]),
+    "mp4": ("mp4", None, ["-c:a", "aac", "-b:a", "192k", "-aac_pns", "0"]),
     "webm": ("webm", ["-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-row-mt", "1",
                       "-crf", "31", "-b:v", "0", "-pix_fmt", "yuv420p"], ["-c:a", "libopus", "-b:a", "160k"]),
     "mov": ("mov", ["-c:v", "prores_ks", "-profile:v", "2", "-pix_fmt", "yuv422p10le"], ["-c:a", "pcm_s16le"]),
@@ -458,7 +470,7 @@ def build_command(project: Project, timeline: Timeline, transcripts: dict[str, T
         else:
             filters.append(f"[{alabel}][mus]amix=inputs=2:duration=first:normalize=0[mix]")
         alabel = "mix"
-    filters.append(f"[{alabel}]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[aout]")
+    filters.append(f"[{alabel}]{master_chain()}[aout]")
 
     script = work_dir / "filtergraph.txt"
     script.write_text(";\n".join(filters), encoding="utf-8")
