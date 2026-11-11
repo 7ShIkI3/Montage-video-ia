@@ -1,0 +1,47 @@
+/* =====================================================================
+   Mises à jour : bandeau de l'accueil, pastille de la barre d'état, fenêtre de détail, section « À propos ».
+   Importée par components/Update.tsx. Aucune couleur en dur : tout vient des jetons de :root.
+   ===================================================================== */
+
+/* ---------- Bandeau de l'accueil : discret, sans bouton plein ---------- */
+.home .banner.update-banner { align-items: center; width: calc(100% - 64px); max-width: 1176px; margin: var(--s-4) auto 0; }
+.banner.update-banner > svg { margin-top: 0; color: var(--info); }
+.banner.update-banner > div { font-size: 13px; }
+.banner.update-banner .icon-btn { width: 28px; min-height: 28px; }
+
+/* ---------- Pastille de la barre d'état (24 px) ---------- */
+.statusbar button.update-chip { min-height: 0; height: 100%; padding: 0 8px; border: 0; border-right: 1px solid var(--line); border-radius: 0; background: transparent; color: var(--text-2); font-size: 11px; font-weight: 400; white-space: nowrap; }
+.statusbar button.update-chip:hover:not(:disabled) { background: var(--surface); color: var(--text); }
+.status-item .led.info { background: var(--info); }
+
+/* ---------- Fenêtre ---------- */
+dialog.dlg.update-dlg { width: 560px; }
+.update-body { display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-4) 20px 18px; }
+.update-body header { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+.update-body h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.update-body p { margin: 0; color: var(--text-2); font-size: 14px; line-height: 1.5; }
+.update-body .update-meta { font-size: 13px; }
+.update-body .update-meta b { color: var(--text); }
+/* Notes de version : texte brut, retours à la ligne conservés, défilement propre */
+.update-notes { max-height: min(40vh, 320px); overflow-y: auto; padding: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-card); background: var(--panel); color: var(--text-2); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.update-notes:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.update-body .update-note { font-size: 13px; color: var(--muted); }
+.update-body .update-note a { color: var(--accent-2); }
+.update-progress { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-2); }
+.update-progress .progress { align-self: stretch; }
+.update-body footer { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-1); }
+.update-body footer button { min-width: 96px; }
+.update-body footer button.link { margin-right: auto; min-width: 0; color: var(--muted); }
+.update-body footer button.link:hover:not(:disabled) { color: var(--text); text-decoration: underline; }
+.update-body .why-off { margin: 0; text-align: right; }
+
+/* ---------- Section « À propos » des réglages ---------- */
+.about-list { display: grid; grid-template-columns: max-content 1fr; gap: var(--s-1) var(--s-4); margin: 0 0 var(--s-3); font-size: 13px; }
+.about-list dt { color: var(--muted); }
+.about-list dd { margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); }
+.about-status.ok { color: var(--ok); display: inline-flex; align-items: center; gap: var(--s-1); }
+.about-status.error { color: var(--warn); }
+.about-status.update { color: var(--text); }
+
+@media (max-width: 800px) { .home .banner.update-banner { width: calc(100% - 32px); } }
+@media (max-width: 560px) { .update-body footer button.link { flex-basis: 100%; margin-right: 0; text-align: left; } }

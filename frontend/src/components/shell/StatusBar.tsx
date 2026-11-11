@@ -2,6 +2,7 @@
 import { fmtTime } from "../../api";
 import { Icon } from "../../icons";
 import { useStore } from "../../store";
+import { UpdateChip } from "../Update";
 
 export function StatusBar() {
   const health = useStore((s) => s.caps);
@@ -20,6 +21,7 @@ export function StatusBar() {
       )}
       {health && <span className="status-item" title={`Transcription (Whisper ${health.whisper_model})`}>Transcription {health.whisper_model}{device}</span>}
       {health && <span className="status-item" title="Encodeur vidéo">{health.encoder}</span>}
+      <UpdateChip />
       <span className="spacer" />
       {range && <span className="status-item accent" title="Zone d'entrée/sortie">Zone {fmtTime(range.start, true)} → {fmtTime(range.end, true)}</span>}
       <span className="status-item mono" title="Position du curseur">{fmtTime(playhead, true)}</span>

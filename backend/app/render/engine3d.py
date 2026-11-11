@@ -38,13 +38,6 @@ def ease_out_back(u: float, s: float = 1.70158) -> float:
     return 1 + (s + 1) * u ** 3 + s * u ** 2
 
 
-def ease_out_elastic(u: float) -> float:
-    u = clamp01(u)
-    if u in (0.0, 1.0):
-        return u
-    return 2 ** (-10 * u) * math.sin((u * 10 - 0.75) * (2 * math.pi) / 3) + 1
-
-
 def decay(u: float, k: float = 5.0) -> float:
     """1 au moment de l'impact, puis décroissance exponentielle."""
     return math.exp(-k * u) if u >= 0 else 0.0

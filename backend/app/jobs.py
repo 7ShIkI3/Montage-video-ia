@@ -17,7 +17,8 @@ from .models import new_id
 log = logging.getLogger(__name__)
 
 ACTIVE = ("en_attente", "en_cours")
-TIMEOUTS = {"montage": 3600, "export": 7200, "telechargement": 1800, "demo": 3600}  # secondes sans mise à jour avant de déclarer la tâche bloquée
+# Secondes sans mise à jour avant de déclarer la tâche bloquée (la mise à jour : un installateur de plus d'1 Go).
+TIMEOUTS = {"montage": 3600, "export": 7200, "telechargement": 1800, "demo": 3600, "mise_a_jour": 3600}
 DEFAULT_TIMEOUT = 600
 MAX_STEPS = 200
 WATCHDOG_INTERVAL = 5.0

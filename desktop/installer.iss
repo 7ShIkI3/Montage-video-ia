@@ -8,8 +8,9 @@
 ; l'application va dans le dossier de l'utilisateur (%LOCALAPPDATA%\Programs\Monteur IA), avec ses raccourcis
 ; et sa désinstallation dans « Applications installées ». Les projets (Documents\Monteur IA) ne sont jamais touchés.
 
+; Défaut seulement : desktop/build.py passe la vraie version (lue dans backend/app/version.py) avec /DAppVersion=.
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.1.0"
 #endif
 #define AppName "Monteur IA"
 #define AppExe "Monteur IA.exe"
@@ -70,13 +71,22 @@ Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AppExe}"; Description: "Lancer {#AppName}"; Flags: nowait postinstall skipifsilent
+; Installation normale : case « Lancer » sur la dernière page. Installation silencieuse : rien, sauf si l'application
+; qui se met à jour a passé /RELAUNCH=1 (voir ShouldLaunch) pour être relancée une fois remplacée.
+Filename: "{app}\{#AppExe}"; Description: "Lancer {#AppName}"; Flags: nowait postinstall; Check: ShouldLaunch
 
 [Code]
 // Une carte NVIDIA avec son pilote installe nvcuda64.dll (ou nvcuda.dll) dans le dossier système.
 function HasNvidia(): Boolean;
 begin
   Result := FileExists(ExpandConstant('{sys}\nvcuda64.dll')) or FileExists(ExpandConstant('{sys}\nvcuda.dll'));
+end;
+
+// Relancer l'application après l'installation : toujours dans l'assistant, et en silencieux seulement avec /RELAUNCH=1
+// (mise à jour déclenchée depuis l'application ; les installations silencieuses d'essai ne lancent rien).
+function ShouldLaunch(): Boolean;
+begin
+  Result := (not WizardSilent) or (ExpandConstant('{param:RELAUNCH|0}') = '1');
 end;
 
 // La désinstallation retire l'application, pas le travail de l'utilisateur : on le lui dit.

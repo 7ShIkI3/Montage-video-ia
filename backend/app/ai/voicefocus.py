@@ -30,7 +30,6 @@ SENT_GAP = 0.5  # un blanc de 0,5 s termine une phrase
 MAX_EXTEND = 3.0  # un plan s'allonge de 3 s au plus pour finir sa phrase
 MIN_GAP_S = 7.0  # au plus un projecteur toutes les 7 s
 MAX_SPOTS = 6
-DIM = 0.55  # assombrissement du reste de l'image
 
 # La voix désigne quelque chose de visible.
 MENTION = re.compile(

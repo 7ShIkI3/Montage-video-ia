@@ -6,6 +6,7 @@ import { useStore } from "../store";
 import { JobLine, runStandaloneJob } from "./Library";
 import { ask } from "./Dialog";
 import { SystemBar } from "./SystemBar";
+import { AboutSection } from "./Update";
 
 const PIPER_LANGS = [["fr", "Français"], ["en", "Anglais"], ["es", "Espagnol"], ["de", "Allemand"], ["it", "Italien"], ["pt", "Portugais"], ["nl", "Néerlandais"], ["pl", "Polonais"], ["tr", "Turc"], ["ru", "Russe"], ["ar", "Arabe"], ["zh", "Chinois"]];
 
@@ -101,7 +102,7 @@ const FIELD_LABEL: Record<string, string> = {
 };
 const SECTIONS = [
   { id: "claude", label: "Claude" }, { id: "transcription", label: "Transcription" }, { id: "voix", label: "Voix" },
-  { id: "serveur", label: "Serveur" }, { id: "systeme", label: "Système" },
+  { id: "serveur", label: "Serveur" }, { id: "systeme", label: "Système" }, { id: "apropos", label: "À propos" },
 ];
 
 /** Avertit que ces champs viennent de l'environnement : ce qui est saisi ici est enregistré mais ignoré. */
@@ -193,6 +194,18 @@ export function Settings({ onBack }: { onBack: () => void }) {
     whisper_language: language.trim() || null,
     ...(/^\d+$/.test(port.trim()) ? { port: Number(port.trim()) } : {}),
   }, "Réglages enregistrés.");
+
+  /** La case « Vérifier au lancement » s'enregistre seule : elle ne touche ni la clé saisie ni les autres champs en cours de saisie. */
+  const setCheckUpdates = async (value: boolean) => {
+    const st = useStore.getState();
+    try {
+      const saved = await api.saveSettings({ check_updates: value });
+      setCfg((c) => (c ? { ...c, check_updates: saved.check_updates } : c));
+      st.notify(value ? "Les mises à jour seront vérifiées au lancement." : "Plus de vérification au lancement.", { level: "ok" });
+    } catch (e) {
+      st.fail("Enregistrement impossible", e);
+    }
+  };
 
   const clearKey = async () => {
     if (await ask.confirm("Effacer la clé Claude enregistrée ?", { title: "Effacer la clé", ok: "Effacer", danger: true })) save({ anthropic_api_key: "" }, "Clé Claude effacée.");
@@ -355,6 +368,16 @@ export function Settings({ onBack }: { onBack: () => void }) {
             <section id="systeme" className="settings-section">
               <header><div><h3>Système</h3></div></header>
               <SystemBar />
+            </section>
+
+            <section id="apropos" className="settings-section">
+              <header>
+                <div>
+                  <h3>À propos</h3>
+                  <p>La version de Monteur IA et ses mises à jour. Cette section s'applique tout de suite, sans passer par « Enregistrer ».</p>
+                </div>
+              </header>
+              <AboutSection checkOnLaunch={cfg.check_updates !== false} onCheckOnLaunch={setCheckUpdates} />
             </section>
             <div className="settings-save">
               <span className="muted small">Un seul bouton pour toutes les sections : clé, modèle, transcription et port.</span>

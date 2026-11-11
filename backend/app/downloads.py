@@ -15,19 +15,22 @@ import logging
 import re
 import shutil
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Callable
 
 from . import config
 from .jobs import JobContext
+from .version import __version__
 
 log = logging.getLogger(__name__)
 
 CCMIXTER_API = "https://ccmixter.org/api/query"
 PIPER_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
 PIPER_CATALOG = PIPER_BASE + "voices.json"
-USER_AGENT = "MonteurIA/1.0 (+https://github.com/7ShIkI3/Montage-video-ia)"
+USER_AGENT = f"MonteurIA/{__version__} (+https://github.com/7ShIkI3/Montage-video-ia)"
 # Tailles approximatives des modèles Whisper (Mo), pour prévenir avant de télécharger.
 WHISPER_SIZES: list[tuple[str, int]] = [("tiny", 75), ("base", 145), ("small", 480), ("medium", 1500),
                                         ("large-v3-turbo", 1600), ("large-v3", 3100)]
@@ -47,17 +50,47 @@ def _http_json(url: str, timeout: float = 20.0):
     return json.loads(raw.decode("utf-8", errors="replace"))
 
 
+class _GuardedRedirect(urllib.request.HTTPRedirectHandler):
+    """Ne suit une redirection que si `allow(url)` la permet : un lien digne de confiance ne doit pas pouvoir
+    renvoyer le téléchargement vers un autre site."""
+
+    def __init__(self, allow: Callable[[str], bool]):
+        self._allow = allow
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target = urllib.parse.urljoin(req.full_url, newurl)
+        if not self._allow(target):
+            raise urllib.error.URLError(f"redirection refusée vers {urllib.parse.urlparse(target).netloc or target}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open(req: urllib.request.Request, timeout: float, allow_redirect: Callable[[str], bool] | None):
+    """urlopen, avec un contrôle des redirections quand `allow_redirect` est donné (sinon comportement habituel)."""
+    if allow_redirect is None:
+        return urllib.request.urlopen(req, timeout=timeout)
+    handlers: list = [_GuardedRedirect(allow_redirect)]
+    if (urllib.parse.urlparse(req.full_url).hostname or "") in ("127.0.0.1", "localhost"):
+        handlers.append(urllib.request.ProxyHandler({}))  # un essai en local ne passe pas par le proxy du système
+    return urllib.request.build_opener(*handlers).open(req, timeout=timeout)
+
+
 def _http_download(url: str, dst: Path, ctx: JobContext | None, label: str, lo: float = 0.0, hi: float = 1.0,
-                   max_bytes: int | None = None) -> Path:
-    """Télécharge `url` dans `dst` (fichier temporaire puis renommage), avec avancement et annulation."""
+                   max_bytes: int | None = None, allow_redirect: Callable[[str], bool] | None = None,
+                   expected_size: int | None = None) -> Path:
+    """Télécharge `url` dans `dst` (fichier temporaire puis renommage), avec avancement et annulation.
+
+    `allow_redirect(url)` : si donné, une redirection vers une adresse refusée interrompt le téléchargement.
+    `expected_size` : si donné, la taille annoncée et la taille reçue doivent lui être égales."""
     # ccMixter (et d'autres) refusent un téléchargement sans Referer : on donne l'origine du lien.
     u = urllib.parse.urlparse(url)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Referer": f"{u.scheme}://{u.netloc}/"})
     tmp = dst.with_suffix(dst.suffix + ".part")
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with urllib.request.urlopen(req, timeout=60) as r, tmp.open("wb") as out:
+        with _open(req, 60, allow_redirect) as r, tmp.open("wb") as out:
             total = int(r.headers.get("Content-Length") or 0)
+            if expected_size is not None and total and total != expected_size:
+                raise ValueError("La taille annoncée par le serveur ne correspond pas à celle de la version publiée")
             if max_bytes and total > max_bytes:
                 raise ValueError(f"Fichier trop gros ({total // 1_000_000} Mo)")
             done = 0
@@ -71,6 +104,8 @@ def _http_download(url: str, dst: Path, ctx: JobContext | None, label: str, lo: 
                     last = time.time()
                     frac = done / total if total else 0.0
                     ctx.step(f"{label} : {done / 1e6:.1f}{f' / {total / 1e6:.0f}' if total else ''} Mo", lo + (hi - lo) * frac)
+        if expected_size is not None and done != expected_size:
+            raise ValueError(f"Téléchargement incomplet ({done} octets reçus sur {expected_size})")
         tmp.replace(dst)
     finally:
         tmp.unlink(missing_ok=True)

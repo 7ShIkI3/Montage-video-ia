@@ -15,6 +15,7 @@ import { Home } from "./components/Home";
 import { Settings } from "./components/Settings";
 import { Toasts } from "./components/Toasts";
 import { DialogHost } from "./components/Dialog";
+import { UpdateDialog } from "./components/Update";
 import { useStore } from "./store";
 
 type Route = { page: "projet"; id: string } | { page: "reglages" } | { page: "accueil" };
@@ -34,6 +35,8 @@ window.addEventListener("unhandledrejection", (e) => {
 
 function App() {
   const [r, setR] = useState<Route>(route());
+  // Une seule vérification des mises à jour par lancement, quelle que soit la page d'arrivée (accueil, réglages ou éditeur).
+  useEffect(() => { useStore.getState().launchUpdateCheck(); }, []);
   useEffect(() => {
     const on = () => setR(route());
     window.addEventListener("hashchange", on);
@@ -52,6 +55,7 @@ function App() {
       )}
       <Toasts />
       <DialogHost />
+      <UpdateDialog />
     </>
   );
 }

@@ -137,6 +137,27 @@ def wait_ready(url: str, timeout: float = 30.0) -> bool:
     return False
 
 
+def make_exit(quit_event: threading.Event, webview_module=None, hard_exit_after: float | None = 20.0):
+    """Rappel de sortie enregistré auprès du backend (app.lifecycle) : une mise à jour peut ainsi fermer l'application.
+
+    Détruit la fenêtre (ce qui rend la main à `window.start()`), réveille la boucle du mode navigateur, puis, si
+    le processus traîne plus de `hard_exit_after` secondes, le coupe : l'installateur ne doit pas attendre une
+    tâche de fond récalcitrante."""
+    def exit_app() -> None:
+        print(f"{APP_NAME} : fermeture demandée {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        quit_event.set()
+        for w in list(getattr(webview_module, "windows", None) or []):
+            try:
+                w.destroy()
+            except Exception as e:  # fenêtre déjà fermée : on continue
+                print(f"{APP_NAME} : fenêtre non détruite ({e})")
+        if hard_exit_after:
+            t = threading.Timer(hard_exit_after, os._exit, args=(0,))
+            t.daemon = True
+            t.start()
+    return exit_app
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=APP_NAME)
     ap.add_argument("--browser", action="store_true", help="ouvrir dans le navigateur plutôt qu'en fenêtre")
@@ -150,6 +171,8 @@ def main(argv: list[str] | None = None) -> int:
         print("Le serveur ne répond pas.", file=sys.stderr)
         return 1
     print(f"{APP_NAME} : {url}  (projets dans {os.environ['MONTEUR_DATA_DIR']})")
+    from app import lifecycle
+    quit_event = threading.Event()
     window = None
     if not args.browser:
         try:
@@ -157,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
             window = webview
         except ImportError:
             pass
+    lifecycle.set_exit_callback(make_exit(quit_event, window))
     if window:
         # Sans ce réglage, pywebview ignore les liens de téléchargement (exports, sous-titres) : clic sans effet.
         window.settings["ALLOW_DOWNLOADS"] = True
@@ -167,10 +191,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         webbrowser.open(url)
         try:
-            while True:
-                time.sleep(1)
+            while not quit_event.wait(1):
+                pass
         except KeyboardInterrupt:
             pass
+    lifecycle.set_exit_callback(None)
     server.should_exit = True
     server_thread.join(timeout=5)  # laisse le serveur annuler les tâches en cours (ffmpeg compris) avant de quitter
     print(f"{APP_NAME} : arrêt normal {time.strftime('%Y-%m-%d %H:%M:%S')}")

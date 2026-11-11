@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { api, ApiError, CaptionLine, Clip, ColorAdjust, AudioItem, Comment, EffectsCatalog, Health, ImageItem, ImpactItem, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript, waitJob } from "./api";
+import { api, ApiError, CaptionLine, Clip, ColorAdjust, AudioItem, Comment, EffectsCatalog, Health, ImageItem, ImpactItem, Region, Job, OverlayItem, Project, Segment, SfxItem, TextItem, Timeline, Transcript, UpdateInfo, waitJob } from "./api";
+import { friendlyError, installBlock, readSkipped, sameVersion, UpdatePhase, writeSkipped } from "./update";
 
 const uid = () => "c_" + Math.random().toString(36).slice(2, 12);
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
@@ -318,7 +319,7 @@ export const KIND_LABELS: Record<string, string> = {
   montage: "Montage automatique", export: "Export", doublage: "Doublage", traduction: "Traduction des sous-titres",
   controle: "Contrôle qualité", relecture: "Relecture", shorts: "Shorts", publication: "Kit de publication",
   voix_ia: "Voix de synthèse", directions: "3 directions", projecteur: "Projecteur voix", commentaires: "Commentaires",
-  consigne: "Consigne", telechargement: "Téléchargement", recherche: "Recherche web", demo: "Démo sans vidéo", chat: "Réalisateur", vision: "Analyse des images",
+  consigne: "Consigne", telechargement: "Téléchargement", recherche: "Recherche web", demo: "Démo sans vidéo", chat: "Réalisateur", vision: "Analyse des images", mise_a_jour: "Mise à jour",
 };
 
 /** Tâches dont la fin ouvre le pitch du réalisateur. */
@@ -370,6 +371,19 @@ interface State {
   /** Dérivée de `jobs` : la tâche en cours la plus récente (compatibilité). */
   job: Job | null;
   caps: Health | null;
+  /** Mise à jour : ce que GitHub publie (null tant qu'on n'a pas demandé), version ignorée, avancement du parcours. */
+  update: UpdateInfo | null;
+  updateChecking: boolean;
+  /** La vérification du lancement a eu lieu (une seule par lancement de l'application). */
+  updateLaunchDone: boolean;
+  /** Version que l'utilisateur ne veut plus se voir proposer (localStorage, clé monteur.update.skip). */
+  updateSkipped: string;
+  /** Bandeau de l'accueil masqué pour cette session (la pastille de l'éditeur reste). */
+  updateHidden: boolean;
+  updateOpen: boolean;
+  updatePhase: UpdatePhase;
+  updateJob: Job | null;
+  updateError: string | null;
   toasts: Toast[];
   pxPerSec: number;
   /** Largeur visible de la timeline (px), pour « zoom ajusté ». */
@@ -384,7 +398,6 @@ interface State {
   /** Pitch du réalisateur (fin de montage) : ouvert, et tâche dont la fin attend le rechargement du projet. */
   pitchOpen: boolean;
   pitchPending: string | null;
-  exportOpen: boolean;
   /** Moniteur source : rush ouvert (null = fermé) et marques d'entrée/sortie par rush. Les raccourcis de l'éditeur se taisent s'il est ouvert. */
   sourceMedia: string | null;
   sourceMarks: Record<string, SourceMarks>;
@@ -440,6 +453,20 @@ interface State {
   /** Signale une erreur (rien pour une annulation ; bouton « Ouvrir Réglages » si Claude manque). */
   fail: (label: string, e: unknown) => void;
   refreshCaps: () => Promise<void>;
+  /** Au lancement, une seule fois : si le réglage est actif, demande s'il existe une version plus récente. Silencieux en cas de panne. */
+  launchUpdateCheck: () => Promise<void>;
+  /** `force` revérifie sur GitHub ; `quiet` n'affiche pas d'erreur. Renvoie null si l'application ne répond pas. */
+  checkUpdate: (opts?: { force?: boolean; quiet?: boolean }) => Promise<UpdateInfo | null>;
+  openUpdate: (open: boolean) => void;
+  hideUpdateBanner: () => void;
+  /** Ignore la version proposée (ou celle donnée) : plus de bandeau ni de pastille pour elle. */
+  skipUpdate: (version?: string) => void;
+  /** Oublie la version ignorée (l'utilisateur redemande lui-même une vérification). */
+  clearSkippedUpdate: () => void;
+  startUpdateDownload: () => Promise<void>;
+  cancelUpdateDownload: () => Promise<void>;
+  /** Enregistre les retouches, puis demande l'installation : l'application se ferme et se relance. Faux si refusé. */
+  installUpdate: () => Promise<boolean>;
   notify: (msg: string | null, opts?: { level?: Toast["level"]; action?: Toast["action"] }) => void;
   dismiss: (id: number) => void;
   /** Demande l'arrêt d'une tâche en cours. */
@@ -536,6 +563,15 @@ export const useStore = create<State>((set, get) => ({
   jobs: {},
   job: null,
   caps: null,
+  update: null,
+  updateChecking: false,
+  updateLaunchDone: false,
+  updateSkipped: readSkipped(),
+  updateHidden: false,
+  updateOpen: false,
+  updatePhase: "idle",
+  updateJob: null,
+  updateError: null,
   toasts: [],
   pxPerSec: 40,
   timelineWidth: 0,
@@ -546,7 +582,6 @@ export const useStore = create<State>((set, get) => ({
   paletteOpen: false,
   pitchOpen: false,
   pitchPending: null,
-  exportOpen: false,
   sourceMedia: null,
   sourceMarks: {},
   clipboard: null,
@@ -680,6 +715,89 @@ export const useStore = create<State>((set, get) => ({
     get().notify(text, { level: "erreur", action });
   },
   refreshCaps: () => api.health().then((caps) => set({ caps })).catch(() => undefined),
+  launchUpdateCheck: async () => {
+    if (get().updateLaunchDone) return;
+    set({ updateLaunchDone: true });
+    try {
+      const cfg = await api.settings();
+      if (cfg.check_updates === false) return;   // l'utilisateur a coupé la vérification : rien n'est demandé
+      await get().checkUpdate({ quiet: true });
+    } catch { /* hors ligne ou réglages illisibles : au lancement, on ne dit rien */ }
+  },
+  checkUpdate: async (opts = {}) => {
+    set({ updateChecking: true });
+    try {
+      const info = await api.getUpdate(!!opts.force);
+      // Une version « prête » qui n'est plus téléchargée (une plus récente est sortie, ou le fichier a disparu) :
+      // on repart de zéro, sinon aucun bouton ne permet de la retélécharger.
+      const stale = get().updatePhase === "ready" && !info.downloaded;
+      set({ update: info, ...(stale ? { updatePhase: "idle" as const } : {}) });
+      return info;
+    } catch (e) {
+      if (!opts.quiet) get().notify(`Vérification impossible : ${friendlyError(e)}`, { level: "erreur" });
+      return null;
+    } finally {
+      set({ updateChecking: false });
+    }
+  },
+  openUpdate: (open) => set({ updateOpen: open, ...(open ? { updateError: null } : {}) }),
+  hideUpdateBanner: () => set({ updateHidden: true }),
+  skipUpdate: (version) => {
+    const v = version ?? get().update?.latest ?? "";
+    if (v) { writeSkipped(v); set({ updateSkipped: v }); }
+    set({ updateOpen: false });
+  },
+  clearSkippedUpdate: () => {
+    if (!get().updateSkipped) return;
+    writeSkipped("");
+    set({ updateSkipped: "" });
+  },
+  startUpdateDownload: async () => {
+    const phase = get().updatePhase;
+    if (phase === "downloading" || phase === "installing") return;
+    set({ updatePhase: "downloading", updateError: null, updateJob: null });
+    try {
+      await waitJob(await api.downloadUpdate(), (j) => set({ updateJob: j }));
+      // Le serveur sait maintenant que l'installateur est là et vérifié ; on garde « téléchargé » même si sa réponse tarde.
+      const before = get().update;
+      const fresh = await api.getUpdate(false).catch(() => null);
+      const base = fresh && before && sameVersion(fresh.latest, before.latest) ? fresh : before;
+      set({ update: base ? { ...base, downloaded: true } : base, updatePhase: "ready", updateJob: null });
+    } catch (e) {
+      if ((e as ApiError).code === "cancelled") { set({ updatePhase: "idle", updateJob: null }); get().notify("Téléchargement annulé."); }
+      else {
+        set({ updatePhase: "idle", updateJob: null, updateError: friendlyError(e) });
+        // Fenêtre fermée : l'erreur n'y serait lue par personne, et le bandeau redit « disponible » sans rien expliquer.
+        if (!get().updateOpen) get().notify(`Téléchargement de la mise à jour impossible : ${friendlyError(e)}`, { level: "erreur" });
+      }
+    }
+  },
+  cancelUpdateDownload: async () => {
+    const j = get().updateJob;
+    if (!j) return;
+    try { await api.cancelJob(j.id); } catch (e) { set({ updateError: friendlyError(e) }); }
+  },
+  installUpdate: async () => {
+    const why = installBlock(get().update, isBusy(get()));
+    if (why) { set({ updateError: why }); return false; }
+    set({ updatePhase: "installing", updateError: null });
+    try {
+      await get().saveNow();   // les retouches non enregistrées partent avant la fermeture
+      await api.installUpdate();
+      return true;
+    } catch (e) {
+      if ((e as ApiError).status === 409) {
+        // Le serveur refuse : installateur abîmé puis supprimé, ou disparu. On relit l'état réel pour que le bouton
+        // « Mettre à jour » revienne si le fichier n'est plus là (sinon « Installer » referait la même erreur).
+        const fresh = await api.getUpdate(false).catch(() => null);
+        const cur = get().update;
+        set({ update: fresh ?? (cur ? { ...cur, downloaded: false } : cur), updatePhase: "idle", updateError: friendlyError(e) });
+      } else {
+        set({ updatePhase: "ready", updateError: friendlyError(e) });
+      }
+      return false;
+    }
+  },
   notify: (msg, opts) => {
     if (msg === null) return set({ toasts: [] });
     const level = opts?.level ?? (ERROR_WORDS.test(msg) ? "erreur" : "info");
@@ -732,7 +850,6 @@ export const useStore = create<State>((set, get) => ({
   setPitch: (open) => set({ pitchOpen: open, pitchPending: null }),
   setExportOpen: (open) => {
     // L'export est un onglet du panneau droit : « ouvrir » l'affiche (et déplie le panneau s'il est replié).
-    set({ exportOpen: open });
     if (open) { set({ rightTab: "export" }); if (!get().layout.rightOpen) get().setLayout({ rightOpen: true }); }
   },
   openSource: (mediaId) => set({ sourceMedia: mediaId, playing: mediaId ? false : get().playing }),
