@@ -523,6 +523,8 @@ export interface Settings {
   whisper_device: "auto" | "cuda" | "cpu";
   whisper_language: string | null;
   port: number;
+  /** Vérifier au lancement s'il existe une version plus récente (vrai par défaut). */
+  check_updates: boolean;
   anthropic_api_key_set: boolean;
   anthropic_api_key_hint: string | null;
   key_source: "env" | "fichier" | null;
@@ -547,8 +549,28 @@ export interface PiperVoice {
   approx_mb: number | null; installed: boolean;
 }
 
+/** GET /api/update : la mise à jour publiée sur GitHub, comparée à la version installée. Jamais d'erreur HTTP pour une panne réseau : `error` est rempli. */
+export interface UpdateInfo {
+  current: string;
+  latest: string | null;
+  available: boolean;
+  /** Notes de version en texte brut (4000 caractères au plus) : jamais du HTML. */
+  notes: string;
+  published_at: string | null;
+  size: number | null;
+  page_url: string | null;
+  /** Vrai seulement dans l'application Windows installée, avec un installateur et son empreinte publiés. */
+  installable: boolean;
+  /** L'installateur de cette version est déjà téléchargé et vérifié. */
+  downloaded: boolean;
+  checked_at: string | null;
+  /** Réglage « Vérifier au lancement ». */
+  enabled: boolean;
+  error: string | null;
+}
+
 /** Corps partiel de PUT /api/settings ("" efface la clé Claude). */
-export type SettingsPatch = Partial<Pick<Settings, "claude_model" | "claude_effort" | "whisper_model" | "whisper_device" | "whisper_language" | "port">>
+export type SettingsPatch = Partial<Pick<Settings, "claude_model" | "claude_effort" | "whisper_model" | "whisper_device" | "whisper_language" | "port" | "check_updates">>
   & { anthropic_api_key?: string };
 
 /** Erreur du serveur ; `code` vient d'un `detail` structuré (ex. « claude_required »), « cancelled » pour une tâche annulée. */
@@ -656,6 +678,11 @@ export const api = {
   downloadWhisper: (size: string) => req<Job>(`/api/models/whisper/${encodeURIComponent(size)}`, { method: "POST" }),
   piperCatalog: (lang: string) => req<PiperVoice[]>(`/api/models/piper?lang=${encodeURIComponent(lang)}`),
   downloadPiper: (key: string) => req<Job>(`/api/models/piper/${encodeURIComponent(key)}`, { method: "POST" }),
+  /** Mises à jour : `force` revérifie sur GitHub (sinon le résultat gardé 6 h). Le téléchargement est une tâche annulable. */
+  getUpdate: (force = false) => req<UpdateInfo>(`/api/update?force=${force ? 1 : 0}`),
+  downloadUpdate: () => req<Job>("/api/update/download", { method: "POST" }),
+  /** Répond {ok} puis l'application se ferme dans la seconde et l'installateur prend le relais (409 + texte français si impossible). */
+  installUpdate: () => req<{ ok: boolean }>("/api/update/install", { method: "POST" }),
   export: (id: string, quality: string, fps: number | null = null, smooth = false, rangeOnly = false, container = "mp4") =>
     req<Job>(`/api/projects/${id}/export`, json("POST", { quality, fps, smooth, range_only: rangeOnly, container })),
   applyComments: (id: string) => req<Job>(`/api/projects/${id}/comments/apply`, { method: "POST" }),

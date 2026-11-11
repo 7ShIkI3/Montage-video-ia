@@ -4,6 +4,7 @@ import { api, fmtTime, ProjectSummary } from "../api";
 import { Icon } from "../icons";
 import { useStore } from "../store";
 import { ask } from "./Dialog";
+import { UpdateBanner } from "./Update";
 import { SystemBar, useSystemSummary } from "./SystemBar";
 import { EmptyHint } from "./ui/EmptyHint";
 import "../styles/home.css";
@@ -96,6 +97,8 @@ export function Home({ onOpen }: { onOpen: (id: string) => void }) {
         )}
         <a className="icon-btn" href="#/reglages" title="Réglages" aria-label="Réglages"><Icon name="settings" size={18} /></a>
       </header>
+
+      <UpdateBanner />
 
       <main className="home-main">
         <section className="home-hero" aria-label="Commencer">

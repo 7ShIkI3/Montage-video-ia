@@ -41,3 +41,17 @@ Une règle de design qui gêne se change d'abord dans `DESIGN.md`, avec la raiso
 
 Jamais de commit sur `main` : une branche, une PR, des messages conventionnels en français. Ce dépôt n'a pas
 `gh` : les PR passent par l'API GitHub avec le jeton du gestionnaire d'identifiants Git, sans jamais l'afficher.
+
+## Publier une version
+
+1. `backend/app/version.py` (`__version__`) donne le numéro à l'application : le changer, puis compléter `CHANGELOG.md`.
+   Mettre la même version dans `frontend/package.json`, `frontend/package-lock.json` (deux fois) et le `#define AppVersion`
+   de `desktop/installer.iss` : `npm run check` et pytest échouent s'ils diffèrent.
+2. Fusionner la branche dans `main` par une PR (jamais de commit sur `main`), puis `git fetch origin` : `release.py` vise
+   `origin/main` et refuse si la version de `main` n'est pas celle du fichier.
+3. Construire à partir du code fusionné : `cd frontend && npm ci && npm run build`, puis `python desktop/build.py --ffmpeg <dossier> --installer`.
+4. `python desktop/release.py --dry-run` contrôle sans rien envoyer ; `python desktop/release.py` crée la release `vX.Y.Z`
+   avec `MonteurIA-Setup-X.Y.Z.exe` et `SHA256SUMS.txt`, notes prises dans `CHANGELOG.md`, et la publie (`--draft` : brouillon).
+
+Publier une release est public : toujours demander l'accord de Raphaël avant. Les applications installées interrogent
+`releases/latest` du dépôt : ne jamais renommer l'installateur ni supprimer `SHA256SUMS.txt`.

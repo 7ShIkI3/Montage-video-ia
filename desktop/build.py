@@ -12,15 +12,49 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SEP = ";" if os.name == "nt" else ":"
-VERSION = "1.0.0"  # version affichée par l'installateur et dans « Applications installées »
+VERSION_FILE = ROOT / "backend" / "app" / "version.py"  # la seule source du numéro de version
 ICON = ROOT / "desktop" / "monteur.ico"  # redessinée par desktop/make_icon.py
+
+
+def read_version(path: Path = VERSION_FILE) -> str:
+    """Numéro de version lu dans backend/app/version.py par expression régulière (sans importer l'application)."""
+    m = re.search(r"""^__version__\s*=\s*["'](\d+\.\d+\.\d+)["']\s*$""", path.read_text(encoding="utf-8"), re.MULTILINE)
+    if not m:
+        raise SystemExit(f"{path} : __version__ = \"X.Y.Z\" introuvable")
+    return m.group(1)
+
+
+VERSION = read_version()  # version affichée par l'installateur, dans « Applications installées » et sur l'exe
+
+
+def version_resource(version: str) -> str:
+    """Contenu d'un fichier « version » PyInstaller : l'onglet Détails des propriétés de l'exe affiche la version."""
+    nums = tuple(int(n) for n in version.split(".")) + (0,)
+    return f"""# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers={nums}, prodvers={nums}, mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[
+    StringFileInfo([StringTable('040904B0', [
+      StringStruct('CompanyName', 'Monteur IA'),
+      StringStruct('FileDescription', 'Monteur IA'),
+      StringStruct('FileVersion', '{version}'),
+      StringStruct('InternalName', 'Monteur IA'),
+      StringStruct('OriginalFilename', 'Monteur IA.exe'),
+      StringStruct('ProductName', 'Monteur IA'),
+      StringStruct('ProductVersion', '{version}')])]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+"""
 
 
 def find_iscc() -> Path | None:
@@ -92,7 +126,10 @@ def main() -> int:
         from app.media import demo
         demo.render(demo_clip)
     import PyInstaller.__main__ as pyi
+    version_file = Path(tempfile.mkdtemp(prefix="monteur-version-")) / "version.txt"
+    version_file.write_text(version_resource(VERSION), encoding="utf-8")
     opts = [
+        *(["--version-file", str(version_file)] if os.name == "nt" else []),
         "--add-data", f"{demo_clip}{SEP}assets",
         str(ROOT / "desktop" / "launcher.py"),
         "--name", "Monteur IA", "--noconfirm", "--windowed",

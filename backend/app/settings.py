@@ -1,4 +1,4 @@
-"""Réglages de l'utilisateur (clé Claude, modèles, Whisper, port), rangés dans DATA_DIR/settings.json.
+"""Réglages de l'utilisateur (clé Claude, modèles, Whisper, port, vérification des mises à jour), rangés dans DATA_DIR/settings.json.
 
 Priorité : variable d'environnement > fichier > valeur par défaut. La clé n'est jamais renvoyée ni journalisée.
 """
@@ -34,6 +34,7 @@ class Settings(BaseModel):
     whisper_device: str = "auto"  # auto | cuda | cpu
     whisper_language: str | None = None  # None = détection auto
     port: int = 8000
+    check_updates: bool = True  # au lancement, prévenir quand une version plus récente est publiée
 
 
 _current = Settings()

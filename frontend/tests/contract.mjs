@@ -37,7 +37,7 @@ const TESTIDS = ["director-chat", "chat-vision", "chat-live", "multi-note", "liv
 for (const t of TESTIDS) {
   if (!new RegExp(`data-testid=(?:"${esc(t)}"|\\{["'\`]${esc(t)}["'\`]\\})`).test(allTsx)) fail(`data-testid « ${t} » absent des .tsx`);
 }
-const IDS = ["comment-box", "source-title", "lib-title", "claude", "transcription", "voix", "serveur", "systeme"];
+const IDS = ["comment-box", "source-title", "lib-title", "claude", "transcription", "voix", "serveur", "systeme", "apropos"];
 for (const i of IDS) {
   if (!new RegExp(`[\\s{]id=(?:"${esc(i)}"|\\{["'\`]${esc(i)}["'\`]\\})`).test(allTsx)) fail(`id « ${i} » absent des .tsx`);
 }
@@ -124,6 +124,24 @@ for (const n of ["stage.css", "shell.css", "ui.css"]) {
   if (/backdrop-filter/.test(css)) fail(`${rel(f)} : backdrop-filter interdit`);
   if (/#[0-9a-f]{3,8}\b/i.test(css) || /\brgba?\(/i.test(css)) fail(`${rel(f)} : couleur en dur (utiliser un jeton de :root)`);
   if (n === "stage.css" && /(?:^|[\s,>+~{}])\.(?:frame|fxwrap)(?![\w-])/.test(css)) fail(`${rel(f)} : aucune règle sur le cadre vidéo ni sur sa couche d'effets`);
+}
+
+// 9. Mises à jour : notes en texte brut, version jamais écrite en dur, une seule source de version
+if (/dangerouslySetInnerHTML|\.innerHTML\s*=|insertAdjacentHTML/.test(allCode)) fail("aucun HTML injecté dans src/ (les notes de version sont du texte brut)");
+const updateTsx = read(join(src, "components", "Update.tsx"));
+if (!/\{notes \|\| "Pas de notes/.test(updateTsx)) fail("Update.tsx : les notes de version doivent être rendues comme texte ({notes})");
+if (!/white-space:\s*pre-wrap/.test(stripCss(read(join(src, "styles", "update.css"))))) fail("styles/update.css : .update-notes doit garder les retours à la ligne (white-space: pre-wrap)");
+if (!/SKIP_KEY\s*=\s*"monteur\.update\.skip"/.test(read(join(src, "update.ts")))) fail("update.ts : la clé de la version ignorée doit rester « monteur.update.skip »");
+if (!/mise_a_jour\s*:/.test(store)) fail("store.ts : KIND_LABELS doit nommer le type de tâche « mise_a_jour »");
+for (const f of tsx) {
+  const hit = /["'`]v?\d+\.\d+\.\d+["'`]/.exec(read(f));
+  if (hit) fail(`${rel(f)} : numéro de version en dur (${hit[0]}) ; la version affichée vient de l'API`);
+}
+{
+  const pkg = JSON.parse(read(join(root, "package.json")));
+  let backend = null;
+  try { backend = /^__version__\s*=\s*"([^"]+)"/m.exec(readFileSync(join(root, "..", "backend", "app", "version.py"), "utf8"))?.[1] ?? null; } catch { /* dépôt incomplet : pas de comparaison */ }
+  if (backend && pkg.version !== backend) fail(`package.json (${pkg.version}) doit suivre backend/app/version.py (${backend})`);
 }
 
 if (errors.length) {

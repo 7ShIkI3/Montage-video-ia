@@ -31,7 +31,7 @@ export const ask = {
 };
 
 /** Vrai quand un dialogue est ouvert (les raccourcis clavier s'en servent pour se taire). */
-export const dialogOpen = () => pending !== null;
+export const dialogOpen = () => pending !== null || (typeof document !== "undefined" && !!document.querySelector("dialog.update-dlg[open]"));
 
 export function DialogHost() {
   const p = useSyncExternalStore(subscribe, get, get);

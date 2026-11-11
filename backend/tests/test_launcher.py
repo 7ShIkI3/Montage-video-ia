@@ -85,3 +85,84 @@ def test_redirect_std_rotates_a_big_log(tmp_path):
         f, sys.stdout, sys.stderr = sys.stdout, out, err
         f.close()
     assert log.read_text(encoding="utf-8").startswith("court\n") and (tmp_path / "monteur.log.1").stat().st_size > 1000
+
+
+# --- Fermeture demandée par le backend (mise à jour) --------------------------------------------
+
+class FakeTimer:
+    """Remplace threading.Timer : note le délai et ne tire jamais (le vrai appellerait os._exit en plein test)."""
+    created: list = []
+
+    def __init__(self, delay, fn, args=(), kwargs=None):
+        self.delay, self.fn, self.args, self.daemon = delay, fn, args, False
+        FakeTimer.created.append(self)
+
+    def start(self):
+        pass
+
+
+def test_exit_callback_destroys_windows_and_wakes_the_loop(monkeypatch):
+    import threading
+    import types
+    launcher = _launcher()
+    FakeTimer.created = []
+    monkeypatch.setattr(launcher.threading, "Timer", FakeTimer)
+    destroyed = []
+
+    class Window:
+        def __init__(self, name, fail=False):
+            self.name, self.fail = name, fail
+
+        def destroy(self):
+            if self.fail:
+                raise RuntimeError("déjà fermée")
+            destroyed.append(self.name)
+
+    quit_event = threading.Event()
+    webview = types.SimpleNamespace(windows=[Window("a", fail=True), Window("b")])
+    launcher.make_exit(quit_event, webview)()
+    assert quit_event.is_set() and destroyed == ["b"]  # une fenêtre qui refuse ne bloque pas les autres
+    # Garde-fou : si le processus traîne, il est coupé après 20 s.
+    (t,) = FakeTimer.created
+    assert t.delay == 20.0 and t.fn is os._exit and t.args == (0,) and t.daemon is True
+
+
+def test_exit_callback_without_window_and_without_safety_net(monkeypatch):
+    import threading
+    launcher = _launcher()
+    FakeTimer.created = []
+    monkeypatch.setattr(launcher.threading, "Timer", FakeTimer)
+    quit_event = threading.Event()
+    launcher.make_exit(quit_event, None, hard_exit_after=None)()  # mode navigateur
+    assert quit_event.is_set() and FakeTimer.created == []
+
+
+def test_main_registers_the_exit_callback_and_stops_the_server(monkeypatch):
+    """Mode navigateur : une demande de fermeture du backend sort de la boucle et arrête le serveur."""
+    import threading
+    import types
+    from app import lifecycle
+    launcher = _launcher()
+    FakeTimer.created = []
+    monkeypatch.setattr(launcher.threading, "Timer", FakeTimer)
+    server = types.SimpleNamespace(should_exit=False)
+    joined = []
+    thread = types.SimpleNamespace(join=lambda timeout=None: joined.append(timeout))
+    monkeypatch.setattr(launcher, "setup_env", lambda: None)
+    monkeypatch.setattr(launcher, "choose_port", lambda wanted: 8765)
+    monkeypatch.setattr(launcher, "serve", lambda port: (server, thread))
+    monkeypatch.setattr(launcher, "wait_ready", lambda url: True)
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda url: True)
+    monkeypatch.setenv("MONTEUR_DATA_DIR", os.environ["MONTEUR_DATA_DIR"])
+    result = []
+    t = threading.Thread(target=lambda: result.append(launcher.main(["--browser"])), daemon=True)
+    t.start()
+    import time
+    end = time.time() + 10
+    while not lifecycle.can_exit() and time.time() < end:
+        time.sleep(0.02)
+    assert lifecycle.can_exit(), "le lanceur n'a pas enregistré de rappel de sortie"
+    assert lifecycle.request_exit() is True
+    t.join(10)
+    assert result == [0] and server.should_exit is True and joined == [5]
+    assert lifecycle.can_exit() is False  # rappel retiré à la sortie

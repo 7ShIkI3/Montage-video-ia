@@ -15,14 +15,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import anyio
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from urllib.parse import urlparse
+
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config, cuda, doctor, downloads, pipeline, settings, storage, timeline_ops
+from .version import __version__
 from .analysis import transcribe as tr_mod
+from . import updates
 from .jobs import manager
 from .media import ffmpeg
 from .models import EditSettings, Project, ResearchNote, Timeline
@@ -35,6 +39,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    try:
+        updates.cleanup_old()  # installateurs périmés et téléchargements interrompus
+    except Exception:
+        logging.getLogger(__name__).warning("Nettoyage des mises à jour impossible", exc_info=True)
     yield
     # À l'arrêt, les tâches encore actives sont annulées : ffmpeg et Whisper ne doivent pas survivre à l'app.
     n = manager.cancel_all()
@@ -43,7 +51,7 @@ async def _lifespan(_app: FastAPI):
     manager.flush()
 
 
-app = FastAPI(title="Monteur IA", version="0.1.0", lifespan=_lifespan)
+app = FastAPI(title="Monteur IA", version=__version__, lifespan=_lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _PROJECT_ROUTE = re.compile(r"^/api/projects/([A-Za-z0-9_]+)(/.*)?$")
@@ -111,6 +119,7 @@ def health():
     pub = settings.public()
     return {
         "ok": True,
+        "version": __version__,
         "claude": config.claude_available(),
         "claude_model": config.CLAUDE_MODEL,
         "whisper_model": config.WHISPER_MODEL,
@@ -154,6 +163,45 @@ def put_settings(body: dict):
     except ValueError as e:
         raise HTTPException(422, str(e))
     return settings.public()
+
+
+# --- Mises à jour ---------------------------------------------------------------------
+
+@app.get("/api/update")
+def get_update(force: int = 0):
+    """État des mises à jour (gardé 6 h ; `force=1` revérifie). Une panne réseau remplit `error`, jamais une erreur HTTP."""
+    return updates.status(bool(force))
+
+
+def _own_page_only(request: Request) -> None:
+    """Les routes qui téléchargent ou installent ne répondent qu'à la page de l'application elle-même. Le CORS est
+    ouvert à tous : sans ce contrôle, n'importe quelle page web ouverte dans le navigateur pourrait les déclencher
+    (requête « simple » sans préflight). On refuse (403) une origine étrangère, et un nom d'hôte qui n'est pas local
+    (rebinding DNS)."""
+    host = (request.headers.get("host") or "").lower()
+    if (urlparse("//" + host).hostname or "") not in ("127.0.0.1", "localhost", "::1"):
+        raise HTTPException(403, "Cette action n'est permise que depuis l'application elle-même.")
+    origin = request.headers.get("origin")
+    if origin is not None and urlparse(origin).netloc.lower() != host:
+        raise HTTPException(403, "Cette action n'est permise que depuis l'application elle-même.")
+
+
+@app.post("/api/update/download", dependencies=[Depends(_own_page_only)])
+def update_download():
+    """Télécharge et vérifie l'installateur de la version publiée (tâche « mise_a_jour »), sans l'installer."""
+    try:
+        return updates.start_download()
+    except updates.UpdateError as e:
+        raise HTTPException(e.status, e.message)
+
+
+@app.post("/api/update/install", dependencies=[Depends(_own_page_only)])
+def update_install():
+    """Lance l'installateur téléchargé, puis l'application se ferme dans la seconde. 409 si ce n'est pas possible."""
+    try:
+        return updates.install()
+    except updates.UpdateError as e:
+        raise HTTPException(e.status, e.message)
 
 
 def _ping_claude() -> None:
