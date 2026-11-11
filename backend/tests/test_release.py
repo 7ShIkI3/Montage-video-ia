@@ -56,6 +56,10 @@ class FakeGitHub:
         self.shrink = False
         self.assets: list[dict] = []
         self.tag_ref: dict | None = None  # réponse de /git/ref/tags/<tag> (None : le tag n'existe pas)
+        self.tag_objects: dict[str, dict] = {}  # objets « tag annoté » de /git/tags/<sha>
+        self.compare: str | None = "identical"  # statut de /compare/<commit>...main (None : commit inconnu)
+        self.digests: str | None = None  # "ok" ou "faux" : GitHub joint une empreinte aux fichiers reçus
+        self.patches: list[dict] = []
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -93,6 +97,12 @@ class FakeGitHub:
                     return self._json(200, outer.tag_ref) if outer.tag_ref else self._json(404, {"message": "Not Found"})
                 if p.startswith("/repos/o/r/releases?"):
                     return self._json(200, outer.drafts)
+                if p.startswith("/repos/o/r/compare/") and p.endswith("...main"):
+                    return self._json(200, {"status": outer.compare}) if outer.compare else self._json(404, {"message": "Not Found"})
+                m = re.fullmatch(r"/repos/o/r/git/tags/(\w+)", p)
+                if m:
+                    obj = outer.tag_objects.get(m.group(1))
+                    return self._json(200, obj) if obj else self._json(404, {"message": "Not Found"})
                 m = re.fullmatch(r"/repos/o/r/releases/(\d+)", p)
                 if m:
                     return self._json(200, {"id": int(m.group(1)), "assets": outer.assets})
@@ -111,13 +121,17 @@ class FakeGitHub:
                     outer.uploads[name] = data
                     outer.upload_headers[name] = dict(self.headers)
                     stored = data[:-1] if outer.shrink and name.endswith(".exe") else data
-                    outer.assets.append({"name": name, "size": len(stored), "state": "uploaded"})
+                    asset = {"name": name, "size": len(stored), "state": "uploaded"}
+                    if outer.digests:
+                        asset["digest"] = "sha256:" + (hashlib.sha256(stored).hexdigest() if outer.digests == "ok" else "0" * 64)
+                    outer.assets.append(asset)
                     return self._json(201, {"name": name})
                 self._json(404, {"message": "Not Found"})
 
             def do_PATCH(self):
                 self._note()
                 outer.patched = json.loads(self._body())
+                outer.patches.append(outer.patched)
                 self._json(200, {"id": 7, "html_url": "http://exemple.test/release/7"})
 
             def do_DELETE(self):
@@ -269,7 +283,32 @@ def test_resumes_a_leftover_draft(repo, gh):
     assert run(repo, gh=gh) == 0
     assert gh.created is None  # pas de seconde release
     assert gh.deleted == ["/repos/o/r/releases/assets/55"]  # seul l'ancien fichier du même nom est remplacé
-    assert set(gh.uploads) == {"MonteurIA-Setup-1.1.0.exe", "SHA256SUMS.txt"} and gh.patched is not None
+    assert set(gh.uploads) == {"MonteurIA-Setup-1.1.0.exe", "SHA256SUMS.txt"}
+    # Le brouillon, qui peut dater d'un autre commit, est réaligné sur le code de l'installateur, puis publié.
+    assert gh.patches[0]["target_commitish"] == COMMIT and gh.patches[0]["draft"] is True and gh.patches[0]["body"].startswith("- Mises à jour")
+    assert gh.patches[-1] == {"draft": False, "make_latest": "true"}
+
+
+def test_accepts_an_annotated_tag_on_the_same_commit(repo, gh):
+    gh.tag_ref = {"ref": "refs/tags/v1.1.0", "object": {"type": "tag", "sha": "b" * 40}}
+    gh.tag_objects["b" * 40] = {"tag": "v1.1.0", "object": {"type": "commit", "sha": COMMIT}}
+    assert run(repo, gh=gh) == 0 and gh.patched is not None
+    gh.tag_objects["b" * 40] = {"tag": "v1.1.0", "object": {"type": "commit", "sha": "f" * 40}}
+    gh.patched = None
+    assert run(repo, gh=gh) == 1 and gh.patched is None
+
+
+def test_github_digest_is_checked_when_given(repo, gh, capsys):
+    gh.digests = "ok"
+    assert run(repo, gh=gh) == 0
+    assert "empreintes SHA-256 confirmées par GitHub" in capsys.readouterr().out
+
+
+def test_a_file_received_with_another_digest_blocks_the_publication(repo, gh, capsys):
+    gh.digests = "faux"
+    assert run(repo, gh=gh) == 1
+    assert gh.patched is None  # jamais publiée
+    assert "autre empreinte" in capsys.readouterr().err
 
 
 def test_a_file_received_smaller_than_sent_blocks_the_publication(repo, gh, capsys):
@@ -314,6 +353,63 @@ def test_origin_main_reads_the_version_at_that_commit(monkeypatch):
     answers = {("rev-parse", "origin/main"): COMMIT, ("show", "origin/main:backend/app/version.py"): '__version__ = "1.1.0"\n'}
     monkeypatch.setattr(release, "git", lambda root, *a: answers[a])
     assert release.origin_main(ROOT) == (COMMIT, "1.1.0")
+
+
+# --- Sur un runner GitHub Actions (--ci) -------------------------------------------------------
+
+CI_TOKEN = "jeton-du-workflow"
+CI_COMMIT = "c" * 40
+
+
+@pytest.fixture
+def ci(repo, monkeypatch, tmp_path):
+    """Un runner : jeton, dépôt et commit dans l'environnement ; ni `git credential` ni origin/main ne sont consultés."""
+    def forbidden(*a, **k):
+        raise AssertionError("--ci ne doit lire ni le gestionnaire d'identifiants ni origin/main")
+    monkeypatch.setattr(release, "get_token", forbidden)
+    monkeypatch.setattr(release, "origin_main", forbidden)
+    summary = tmp_path / "resume.md"
+    for k, v in (("GITHUB_TOKEN", CI_TOKEN), ("GITHUB_REPOSITORY", "o/r"), ("GITHUB_SHA", CI_COMMIT), ("GITHUB_STEP_SUMMARY", str(summary))):
+        monkeypatch.setenv(k, v)
+    return summary
+
+
+def test_ci_draft_targets_the_built_commit_with_the_workflow_token(repo, gh, ci, capsys):
+    assert release.main(["--ci", "--draft", "--api", gh.url], root=repo) == 0  # le dépôt vient de GITHUB_REPOSITORY
+    out = capsys.readouterr()
+    assert gh.created["target_commitish"] == CI_COMMIT and gh.created["name"] == "Monteur IA 1.1.0" and gh.created["draft"] is True
+    assert gh.patched is None and set(gh.uploads) == {"MonteurIA-Setup-1.1.0.exe", "SHA256SUMS.txt"}
+    assert gh.auth == {f"Bearer {CI_TOKEN}"} and CI_TOKEN not in out.out + out.err
+    text = ci.read_text(encoding="utf-8")
+    assert "en brouillon" in text and hashlib.sha256(INSTALLER).hexdigest() in text and CI_COMMIT in text
+
+
+def test_ci_publishes_a_commit_of_main(repo, gh, ci):
+    gh.compare = "ahead"  # main est en avance sur le commit construit : il le contient
+    gh.tag_ref = {"ref": "refs/tags/v1.1.0", "object": {"type": "commit", "sha": CI_COMMIT}}  # le tag poussé qui a lancé le workflow
+    assert run(repo, "--ci", gh=gh) == 0
+    assert gh.created["target_commitish"] == CI_COMMIT and gh.patched == {"draft": False, "make_latest": "true"}
+    assert "publiée" in ci.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("status", ["behind", "diverged", None])
+def test_ci_never_publishes_a_commit_outside_main(repo, gh, ci, capsys, status):
+    gh.compare = status
+    assert run(repo, "--ci", gh=gh) == 1
+    assert "n'est pas dans main" in capsys.readouterr().err
+    assert gh.created is None and gh.uploads == {} and gh.patches == []
+    # En brouillon, c'est permis, et le titre dit de ne pas publier.
+    assert run(repo, "--ci", "--draft", gh=gh) == 0
+    assert gh.created["name"] == "Monteur IA 1.1.0 (essai hors de main, ne pas publier)" and gh.patched is None
+
+
+def test_ci_needs_the_workflow_environment(repo, gh, ci, monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_TOKEN", "")
+    assert run(repo, "--ci", gh=gh) == 1
+    assert "GITHUB_TOKEN est vide" in capsys.readouterr().out and gh.requests == []
+    monkeypatch.setenv("GITHUB_TOKEN", CI_TOKEN)
+    monkeypatch.delenv("GITHUB_SHA")
+    assert run(repo, "--ci", gh=gh) == 1 and gh.requests == []
 
 
 # --- build.py ----------------------------------------------------------------------------------

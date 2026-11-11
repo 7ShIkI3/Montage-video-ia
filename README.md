@@ -225,16 +225,37 @@ dans `<données>/music` ; un fichier dont le nom contient le style (`vlog`, `sho
 1. Change `__version__` dans `backend/app/version.py` et ajoute la section de la version dans `CHANGELOG.md`. Mets la
    même version dans `frontend/package.json` et `frontend/package-lock.json` (deux fois), et dans le
    `#define AppVersion` de `desktop/installer.iss` : `npm run check` et pytest vérifient qu'ils concordent.
-2. Fusionne la branche de la version dans `main` (par une PR, on ne commite pas sur `main`), puis `git fetch origin` :
-   `release.py` vise le commit de `origin/main` et refuse de partir si la version de `main` n'est pas celle du fichier.
-3. Construis l'installateur (ci-dessus) à partir de ce code fusionné, sinon le tag pointerait sur un autre code que
-   celui de l'exe.
-4. `python desktop/release.py --dry-run` fait les contrôles locaux sans rien envoyer.
-5. `python desktop/release.py` écrit `dist/installer/SHA256SUMS.txt` (lignes `<sha256>  <nom du fichier>`), crée la
-   release `vX.Y.Z` sur GitHub avec les notes de la section de `CHANGELOG.md` (`## X.Y.Z - AAAA-MM-JJ`), y téléverse
-   `MonteurIA-Setup-X.Y.Z.exe` et `SHA256SUMS.txt`, puis la publie (`--draft` la laisse en brouillon). Le jeton GitHub
-   vient de `git credential fill`, comme pour `git push`. C'est cette release que les applications installées
-   interrogent (`https://api.github.com/repos/7ShIkI3/Montage-video-ia/releases/latest`) pour proposer la mise à jour.
+2. Fusionne la branche de la version dans `main` (par une PR, on ne commite pas sur `main`).
+3. Sur GitHub, onglet **Actions**, workflow **Publier une version**, bouton **Run workflow** sur `main`, en laissant
+   « brouillon » coché. Un runner GitHub contrôle l'interface, construit l'application et l'installateur, installe ce
+   dernier dans un dossier jetable et démarre l'application, puis crée la release `vX.Y.Z` **en brouillon** avec
+   `MonteurIA-Setup-X.Y.Z.exe`, `SHA256SUMS.txt` (lignes `<sha256>  <nom du fichier>`) et les notes de la section de
+   `CHANGELOG.md` (`## X.Y.Z - AAAA-MM-JJ`). Compte une dizaine de minutes ; rien n'est envoyé depuis ton poste.
+4. Télécharge l'installateur du brouillon, essaie-le, puis publie la release sur GitHub (« Publish release », en la
+   laissant marquée « latest »). C'est cette release que les applications installées interrogent
+   (`https://api.github.com/repos/7ShIkI3/Montage-video-ia/releases/latest`) pour proposer la mise à jour.
+
+Raccourci, sans passer par un brouillon : pousser le tag de la version sur le commit de `main` lance le même workflow
+et **publie** la release à la fin.
+
+```powershell
+git fetch origin
+git tag v1.2.0 origin/main
+git push origin v1.2.0
+```
+
+Le workflow ([.github/workflows/release.yml](.github/workflows/release.yml)) refuse un tag qui n'est pas celui de
+`backend/app/version.py`, une version sans section dans `CHANGELOG.md`, un tag qui a déjà une release publiée, et
+toute publication d'un commit qui n'est pas dans `main` (hors de `main`, il ne fait qu'un brouillon dont le titre dit
+de ne pas le publier). Son seul secret est le `GITHUB_TOKEN` du run. FFmpeg n'est pas sur le runner : le workflow
+télécharge la version fixée par `FFMPEG_VERSION` et vérifie son empreinte `FFMPEG_SHA256`.
+
+**Voie de secours, depuis un poste** (si GitHub Actions est indisponible) : après `git fetch origin`, construis
+l'installateur à partir du code fusionné (ci-dessus), puis `python desktop/release.py --dry-run` fait les contrôles
+sans rien envoyer et `python desktop/release.py` crée la même release et la publie (`--draft` la laisse en brouillon).
+Le script vise le commit de `origin/main`, refuse de partir si la version de `main` n'est pas celle du fichier, et lit
+le jeton GitHub par `git credential fill`, comme `git push`. L'installateur pèse 1,3 Go et son envoi ne se reprend
+pas s'il se coupe : avec une connexion lente, préfère le workflow.
 
 Publier est public et définitif : on le fait avec l'accord du propriétaire du dépôt.
 
@@ -285,6 +306,7 @@ frontend/src/                     React, TypeScript, Vite, Zustand : components/
                                   store.ts, api.ts, labels.ts (libellés), styles/
 frontend/tests/                   tests du store et contrôle de cohérence de l'interface
 desktop/                          launcher.py, build.py, release.py, installer.iss, make_icon.py
+.github/workflows/release.yml     construit l'installateur sur un runner GitHub et crée la release
 docs/design/DESIGN.md             règles de design
 scripts/                          dev.sh, make_pvp_clip.py
 .claude/                          launch.json (serveurs de développement), agents de relecture d'interface

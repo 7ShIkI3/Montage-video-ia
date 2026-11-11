@@ -47,11 +47,23 @@ Jamais de commit sur `main` : une branche, une PR, des messages conventionnels e
 1. `backend/app/version.py` (`__version__`) donne le numéro à l'application : le changer, puis compléter `CHANGELOG.md`.
    Mettre la même version dans `frontend/package.json`, `frontend/package-lock.json` (deux fois) et le `#define AppVersion`
    de `desktop/installer.iss` : `npm run check` et pytest échouent s'ils diffèrent.
-2. Fusionner la branche dans `main` par une PR (jamais de commit sur `main`), puis `git fetch origin` : `release.py` vise
-   `origin/main` et refuse si la version de `main` n'est pas celle du fichier.
-3. Construire à partir du code fusionné : `cd frontend && npm ci && npm run build`, puis `python desktop/build.py --ffmpeg <dossier> --installer`.
-4. `python desktop/release.py --dry-run` contrôle sans rien envoyer ; `python desktop/release.py` crée la release `vX.Y.Z`
-   avec `MonteurIA-Setup-X.Y.Z.exe` et `SHA256SUMS.txt`, notes prises dans `CHANGELOG.md`, et la publie (`--draft` : brouillon).
+2. Fusionner la branche dans `main` par une PR (jamais de commit sur `main`).
+3. Laisser GitHub Actions construire et déposer l'installateur (`.github/workflows/release.yml`) : l'envoyer depuis le
+   poste de Raphaël prend des heures (1,3 Go, connexion lente) et ne se reprend pas. Deux déclencheurs :
+   - à la main, onglet Actions, « Publier une version », sur `main`, « brouillon » coché : release `vX.Y.Z` en
+     brouillon, avec `MonteurIA-Setup-X.Y.Z.exe`, `SHA256SUMS.txt` et les notes de `CHANGELOG.md` ; on l'essaie, puis
+     on la publie sur GitHub ;
+   - `git tag vX.Y.Z origin/main && git push origin vX.Y.Z` : même construction, release publiée à la fin.
+4. Voie de secours depuis le poste : `git fetch origin`, `cd frontend && npm ci && npm run build`,
+   `python desktop/build.py --ffmpeg <dossier> --installer`, puis `python desktop/release.py --dry-run` (contrôles sans
+   rien envoyer) et `python desktop/release.py` (`--draft` : brouillon). `release.py` vise `origin/main` et refuse si la
+   version de `main` n'est pas celle du fichier.
 
-Publier une release est public : toujours demander l'accord de Raphaël avant. Les applications installées interrogent
-`releases/latest` du dépôt : ne jamais renommer l'installateur ni supprimer `SHA256SUMS.txt`.
+Le workflow publie avec `desktop/release.py --ci` : garder les contrôles dans ce script (testé par
+`backend/tests/test_release.py`), pas dans le YAML. Un fichier de workflow ne se lance à la main qu'une fois présent
+dans `main` ; pour l'essayer avant la fusion, lui ajouter le temps de l'essai un déclencheur `push` sur sa branche :
+hors de `main`, il ne produit qu'un brouillon marqué « ne pas publier ».
+
+Publier une release est public : toujours demander l'accord de Raphaël avant (lancer le workflow sans « brouillon » ou
+pousser un tag `v*`, c'est publier). Les applications installées interrogent `releases/latest` du dépôt : ne jamais
+renommer l'installateur ni supprimer `SHA256SUMS.txt`.
