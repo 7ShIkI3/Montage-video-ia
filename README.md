@@ -230,7 +230,7 @@ dans `<données>/music` ; un fichier dont le nom contient le style (`vlog`, `sho
    « brouillon » coché. Un runner GitHub contrôle l'interface, construit l'application et l'installateur, installe ce
    dernier dans un dossier jetable et démarre l'application, puis crée la release `vX.Y.Z` **en brouillon** avec
    `MonteurIA-Setup-X.Y.Z.exe`, `SHA256SUMS.txt` (lignes `<sha256>  <nom du fichier>`) et les notes de la section de
-   `CHANGELOG.md` (`## X.Y.Z - AAAA-MM-JJ`). Rien n'est envoyé depuis ton poste.
+   `CHANGELOG.md` (`## X.Y.Z - AAAA-MM-JJ`). Compte une dizaine de minutes ; rien n'est envoyé depuis ton poste.
 4. Télécharge l'installateur du brouillon, essaie-le, puis publie la release sur GitHub (« Publish release », en la
    laissant marquée « latest »). C'est cette release que les applications installées interrogent
    (`https://api.github.com/repos/7ShIkI3/Montage-video-ia/releases/latest`) pour proposer la mise à jour.

@@ -30,7 +30,6 @@ on:
         default: true
   push:
     tags: ["v*"]
-    branches: ["ci/release-github-actions"]  # ESSAI TEMPORAIRE, retiré avant la fusion : brouillon seulement
 
 permissions:
   contents: read
@@ -40,7 +39,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Tout ce qui peut refuser la publication est contrôlé ici, en quelques secondes, avant les 40 minutes de construction.
+  # Tout ce qui peut refuser la publication est contrôlé ici, en quelques secondes, avant les 10 minutes de construction.
   controles:
     name: Version, tag et notes
     runs-on: ubuntu-latest
@@ -146,7 +145,7 @@ jobs:
               throw "$f est introuvable : Inno Setup 6 n'est plus fourni par l'image du runner. Ajouter une étape qui l'installe (choco install innosetup)."
             }
           }
-          "Inno Setup : $((Get-Item $iscc).VersionInfo.ProductVersion)"
+          "Inno Setup 6 : $iscc"
           Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{n = 'Libre (Go)'; e = { [math]::Round($_.Free / 1GB, 1) } }, @{n = 'Utilisé (Go)'; e = { [math]::Round($_.Used / 1GB, 1) } }
 
       - name: Interface (contrôles, puis construction)
@@ -197,7 +196,7 @@ jobs:
           $dir = Join-Path $env:RUNNER_TEMP 'essai-installation'
           $data = Join-Path $env:RUNNER_TEMP 'essai-donnees'
           $log = Join-Path $env:RUNNER_TEMP 'installation.log'
-          "Installateur : {0:N0} Mo" -f ((Get-Item $setup).Length / 1MB)
+          "Installateur : {0:F0} Mo" -f ((Get-Item $setup).Length / 1e6)
           if (-not (Test-Path 'dist\Monteur IA\_internal\nvidia')) { throw "Les bibliothèques NVIDIA ne sont pas dans l'application construite." }
 
           $install = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS /DIR=`"$dir`" /LOG=`"$log`""
@@ -208,7 +207,7 @@ jobs:
           foreach ($f in 'Monteur IA.exe', '_internal\bin\ffmpeg.exe', '_internal\bin\ffprobe.exe', '_internal\assets\demo_pvp.mp4', '_internal\frontend\dist\index.html') {
             if (-not (Test-Path (Join-Path $dir $f))) { throw "Fichier absent après l'installation : $f" }
           }
-          "Installé : {0:N0} Mo dans $dir" -f ((Get-ChildItem $dir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
+          "Installé : {0:F0} Mo dans $dir" -f ((Get-ChildItem $dir -Recurse -File | Measure-Object Length -Sum).Sum / 1e6)
 
           # --browser : pas de fenêtre native sur un runner. Le serveur, l'interface et FFmpeg sont ceux de l'application installée.
           $env:MONTEUR_DATA_DIR = $data
