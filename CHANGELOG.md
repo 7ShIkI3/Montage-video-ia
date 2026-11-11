@@ -2,9 +2,6 @@
 
 ## 1.1.0 - 2026-11-11
 
-Ces notes comparent au code de la version 1.0.0 étiquetée le 4 novembre. Un installateur 1.0.0 construit plus tard peut
-déjà contenir une partie de ces nouveautés.
-
 - **Installateur Windows** : un seul fichier `MonteurIA-Setup-<version>.exe`, sans droits d'administrateur, avec
   raccourcis et désinstallation dans « Applications installées ». Tes projets (`Documents\Monteur IA`) ne sont jamais
   touchés.
@@ -34,7 +31,6 @@ déjà contenir une partie de ces nouveautés.
   transcription sur carte graphique, palette de commandes.
 - **Fiabilité** : diagnostic du poste, sauvegardes automatiques du projet, plus de fenêtres de console dans
   l'application installée, journal qui dit quand l'application s'arrête.
-- **Ménage** : `PLAN.md`, une feuille de route périmée, est retiré du dépôt.
 
 ## 1.0.0 - 2026-11-04
 
