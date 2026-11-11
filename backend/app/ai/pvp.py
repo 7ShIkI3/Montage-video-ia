@@ -9,9 +9,15 @@
 2. Chaque combo devient un plan, plus un ralenti sur le coup final (velocity edit).
 3. Les durées sont calées sur la grille de temps de la musique : chaque coupe tombe sur un temps.
 4. Habillage sobre, pour que le final ressorte : une secousse sur le coup final de chaque combo et sur son
-   coup le plus fort, des coupes franches sur le temps (un seul flash, à l'entrée du meilleur combo), une seule
-   carte « COMBO xN » (le meilleur), un aperçu du meilleur combo en accroche, le pic de la musique posé sur
-   une coupe ; musique au tempo (générée si aucune n'est choisie).
+   coup le plus fort, des coupes franches sur le temps, une seule carte « COMBO xN » (le meilleur, 1,6 s au plus, avec
+   le nombre de coups montrés), un aperçu du moment fort en accroche ; musique au tempo (générée si aucune n'est choisie).
+   La pile complète (ralenti, contraste, secousse, étincelles, flash, onde, zoom, boom) sert un seul moment, le kill s'il
+   y en a un, sinon le meilleur combo ; l'autre ralenti reçoit une variante légère. Le pic de la musique se pose sur le
+   kill, sinon sur une coupe.
+5. Ce qu'on monte d'une rafale est borné : jamais un passage où la vie mesurée du joueur chute de plus d'un cœur (un kill
+   gardé sans preuve que le joueur le donne ne montre que ses derniers coups, puis son ralenti), et un plan de combo,
+   ralenti compris, tient dans `PLAN_MAX` (à `SPAN_MIN_RALENTI` de coups près) : un combo long est réduit à sa portion
+   la plus dense, qui démarre sur un coup.
 """
 from __future__ import annotations
 
@@ -31,8 +37,18 @@ from . import jury
 DEFAULT_BPM = 128
 CUT = "flash"  # la seule transition de l'edit, à l'entrée du meilleur combo ; ailleurs, coupes franches sur le temps
 SHAKES_PER_COMBO = 2  # coup final compris
-HOLD_BEST = 0.9  # secondes gardées après le coup final du meilleur combo : le temps de le voir
-SLOW = 0.4  # vitesse du ralenti sur le coup final
+HOLD_BEST = 0.9  # secondes gardées après le coup final du moment fort : le temps de le voir
+SLOW = 0.4  # vitesse du ralenti sur le coup final du moment fort (kill, sinon meilleur combo)
+SLOW_LEGER = 0.6  # ralenti des autres temps forts : plus doux, pour que la pile complète ne serve qu'une fois
+LEAD = 0.2  # secondes avant le premier coup d'un plan : un plan démarre sur un coup, pas sur un temps mort
+LEAD_MAX = 0.3  # ... et même calé sur les temps, le premier coup montré arrive moins de 0,3 s après le début (si le tempo le permet)
+TAIL = 0.45  # secondes gardées après le coup final d'un plan sans ralenti
+PLAN_MAX = 4.5  # durée maximale d'un plan de combo, ralenti compris : au-delà, on en garde la portion la plus dense
+SPAN_MAX = PLAN_MAX - LEAD - TAIL  # étendue maximale des coups d'un plan sans ralenti
+SPAN_MIN_RALENTI = 1.5  # étendue des coups gardée au moins avant un ralenti, même si celui-ci mange le plafond (3,3 s à 128 BPM)
+KILL_LEAD = 1.0  # secondes de combat gardées avant un kill dont rien ne prouve que le joueur le donne
+PRE_TEMPS = 2  # temps de musique, au ralenti, avant le coup final : il tombe pile sur un temps
+COMBO_CARD_MAX = 1.6  # durée maximale de la carte « COMBO xN »
 CLOSING_QUIET = 6.0  # secondes sans coup après une rafale : le combat est fini
 FIGHT_MIN_HITS = 12  # coups rapprochés à partir desquels une série est un vrai combat, avec une issue à regarder
 
@@ -281,33 +297,152 @@ def _music_peak(path: str | None) -> tuple[float, float] | None:
     return (prof["peak"], prof["duration"]) if prof else None
 
 
-def _plan_combo(c: dict, media_id: str, duration: float, beat: float, slow: bool = True, hold: float = 0.5) -> list[Clip]:
-    """Plans d'un combo. `slow` : ralenti sur le coup final (réservé au meilleur combo et aux kills, sinon tous
-    les combos ont la même forme et plus rien ne ressort). `hold` : secondes gardées après le coup final."""
+def _plus_dense(hits: list[list[float]], span_max: float) -> list[list[float]]:
+    """La suite de coups consécutifs tenant dans `span_max` secondes qui en compte le plus (puis la plus forte, puis la
+    plus tardive : le coup final est là)."""
+    best: list[list[float]] = hits[:1]
+    best_key = None
+    for i in range(len(hits)):
+        j = i
+        while j + 1 < len(hits) and hits[j + 1][0] - hits[i][0] <= span_max + 1e-9:
+            j += 1
+        sel = hits[i:j + 1]
+        key = (len(sel), round(sum(h[1] for h in sel), 3), sel[-1][0])
+        if best_key is None or key > best_key:
+            best, best_key = sel, key
+    return best
+
+
+def _portion(c: dict, kill: bool, finale: bool, beat: float, span_max: float = SPAN_MAX) -> dict:
+    """Ce qu'on monte d'une rafale : une vue de `c` (mêmes clés) dont `hits` ne garde que les coups montrés, plus `lo` et
+    `hi`, les bornes (secondes du rush) hors desquelles on ne coupe jamais. Le dernier coup est toujours gardé.
+
+    - La vie du joueur : le plan reste dans le passage où elle ne chute pas de plus d'un cœur (`duel.fenetre_sans_chute`).
+    - Un kill dont rien ne prouve que le joueur le donne (`sauvee` : la mesure dit « subit » ou « echange », ou, faute de
+      courbe de vie, elle ne dit pas « donne ») : seulement les tout derniers coups, environ la dernière seconde calée sur
+      le tempo, jamais la raclée qui précède.
+    - Un combo trop long pour un plan (`span_max`, étendue des coups) : sa portion la plus dense, de préférence là où la
+      caméra ne voit aucun coup reçu (les bornes se resserrent alors sur cette fenêtre) ; un kill garde, lui, la fin de
+      cette portion (son coup final). `finale` : le ralenti suit le dernier coup montré."""
+    res = c.get("duel")
     hits = c["hits"]
     last = hits[-1][0]
-    s0 = max(0.0, hits[0][0] - 0.55)
-    clips: list[Clip] = []
-    if c["n"] >= 4 and slow:
-        slow_in, slow_out = max(s0 + 0.4, last - 0.3), min(duration, last + hold)
-        main = Clip(media_id=media_id, src_in=round(s0, 3), src_out=round(slow_in, 3), score=c["score"],
-                    reason=f"Combo de {c['n']} coups.")
-        slow = Clip(media_id=media_id, src_in=round(slow_in, 3), src_out=round(slow_out, 3), speed=SLOW,
-                    score=c["score"], reason="Ralenti sur le coup final.", effects=["contraste"])
-        clips = [main, slow]
+    lo, hi = 0.0, math.inf
+    fen = duel_an.fenetre_sans_chute(res, last)
+    if fen:
+        lo, hi = min(fen[0], last), max(fen[1], last + 0.05)  # le coup final reste dans les bornes
+    pool = [h for h in hits if h[0] >= lo - 1e-6]
+    label = (res or {}).get("label")
+    sauvee = kill and (label in ("subit", "echange") or (not fen and label != "donne"))
+    if sauvee:
+        depuis = last - max(1, int(KILL_LEAD / beat + 1e-6)) * beat  # au plus KILL_LEAD de combat avant le coup final
+        pool = [h for h in pool if h[0] >= depuis - 1e-6]
+        lo = max(lo, depuis - 0.05)
+    pool = pool or hits[-1:]
+    if pool[-1][0] - pool[0][0] > span_max:
+        cam = (res or {}).get("fenetre")
+        if cam and not kill:
+            calme = [h for h in pool if cam[0] - 1e-6 <= h[0] <= cam[1] + duel_an.DECALAGE_AVANT]
+            if len(calme) >= duel_an.COUPS_MIN:
+                pool = calme
+                # Après la fenêtre vient un coup reçu : ni le plan ni son ralenti ne vont plus loin que l'impulsion qui la ferme.
+                hi = min(hi, max(cam[1] + duel_an.DECALAGE_AVANT, pool[-1][0] + 0.05))
+        if pool[-1][0] - pool[0][0] > span_max:
+            pool = [h for h in pool if h[0] >= pool[-1][0] - span_max - 1e-9] if kill else _plus_dense(pool, span_max)
+    return {**c, "hits": pool, "n": len(pool), "start": pool[0][0], "end": pool[-1][0], "lo": lo, "hi": hi,
+            "rogne": len(pool) < len(hits), "sauvee": sauvee}
+
+
+def _caler_fin(s0: float, out: float, lo: float, hi: float, beat: float, last: float) -> tuple[float, float]:
+    """Amène [s0, out] à un nombre entier de temps (au moins deux) : on allonge ou raccourcit d'abord la fin, puis, si
+    elle ne peut pas aller plus loin, le début (jamais au-delà de [lo, hi]). Le premier coup garde sa place. Sans place
+    pour allonger, on raccourcit par le début (au pire les tout premiers coups sortent du plan) : la durée reste un
+    nombre entier de temps, sinon les coupes suivantes sortent du tempo."""
+    d = out - s0
+    k = max(2, round(d / beat))
+    if k * beat < d - 1e-6 and s0 + k * beat < last + 0.1:  # raccourcir couperait le coup final
+        k += 1
+    want = k * beat
+    if want < d - 1e-6:
+        return s0, s0 + want
+    extra = want - d
+    e = min(extra, max(0.0, hi - out))
+    out, extra = out + e, extra - e
+    e = min(extra, max(0.0, s0 - lo))
+    s0, extra = s0 - e, extra - e
+    if extra > 1e-6:  # pas la place d'allonger jusqu'au temps suivant : un temps de moins, pris sur le début
+        k = max(1, int((out - s0) / beat + 1e-6))
+        s0 = out - k * beat
+    return s0, out
+
+
+def _ralenti_temps(beat: float, vitesse: float, hold: float) -> float:
+    """Durée (s dans le montage) du ralenti d'un coup final dans les cas courants : `PRE_TEMPS` temps avant, puis `hold` secondes de rush."""
+    return (PRE_TEMPS + max(1, round(hold / (beat * vitesse)))) * beat
+
+
+def _plan(v: dict, media_id: str, duration: float, beat: float, vitesse: float | None = None, hold: float = 0.5,
+          contraste: bool = True) -> list[Clip]:
+    """Plans d'un combo, `v` venant de `_portion`. Le plan démarre `LEAD` avant son premier coup et dure un nombre entier de
+    temps. `vitesse` : ralenti sur le coup final (réservé au moment fort, aux kills et au meilleur combo, sinon tous
+    les combos ont la même forme et plus rien ne ressort) ; le coup final tombe alors sur un temps de la musique, et le
+    ralenti dure un nombre entier de temps, même quand le rush manque après le coup final (il prend alors du rush avant).
+    `hold` : secondes (de rush) gardées après le coup final. Rien n'est jamais coupé hors de [v["lo"], v["hi"]]."""
+    hits = v["hits"]
+    first, last = hits[0][0], hits[-1][0]
+    lo, hi = max(0.0, v["lo"]), min(duration, v["hi"])
+    n = v["n"]
+    s0 = max(first - LEAD, lo)
+    if vitesse is None:
+        out = min(last + TAIL, hi)
+        s0, out = _caler_fin(s0, out, lo, hi, beat, last)
+        return [Clip(media_id=media_id, src_in=round(s0, 3), src_out=round(out, 3), score=v["score"],
+                     reason=f"Combo de {n} coups." if n >= 4 else f"Échange de {n} coups.")]
+    unit = beat * vitesse  # secondes de rush par temps de la musique, au ralenti
+    pre = max(0, min(PRE_TEMPS, int((last - lo) / unit + 1e-6)))
+    post = max(0, min(max(1, round(hold / unit)), int((hi - last) / unit + 1e-6)))
+    if post:
+        slow_in, slow_out = last - pre * unit, last + post * unit
     else:
-        clips = [Clip(media_id=media_id, src_in=round(s0, 3), src_out=round(min(duration, last + 0.45), 3),
-                      score=c["score"], reason=f"Combo de {c['n']} coups." if c["n"] >= 4 else f"Échange de {c['n']} coups.")]
-    # Calage sur le tempo : la durée totale du combo devient un nombre entier de temps.
-    D = sum(x.duration for x in clips)
-    want = max(2, round(D / beat)) * beat
-    first = clips[0]
-    first.src_in = round(max(0.0, first.src_in - (want - D)), 3)
-    D2 = sum(x.duration for x in clips)
-    if abs(D2 - want) > 1e-3:  # début de fichier atteint : on ajuste la fin
-        tail = clips[-1]
-        tail.src_out = round(tail.src_out + (want - D2) * tail.speed, 3)
-    return clips
+        # Presque plus de rush après le coup final (la vie du joueur chute, ou fin du fichier) : le ralenti finit là et on
+        # complète par du rush avant, pour que sa durée reste un nombre entier de temps (sinon toutes les coupes suivantes glissent).
+        slow_out = max(last, min(hi, last + 0.15))
+        k = pre + math.ceil((slow_out - last) / unit - 1e-9)
+        while k >= 1 and slow_out - k * unit < lo - 1e-6:
+            k -= 1
+        if k < 1 or k * unit - (slow_out - last) < 0.02:  # le coup final ne tiendrait pas dans le ralenti : plan sans ralenti
+            return _plan(v, media_id, duration, beat, None, hold, contraste)
+        slow_in = slow_out - k * unit
+    slow = Clip(media_id=media_id, src_in=round(slow_in, 3), src_out=round(slow_out, 3), speed=vitesse, score=v["score"],
+                reason="Ralenti sur le coup final.", effects=["contraste"] if contraste else [])
+    if slow_in - s0 < 0.3:
+        return [slow]
+    # Le plan précédant le ralenti dure un nombre entier de temps et finit sur lui : seul son début peut bouger. On cherche
+    # parmi les premiers coups celui qui tombe à moins de LEAD_MAX du début ; à défaut, on arrondit au temps le plus proche.
+    k = None
+    for h in hits[:3]:
+        if h[0] >= slow_in - 0.3:
+            break
+        kk = math.ceil((slow_in - h[0] + 0.05) / beat - 1e-9)
+        if slow_in - kk * beat >= lo - 1e-6 and h[0] - (slow_in - kk * beat) <= LEAD_MAX:
+            k = kk
+            break
+    if k is None:
+        k = max(1, round((slow_in - s0) / beat))
+        if slow_in - k * beat > first - 0.05:  # le premier coup serait coupé
+            k += 1
+        if slow_in - k * beat < lo:
+            k = int((slow_in - lo) / beat + 1e-6)
+    if k < 1:
+        return [slow]
+    main = Clip(media_id=media_id, src_in=round(slow_in - k * beat, 3), src_out=round(slow_in, 3), score=v["score"],
+                reason=f"Combo de {n} coups.")
+    return [main, slow]
+
+
+def _montres(clips: list[Clip], hits: list[list[float]]) -> list[list[float]]:
+    """Les coups réellement visibles dans ces plans."""
+    return [h for h in hits if any(c.src_in - 1e-6 <= h[0] < c.src_out for c in clips)]
 
 
 def _to_timeline_time(clips: list[Clip], starts: list[float], media_id: str, t: float) -> float | None:
@@ -350,7 +485,30 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
     if only is not None:
         for m, c in all_combos:
             why.setdefault((m, jury.key(c)), "Non choisi pour cet edit.")
-    if not ranked:
+
+    def _kill(mid: str, c: dict) -> bool:
+        return (verdicts.get((mid, jury.key(c))) or {}).get("fin") == "kill"
+
+    # Par ordre de préférence strict : on ne saute pas une bonne rafale pour en caser une plus faible. La première
+    # qui dépasse la durée cible entre encore si le dépassement reste raisonnable, puis on s'arrête. Chaque rafale est
+    # d'abord réduite à ce qu'on peut en montrer (`_portion`) : une durée estimée sur la portion, pas sur la rafale.
+    chosen: list[tuple[str, dict]] = []
+    vues: dict[tuple[str, str], tuple[dict, bool, bool, bool]] = {}  # (portion, ralenti ?, kill ?, finale ?)
+    total = 0.0
+    for mid, c in ranked:
+        kill = _kill(mid, c)
+        finale = kill or not chosen
+        v = _portion(c, kill, finale, beat)
+        slow = finale and (v["n"] >= 4 or v["sauvee"] or kill)  # un kill se montre toujours au ralenti, même sur un seul coup
+        est = (v["end"] - v["start"]) + 0.9 + (0.8 / SLOW if slow else 0)
+        if total + est > target * (1.3 if chosen else 99):
+            break
+        chosen.append((mid, c))
+        vues[(mid, jury.key(c))] = (v, slow, kill, finale)
+        total += est
+        if total > target * 1.1:
+            break
+    if not chosen:
         # Rien de montrable : mieux vaut le dire que monter des rafales subies.
         if only is not None:
             refused = sum(1 for m, c in pool if why.get((m, jury.key(c)), "").startswith("Écarté : tu "))
@@ -368,56 +526,70 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
                             reason=why.get((m, jury.key(c)), "Écarté par le jury IA.")) for m, c in all_combos]
         return tl
 
-    def _kill(mid: str, c: dict) -> bool:
-        return (verdicts.get((mid, jury.key(c))) or {}).get("fin") == "kill"
-
-    # Par ordre de préférence strict : on ne saute pas une bonne rafale pour en caser une plus faible. La première
-    # qui dépasse la durée cible entre encore si le dépassement reste raisonnable, puis on s'arrête.
-    chosen, total = [], 0.0
-    for mid, c in ranked:
-        est = (c["end"] - c["start"]) + 0.9 + (0.8 / SLOW if c["n"] >= 4 and (not chosen or _kill(mid, c)) else 0)
-        if total + est > target * (1.3 if chosen else 99):
-            break
-        chosen.append((mid, c))
-        total += est
-        if total > target * 1.1:
-            break
     picked = {(mid, jury.key(c)) for mid, c in chosen}
     rejected = [(m, c) for m, c in all_combos if (m, jury.key(c)) not in picked]
     best = chosen[0]  # `ranked` est par ordre de préférence : le premier gardé est le meilleur
-    second = chosen[1] if len(chosen) > 2 else None
-    # Ordre du montage : le deuxième meilleur combo en accroche, les autres dans l'ordre du rush, le meilleur
+    # Le moment fort, seul à recevoir toute la pile d'effets : le kill s'il y en a un (le meilleur d'entre eux), sinon le
+    # meilleur combo. Les autres ralentis (le meilleur combo, d'autres kills) reçoivent une variante légère.
+    kills = [x for x in chosen if _kill(*x)]
+    climax = kills[0] if kills else best
+    second = next((x for x in chosen[1:] if x is not climax), None) if len(chosen) > 2 else None
+    # Ordre du montage : un combo en accroche, les autres dans l'ordre du rush, le meilleur combo, puis le moment fort
     # pour la fin.
-    middle = sorted((x for x in chosen if x is not best and x is not second), key=lambda x: (order.get(x[0], 0), x[1]["start"]))
-    chosen = ([second] if second else []) + middle + [best]
+    middle = sorted((x for x in chosen if x is not best and x is not second and x is not climax),
+                    key=lambda x: (order.get(x[0], 0), x[1]["start"]))
+    chosen = ([second] if second else []) + middle + ([best] if best is not climax else []) + [climax]
+    # Le plafond d'un plan vaut ralenti compris : on resserre les coups gardés avant le ralenti selon sa durée (kill : 3 s de
+    # ralenti à 128 BPM, il ne reste que les derniers coups ; ralenti léger : presque tout le combo).
+    for mid, c in chosen:
+        v, slow, kill, finale = vues[(mid, jury.key(c))]
+        if slow:
+            vit, hold = (SLOW, HOLD_BEST) if (mid, c) == climax else (SLOW_LEGER, 0.5)
+            span = max(SPAN_MIN_RALENTI, PLAN_MAX - _ralenti_temps(beat, vit, hold))
+            if span < v["end"] - v["start"] - 1e-6:
+                v = _portion(c, kill, finale, beat, span)
+        vues[(mid, jury.key(c))] = (v, slow, kill, finale)
 
     clips: list[Clip] = []
-    groups: list[tuple[str, dict, list[Clip]]] = []
-    # Accroche : une seconde du coup final du meilleur combo, en aperçu, avant de dérouler l'edit.
+    groups: list[tuple[str, dict, dict, list[Clip], str]] = []  # (média, rafale, portion montrée, plans, rôle)
+    # Accroche : une seconde du coup final du moment fort, en aperçu, avant de dérouler l'edit.
     teaser: Clip | None = None
     if len(chosen) >= 3:
-        last = best[1]["hits"][-1][0]
-        d = max(3, round(1.2 / beat)) * beat  # un nombre entier de temps, comme les combos
-        a = max(0.0, min(last - 0.75 * d, durations.get(best[0], last + 1) - d))
-        teaser = Clip(media_id=best[0], src_in=round(a, 3), src_out=round(a + d, 3), score=best[1]["score"],
-                      reason="Aperçu du meilleur combo, en accroche.")
-        clips.append(teaser)
+        v = vues[(climax[0], jury.key(climax[1]))][0]
+        last = v["hits"][-1][0]
+        dur = durations.get(climax[0], last + 1)
+        lo, hi = max(0.0, v["lo"]), min(dur, v["hi"])  # `lo` tient déjà un kill sans preuve à `KILL_LEAD` avant son coup final
+        d = min(max(3, round(1.2 / beat)) * beat, int((hi - lo) / beat + 1e-6) * beat)  # un nombre entier de temps, dans les bornes
+        if d >= 2 * beat - 1e-6:
+            a = max(lo, min(last - 0.75 * d, hi - d))
+            teaser = Clip(media_id=climax[0], src_in=round(a, 3), src_out=round(a + d, 3), score=climax[1]["score"],
+                          reason="Aperçu du moment fort, en accroche.")
+            clips.append(teaser)
     for mid, c in chosen:
-        is_best = (mid, c) == best
-        part = _plan_combo(c, mid, durations.get(mid, c["end"] + 2), beat, slow=is_best or _kill(mid, c),
-                           hold=HOLD_BEST if is_best else 0.5)
-        v = verdicts.get((mid, jury.key(c)))
+        v, slow, _, _ = vues[(mid, jury.key(c))]
+        role = "climax" if (mid, c) == climax else ("leger" if slow else "")
+        vitesse = (SLOW if role == "climax" else SLOW_LEGER) if slow else None
+        part = _plan(v, mid, durations.get(mid, c["end"] + 2), beat, vitesse, hold=HOLD_BEST if role == "climax" else 0.5,
+                     contraste=role == "climax")
+        shown = _montres(part, v["hits"])
+        # La carte « COMBO xN » compte tout ce qui se voit : aussi les coups de la rafale hors de la portion (queue du plan, ralenti).
+        v = {**v, "hits": shown or v["hits"], "n": len(shown) or v["n"], "vus": len(_montres(part, c["hits"])) or len(shown) or v["n"]}
+        r = verdicts.get((mid, jury.key(c)))
         if c.get("duel"):
             part[0].reason += f" Signal local : {duel_an.label(c['duel'])}."
-        if v:
-            part[0].reason += f" Jury IA : {jury.label(v).rstrip('.')}."
+        if v["sauvee"]:
+            part[0].reason += " Fin de combat gardée pour son kill : seuls les derniers coups sont montrés, jamais le passage où ta vie chute."
+        elif v["rogne"]:
+            part[0].reason += f" Portion la plus dense du combo : {v['n']} coups sur {c['n']}."
+        if r:
+            part[0].reason += f" Jury IA : {jury.label(r).rstrip('.')}."
         elif verdicts:
             part[0].reason += " Pas regardé par le jury IA."
-        if clips and is_best:  # une transition à chaque raccord annonce chaque coupe : on la garde pour le final
+        if clips and role == "climax":  # une transition à chaque raccord annonce chaque coupe : on la garde pour le moment fort
             part[0].transition = CUT
             part[0].transition_duration = round(min(0.3, beat), 3)
         clips += part
-        groups.append((mid, c, part))
+        groups.append((mid, c, v, part, role))
     clips[0].effects = ["3d_bascule"]
     top_score = max(c.score for c in clips) or 1.0
     for c in clips:  # score affiché entre 0 et 1, comme pour les autres styles
@@ -428,73 +600,92 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
         starts.append(t)
         t += c.duration
     total = t
+    body, body_starts = (clips[1:], starts[1:]) if teaser else (clips, starts)
 
     impacts: list[ImpactItem] = []
     texts: list[TextItem] = []
     sfx: list[SfxItem] = []
-    quiet: tuple[float, float] | None = None  # respiration avant le final : aucun effet dans cette fenêtre
-    for mid, c, part in groups:
-        n = c["n"]
-        is_best = (mid, c) == best
-        # Le grand final (flash, onde, zoom, boom) est réservé au meilleur combo et aux kills.
-        big = is_best or _kill(mid, c)
+    quiet: tuple[float, float] | None = None  # respiration avant le moment fort : aucun effet dans cette fenêtre
+    kill_at: float | None = None  # instant du montage où tombe le coup final du kill, moment fort
+    for mid, c, v, part, role in groups:
+        n = v["n"]
+        full, light = role == "climax", role == "leger"
         # Secousses : le coup final, plus les coups les plus forts du combo s'ils en sont loin. Le reste se regarde
         # sans effet : une secousse sur chaque coup rend l'image illisible et l'effet ne veut plus rien dire.
         keep = {n - 1}
-        for i in sorted(range(n - 1), key=lambda i: -c["hits"][i][1]):
+        for i in sorted(range(n - 1), key=lambda i: -v["hits"][i][1]):
             if len(keep) >= SHAKES_PER_COMBO:
                 break
-            if all(abs(c["hits"][i][0] - c["hits"][j][0]) >= 1.2 for j in keep):
+            if all(abs(v["hits"][i][0] - v["hits"][j][0]) >= 1.2 for j in keep):
                 keep.add(i)
+        final_at = None
         for hi in sorted(keep):
-            ht, strength = c["hits"][hi][0], c["hits"][hi][1]
-            tt = _to_timeline_time(clips[1:] if teaser else clips, starts[1:] if teaser else starts, mid, ht)
+            ht, strength = v["hits"][hi][0], v["hits"][hi][1]
+            tt = _to_timeline_time(body, body_starts, mid, ht)
             if tt is None:
                 continue
             final = hi == n - 1
+            if final:
+                final_at = tt
             impacts.append(ImpactItem(start=round(tt, 3), kind="secousse",
-                                      intensity=(1.6 if big else 1.0) if final else round(0.4 + 0.4 * strength, 2),
+                                      intensity=(1.6 if full else 1.0) if final else round(0.4 + 0.4 * strength, 2),
                                       reason="Coup détecté dans le son."))
-            if final and big:
+            if final and full:
+                # La pile complète (étincelles, flash, onde, zoom, boom, avec le ralenti à ×0,4 et le contraste) sert une seule fois.
                 impacts.append(ImpactItem(start=round(tt, 3), kind="etincelles", intensity=1.6, x=0.5, y=0.47))
-            if final and big:
                 impacts += [ImpactItem(start=round(tt, 3), kind="flash", intensity=1.0),
                             ImpactItem(start=round(tt, 3), kind="onde", intensity=1.0, x=0.5, y=0.5),
                             ImpactItem(start=round(tt, 3), kind="zoom", intensity=1.2)]
                 sfx.append(SfxItem(start=round(tt, 3), kind="boom", volume=0.7))
+            elif final and light:
+                impacts.append(ImpactItem(start=round(tt, 3), kind="etincelles", intensity=0.7, x=0.5, y=0.47))
         k = clips.index(part[0])
-        if is_best:
-            if len(part) > 1:  # une seule carte dans l'edit : le compteur du meilleur combo, sur son ralenti
-                k0 = clips.index(part[1])
-                quiet = (starts[k0] - 0.8, starts[k0])
-                # La carte arrive sur les derniers coups du combo, avant le ralenti : on voit ce qu'elle compte.
-                at = max(starts[k] + 0.2, starts[k0] - 1.2)
-                texts.append(TextItem(start=round(at, 3), duration=round(max(0.6, min(3.2, total - at - 0.3)), 3),
-                                      text=f"COMBO x{n}", style="texte_3d", position="haut"))
+        if full:
+            if len(part) > 1:  # le ralenti suit les derniers coups : rien d'autre à l'écran juste avant
+                quiet = (starts[clips.index(part[-1])] - 0.8, starts[clips.index(part[-1])])
+            if _kill(mid, c):
+                kill_at = final_at
             if k > 0:
                 sfx.append(SfxItem(start=round(max(0.0, starts[k] - 0.25), 3), kind="whoosh", volume=0.5))
-        elif _kill(mid, c):
-            tt = _to_timeline_time(clips[1:] if teaser else clips, starts[1:] if teaser else starts, mid, c["hits"][-1][0])
-            if tt is not None:
-                texts.append(TextItem(start=round(tt, 3), duration=round(max(0.6, min(1.2, total - tt - 0.2)), 3),
-                                      text="KILL", style="texte_3d", position="haut"))
+        if final_at is None:
+            continue
+        # Une seule carte par moment : « KILL » sur la fin d'un duel gardée pour son kill, sinon le compteur du meilleur
+        # combo (jamais plus de COMBO_CARD_MAX s), avec le nombre de coups réellement montrés dans son plan. Le texte ne
+        # déborde jamais de son plan : le ralenti léger laisse moins de temps après le coup final que le ralenti plein.
+        fin_plan = starts[clips.index(part[-1])] + part[-1].duration
+        if _kill(mid, c) and (v["sauvee"] or (mid, c) != best):
+            texts.append(TextItem(start=round(final_at, 3),
+                                  duration=round(min(max(0.6, min(1.2, total - final_at - 0.2)), fin_plan - final_at), 3),
+                                  text="KILL", style="texte_3d", position="haut"))
+        elif (mid, c) == best and len(part) > 1:
+            at = max(starts[k] + 0.2, final_at - 0.6)
+            texts.append(TextItem(start=round(at, 3),
+                                  duration=round(min(max(0.6, min(COMBO_CARD_MAX, total - at - 0.3)), fin_plan - at), 3),
+                                  text=f"COMBO x{v['vus']}", style="texte_3d", position="haut"))
     if quiet:
         impacts = [i for i in impacts if not quiet[0] <= i.start < quiet[1] - 0.01]
     # Pas de zoom « au rythme » entre les coups : un effet qui ne tombe sur aucun son se remarque comme un défaut.
     impacts.sort(key=lambda i: i.start)
-    # Le pic de la musique (son « drop ») tombe sur une coupe : le début du dernier combo qu'il peut atteindre.
+    # Le pic de la musique (son « drop ») tombe sur le kill du montage, s'il y en a un ; sinon sur une coupe : le début du
+    # dernier combo qu'il peut atteindre.
     peak_note = ""
     pk = _music_peak(music_path)
     if pk:
         peak = first_beat + round((pk[0] - first_beat) / beat) * beat  # sur la grille de temps du montage
-        cuts = [starts[clips.index(part[0])] for _, _, part in groups]
-        reach = [x for x in cuts if peak - x >= skip - 1e-6]
-        if reach:
-            start = skip + max(0, round((peak - max(reach) - skip) / beat)) * beat
-            if pk[1] - start >= total:  # il reste assez de morceau pour tout l'edit
+        if kill_at is not None:
+            start = skip + round((peak - kill_at - skip) / beat) * beat
+            if start >= skip - 1e-6 and pk[1] - start >= total:
                 tl.music.start = round(start, 3)
-                at = max(reach)
-                peak_note = f" Pic de la musique posé sur la coupe à {int(at // 60)}:{at % 60:04.1f}."
+                peak_note = f" Pic de la musique posé sur le kill à {int(kill_at // 60)}:{kill_at % 60:04.1f}."
+        if not peak_note:
+            cuts = [starts[clips.index(part[0])] for _, _, _, part, _ in groups]
+            reach = [x for x in cuts if peak - x >= skip - 1e-6]
+            if reach:
+                start = skip + max(0, round((peak - max(reach) - skip) / beat)) * beat
+                if pk[1] - start >= total:  # il reste assez de morceau pour tout l'edit
+                    tl.music.start = round(start, 3)
+                    at = max(reach)
+                    peak_note = f" Pic de la musique posé sur la coupe à {int(at // 60)}:{at % 60:04.1f}."
     title_txt = _title(title)
     if teaser:
         # L'aperçu parle de lui-même : annoncer le compte dès l'ouverture dévoilerait le final. Seul un vrai titre
@@ -510,11 +701,13 @@ def build(media: list, hits_by_media: dict[str, list], settings: EditSettings, t
     tl.sfx = sfx
     tl.look = "vif"
     tl.title = title_txt
-    tl.summary = (f"Edit PvP : {len(groups)} combos sur {len(all_combos)} rafales, {sum(c['n'] for _, c, _ in groups)} coups "
+    tl.summary = (f"Edit PvP : {len(groups)} combos sur {len(all_combos)} rafales, {sum(v['n'] for _, _, v, _, _ in groups)} coups "
                   f"synchronisés, coupes calées sur le tempo ({bpm:.0f} BPM), durée {int(total // 60)}:{total % 60:04.1f}.{peak_note}")
+    if any(v["sauvee"] for _, _, v, _, _ in groups):
+        tl.summary += " Kill gardé sans la raclée : seuls ses derniers coups sont montrés, jamais le passage où ta vie chute."
     measured = any(c.get("duel") for _, c in all_combos)
     if measured:
-        sauvees = sum(duel_an.a_confirmer(c.get("duel")) for _, c, _ in groups)  # fins de combat confirmées par le jury
+        sauvees = sum(duel_an.a_confirmer(c.get("duel")) for _, c, _, _, _ in groups)  # fins de combat confirmées par le jury
         bilan["ecartees"] -= sauvees
         bilan["subies"] -= sauvees
         n = bilan["ecartees"]

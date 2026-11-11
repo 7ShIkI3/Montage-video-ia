@@ -14,6 +14,8 @@ Verdict d'une rafale : « donne », « subit », « echange » ou « inconnu ».
 introuvable, image illisible, jeu différent, interface masquée) donne « inconnu », jamais « donne ». « subit » est un
 veto : il suffit qu'une des deux mesures le dise. Le résultat de chaque rafale est gardé avec les signaux du rush
 (`signals["duel"]`) : refaire un montage ne relit aucune image. Seules les images autour des rafales sont lues.
+La courbe de vie de chaque rafale est gardée avec son résultat (`vie["courbe"]`) : le montage s'en sert pour ne jamais
+monter un passage où le joueur perd plus d'un cœur (`fenetre_sans_chute`).
 """
 from __future__ import annotations
 
@@ -45,6 +47,8 @@ SEUIL_PRESQUE_MORT = 1.5  # vie finale sous ce seuil + perte >= SEUIL_SUBIT_BAS 
 SEUIL_SUBIT_BAS = 2.0
 FENETRE_CONTEXTE = 15.0  # secondes de part et d'autre où la vie pleine trahit un mode sans dégâts
 MAX_INVALIDES = 0.5      # au-delà, la série de vie d'une rafale est jugée illisible
+MARGE_COURBE = 1.0       # secondes de courbe de vie gardées après la rafale (le ralenti du coup final les dépasse)
+PERTE_MAX_PLAN = 1.0     # cœurs perdus au plus (pic -> creux) sur un passage monté : au-delà, on y voit le joueur encaisser
 
 # --- caméra ------------------------------------------------------------------------------------------------
 W, H, FPS_ROULIS = 480, 270, 12
@@ -332,12 +336,30 @@ def _contexte(path: str, lay: Layout, rafales: list[dict]) -> tuple[np.ndarray, 
     return np.concatenate(ts), np.concatenate(vs)
 
 
+def _courbe(t: np.ndarray, vie: np.ndarray) -> dict | None:
+    """Courbe de vie nettoyée d'une rafale, gardée avec son résultat : le montage y cherche l'instant où le joueur cesse
+    de perdre de la vie. {"t0": instant de la première mesure (s du rush), "fps", "v": vie en cœurs}."""
+    if len(t) < 3 or np.isnan(vie).mean() > MAX_INVALIDES:
+        return None
+    v = _nettoyer(vie)
+    return {"t0": round(float(t[0]), 3), "fps": FPS_VIE, "v": [round(float(x), 1) for x in v]}
+
+
+def courbe_vie(path: str, c: dict, lay: Layout) -> dict | None:
+    """Courbe de vie d'une rafale seule (résultats gardés avant que la courbe existe : on ne remesure que la vie)."""
+    t, vie = _lire_flux(path, c["start"] - MARGE, c["end"] + MARGE_COURBE, lay, FPS_VIE)
+    return _courbe(t, vie)
+
+
 def mesure_vie(path: str, c: dict, lay: Layout, ctx_t: np.ndarray, ctx_v: np.ndarray) -> dict:
-    t, vie = _lire_flux(path, c["start"] - MARGE, c["end"] + MARGE, lay, FPS_VIE)
-    d = descripteurs(vie)
+    t, vie = _lire_flux(path, c["start"] - MARGE, c["end"] + MARGE_COURBE, lay, FPS_VIE)
+    dans = t < c["end"] + MARGE - 1e-6  # le verdict se lit sur la même fenêtre qu'avant ; la courbe, elle, va plus loin
+    d = descripteurs(vie[dans])
     sd = sans_degats(ctx_t, ctx_v, (c["start"] + c["end"]) / 2)
     d["verdict"] = verdict_vie(d, sd)
     d["sans_degats"] = sd
+    if d.get("valide"):
+        d["courbe"] = _courbe(t, vie)  # None si la fenêtre élargie a trop de trous : noté, pour ne pas relire la vidéo à chaque montage
     return d
 
 
@@ -490,7 +512,7 @@ def _vie_resume(vie: dict | None) -> dict | None:
     if not vie:
         return None
     return {k: (round(vie[k], 1) if isinstance(vie.get(k), float) else vie.get(k))
-            for k in ("verdict", "valide", "debut", "fin", "min", "perte", "soin", "sans_degats") if k in vie}
+            for k in ("verdict", "valide", "debut", "fin", "min", "perte", "soin", "sans_degats", "courbe") if k in vie}
 
 
 def inconnu(raison: str) -> dict:
@@ -531,6 +553,44 @@ def rang(res: dict | None) -> int:
     if label == "donne":
         return 0 if res.get("confirme") else 1
     return 2 if label == "echange" or a_confirmer(res) else 3
+
+
+def courbe_de(res: dict | None) -> tuple[np.ndarray, np.ndarray] | None:
+    """(instants dans le rush, vie en cœurs) de la courbe gardée avec le résultat d'une rafale ; None si absente."""
+    c = ((res or {}).get("vie") or {}).get("courbe")
+    try:
+        v = np.asarray(c["v"], dtype=float)
+        fps = float(c["fps"])
+        t0 = float(c["t0"])
+    except (TypeError, KeyError, ValueError):
+        return None
+    if len(v) < 3 or fps <= 0 or np.isnan(v).any():
+        return None
+    return t0 + np.arange(len(v)) / fps, v
+
+
+def fenetre_sans_chute(res: dict | None, ref: float, perte_max: float = PERTE_MAX_PLAN) -> tuple[float, float] | None:
+    """Plus large passage (début, fin dans le rush) autour de `ref` où la vie du joueur ne chute pas de plus de `perte_max`
+    cœurs (du pic au creux qui le suit : un soin n'efface pas une perte). C'est ce qu'on peut montrer sans le voir encaisser.
+    On étend d'abord vers la fin (le temps de voir le coup final), puis vers le début. None sans courbe de vie."""
+    cv = courbe_de(res)
+    if cv is None:
+        return None
+    t, v = cv
+    i = int(np.argmin(np.abs(t - ref)))
+    lo = hi = i
+    pic = v[i]
+    while hi + 1 < len(v) and pic - v[hi + 1] <= perte_max + 1e-9:
+        hi += 1
+        pic = max(pic, v[hi])
+    creux = v[lo:hi + 1].min()
+    while lo > 0 and v[lo - 1] - creux <= perte_max + 1e-9:
+        lo -= 1
+        creux = min(creux, v[lo])
+    # Un bord arrêté par une chute est repoussé d'une mesure (début) ou d'une demi-mesure (fin) : l'image qui change de vie
+    # tombe entre deux mesures, et une image de plus ou de moins d'un côté ou de l'autre montrerait déjà la chute.
+    pas = float(t[1] - t[0])
+    return float(t[lo] + (pas if lo > 0 else 0.0)), float(t[hi] - (0.5 * pas if hi < len(v) - 1 else 0.0))
 
 
 def pourquoi(res: dict | None) -> str:
@@ -635,22 +695,73 @@ def analyse(project_id: str, media: list, cands: list[tuple[str, dict]], ctx=Non
             continue
         store = _store(storage.load_signals(project_id, m.id))
         have = store["rafales"]
-        todo = [c for c in mine if _cle(c) not in have and (seulement is None or (m.id, _cle(c)) in seulement)]
+
+        def voulu(c: dict, mid: str = m.id) -> bool:
+            return seulement is None or (mid, _cle(c)) in seulement
+        todo = [c for c in mine if _cle(c) not in have and voulu(c)]
+        sure: dict[str, dict] = {}
         if todo:
             fresh = _mesurer(m, todo, store, ctx, workers)
             sure = {k: r for k, r in fresh.items() if not r.get("echec")}  # un échec ponctuel n'est pas écrit en dur
-            if sure or "interface" in store:
-                sig = storage.load_signals(project_id, m.id) or {}  # relu : une autre analyse a pu écrire entre-temps
-                now = _store(sig)
-                if "interface" in store:
-                    now["interface"] = store["interface"]
-                now.setdefault("rafales", {}).update(sure)
-                sig["duel"] = now
-                storage.save_signals(project_id, m.id, sig)
             have.update(fresh)
+        # Résultats gardés avant que la courbe de vie existe : on la relit pour ceux que le montage peut retenir.
+        courbes = _completer(m, [c for c in mine if _cle(c) in have and voulu(c) and _sans_courbe(have[_cle(c)], c)],
+                             store, ctx, workers)
+        for k, courbe in courbes.items():
+            have[k]["vie"]["courbe"] = courbe
+        if sure or courbes or (todo and "interface" in store):
+            sig = storage.load_signals(project_id, m.id) or {}  # relu : une autre analyse a pu écrire entre-temps
+            now = _store(sig)
+            if "interface" in store:
+                now["interface"] = store["interface"]
+            now.setdefault("rafales", {}).update(sure)
+            for k, courbe in courbes.items():
+                vie = (now["rafales"].get(k) or {}).get("vie")
+                if isinstance(vie, dict):
+                    vie["courbe"] = courbe
+            sig["duel"] = now
+            storage.save_signals(project_id, m.id, sig)
         for c in mine:
             if _cle(c) in have:
                 out[(m.id, _cle(c))] = have[_cle(c)]
+    return out
+
+
+def _sans_courbe(res: dict, c: dict) -> bool:
+    """Résultat lu sans courbe de vie, pour une rafale que le montage peut retenir (pas une rafale subie en plein combat)."""
+    vie = res.get("vie")
+    if not isinstance(vie, dict) or not vie.get("valide") or "courbe" in vie or res.get("echec"):
+        return False
+    return res.get("label") != "subit" or bool(c.get("closing"))
+
+
+def _completer(m, rafales: list[dict], store: dict, ctx, workers: int) -> dict[str, dict | None]:
+    """Relit la seule barre de vie des rafales gardées sans courbe. Une panne de lecture laisse la rafale sans courbe : le
+    montage la traite alors prudemment, et la prochaine analyse réessaie. Une courbe lue mais inexploitable est notée `None`."""
+    if not rafales or not store.get("interface") or not getattr(m, "has_video", True):
+        return {}
+    lay = Layout(**store["interface"])
+    if ctx:
+        ctx.step(f"{m.filename} : courbe de vie de {len(rafales)} rafales")
+
+    def un(c: dict) -> tuple[str, bool, dict | None]:
+        if ctx:
+            ctx.check()
+        try:
+            return _cle(c), True, courbe_vie(m.path, c, lay)
+        except Exception as e:
+            log.warning("Courbe de vie illisible (%s) : %s", _cle(c), e)
+            return _cle(c), False, None
+
+    out: dict[str, dict | None] = {}
+    ex = ThreadPoolExecutor(max(1, workers))
+    try:
+        for f in as_completed([ex.submit(un, c) for c in rafales]):
+            k, lue, courbe = f.result()
+            if lue:  # lue mais inexploitable (trop de trous) : `None` est gardé et la prochaine analyse ne relit pas ; une panne réessaie
+                out[k] = courbe
+    finally:
+        ex.shutdown(wait=True, cancel_futures=True)
     return out
 
 

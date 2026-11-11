@@ -376,3 +376,86 @@ def test_unreadable_media_gives_unknown_not_a_crash(tmp_path):
                                   has_video=False, has_audio=True)
     r = duel.analyse(pid, [audio], [("m_son", _burst())])
     assert list(r.values())[0]["label"] == "inconnu"
+
+
+# ---------------------------------------------------------------- courbe de vie : où le joueur cesse de perdre de la vie
+
+def _courbe_res(t0, valeurs, fps=10):
+    return {"label": "subit", "vie": {"valide": True, "courbe": {"t0": t0, "fps": fps, "v": valeurs}}}
+
+
+def test_safe_window_stops_where_the_life_drops_more_than_a_heart():
+    """Le cas du rush : 3 → 8 cœurs (potion), retombe à 4, puis 2,5 juste avant le kill (remise à 10 après)."""
+    v = [3.0] * 4 + [6.0, 7.5, 7.5, 6.5, 6.5, 6.5, 5.0, 5.0, 4.0, 4.0, 4.0, 2.5, 2.5] + [10.0] * 8
+    res = _courbe_res(70.0, v)  # t = 70,0 .. 72,4 ; la dernière chute (4 -> 2,5) est entre 71,4 et 71,5
+    lo, hi = duel.fenetre_sans_chute(res, 71.65)  # le coup final du kill
+    assert lo == pytest.approx(71.5 + 0.1, abs=1e-6), "le plan commence après la chute, avec une mesure de marge"
+    assert hi == pytest.approx(72.4, abs=1e-6), "la remise à 10 n'est pas une perte : on va jusqu'au bout de la courbe"
+    # Perte tolérée : un cœur, du pic au creux. Sur une vie qui tient, toute la courbe est montrable.
+    plat = _courbe_res(10.0, [7.0] * 5 + [6.0] * 5)
+    assert duel.fenetre_sans_chute(plat, 10.5) == (10.0, pytest.approx(10.9, abs=1e-6))
+    assert duel.fenetre_sans_chute(_courbe_res(10.0, [7.0] * 5 + [5.5] * 5), 10.9)[0] > 10.4, "1,5 cœur perdu : coupé"
+    # Sans courbe (ancien résultat) ou courbe illisible : None, jamais une fenêtre inventée.
+    assert duel.fenetre_sans_chute({"vie": {"valide": True}}, 1.0) is None
+    assert duel.fenetre_sans_chute(None, 1.0) is None
+    assert duel.fenetre_sans_chute(_courbe_res(0.0, [5.0, float("nan"), 5.0]), 0.1) is None
+
+
+def test_the_life_curve_is_kept_and_old_results_get_it_without_remeasuring_the_camera(tmp_path, monkeypatch):
+    pid = TestClient(app).post("/api/projects", json={"name": "Duel courbe"}).json()["id"]
+    c = _burst()
+    k = f"{c['start']:.2f}-{c['end']:.2f}"
+    m = _media("m_courbe", _video(tmp_path, "courbe.mp4", lambda t: 10 if t < 3 else 7.5))
+    got = duel.analyse(pid, [m], [(m.id, c)])
+    courbe = got[(m.id, k)]["vie"]["courbe"]
+    assert courbe["fps"] == duel.FPS_VIE and courbe["t0"] == pytest.approx(c["start"] - duel.MARGE, abs=0.05)
+    assert max(courbe["v"]) - min(courbe["v"]) >= 2 and len(courbe["v"]) > 30, "la baisse de vie de la vidéo se lit"
+    assert (c["end"] + duel.MARGE_COURBE) - (courbe["t0"] + len(courbe["v"]) / courbe["fps"]) < 0.25, "elle va au-delà de la rafale"
+    assert duel.cached(pid, m.id)[k]["vie"]["courbe"] == courbe, "gardée avec les signaux du rush"
+    # Un résultat gardé avant que la courbe existe : seule la vie est relue, pas la caméra, et la courbe est gardée.
+    sig = storage.load_signals(pid, m.id)
+    del sig["duel"]["rafales"][k]["vie"]["courbe"]
+    storage.save_signals(pid, m.id, sig)
+    assert duel.fenetre_sans_chute(duel.cached(pid, m.id)[k], 3.0) is None
+
+    def boom(*a, **kw):
+        raise AssertionError("caméra relue pour une courbe de vie")
+    monkeypatch.setattr(duel, "mesure_roulis", boom)
+    monkeypatch.setattr(duel, "detecter_layout", boom)
+    again = duel.analyse(pid, [m], [(m.id, c)])
+    assert again[(m.id, k)]["vie"]["courbe"]["v"] == courbe["v"] and again[(m.id, k)]["label"] == got[(m.id, k)]["label"]
+    assert duel.cached(pid, m.id)[k]["vie"]["courbe"]["v"] == courbe["v"], "écrite pour de bon"
+    # Une lecture qui échoue laisse le résultat intact (sans courbe), sans rien casser ni graver.
+    sig = storage.load_signals(pid, m.id)
+    del sig["duel"]["rafales"][k]["vie"]["courbe"]
+    storage.save_signals(pid, m.id, sig)
+    monkeypatch.setattr(duel, "_lire_flux", boom)
+    sans = duel.analyse(pid, [m], [(m.id, c)])
+    assert "courbe" not in sans[(m.id, k)]["vie"] and sans[(m.id, k)]["label"] == got[(m.id, k)]["label"]
+
+
+def test_an_unusable_life_curve_is_noted_and_not_read_again(tmp_path, monkeypatch):
+    """Une courbe impossible à tirer (trop de trous sur la fenêtre élargie) est notée `None` : la vidéo n'est pas relue à chaque montage."""
+    pid = TestClient(app).post("/api/projects", json={"name": "Duel courbe vide"}).json()["id"]
+    c = _burst()
+    k = f"{c['start']:.2f}-{c['end']:.2f}"
+    m = _media("m_vide", _video(tmp_path, "vide.mp4", lambda t: 10 if t < 3 else 7.5))
+    monkeypatch.setattr(duel, "_courbe", lambda t, vie: None)
+    got = duel.analyse(pid, [m], [(m.id, c)])
+    assert "courbe" in got[(m.id, k)]["vie"] and got[(m.id, k)]["vie"]["courbe"] is None, "échec noté dès la première mesure"
+
+    def boom(*a, **kw):
+        raise AssertionError("vidéo relue pour une courbe déjà notée comme illisible")
+    monkeypatch.setattr(duel, "_lire_flux", boom)
+    assert duel.analyse(pid, [m], [(m.id, c)])[(m.id, k)]["vie"]["courbe"] is None
+    assert duel.fenetre_sans_chute(duel.cached(pid, m.id)[k], 3.0) is None, "sans courbe, pas de fenêtre inventée"
+    # Un ancien résultat sans le champ : relu une fois, l'échec est noté, puis plus rien ne se relit.
+    monkeypatch.undo()
+    monkeypatch.setattr(duel, "_courbe", lambda t, vie: None)
+    sig = storage.load_signals(pid, m.id)
+    del sig["duel"]["rafales"][k]["vie"]["courbe"]
+    storage.save_signals(pid, m.id, sig)
+    duel.analyse(pid, [m], [(m.id, c)])
+    assert duel.cached(pid, m.id)[k]["vie"].get("courbe", "absent") is None
+    monkeypatch.setattr(duel, "_lire_flux", boom)
+    duel.analyse(pid, [m], [(m.id, c)])
